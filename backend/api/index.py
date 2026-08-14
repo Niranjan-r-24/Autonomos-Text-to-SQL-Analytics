@@ -7,7 +7,7 @@ app = FastAPI()
 # Allow requests from your Next.js frontend (local and production)
 origins = [
     "http://localhost:3000",
-    "https://your-frontend-project.vercel.app",  # Update after creating frontend project
+    "https://autonomos-text-to-sql-analytics.vercel.app/",  # Update after creating frontend project
 ]
 
 app.add_middleware(
