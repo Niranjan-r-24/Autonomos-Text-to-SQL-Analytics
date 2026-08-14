@@ -27,7 +27,7 @@ export const DataVisualization: React.FC<DataVisualizationProps> = ({
   yAxisKeys = [],
   title = 'Product Sales Performance'
 }) => {
-  const [activeTab, setActiveTab] = useState<'widgets' | 'table'>('widgets');
+  const [activeTab, setActiveTab] = useState<'widgets' | 'chart' | 'table'>('widgets');
   const [chartType, setChartType] = useState<string>(recommendedChartType);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -102,29 +102,107 @@ export const DataVisualization: React.FC<DataVisualizationProps> = ({
     );
   }
 
+  const PIE_COLORS = ['#A3E635', '#18181B', '#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6'];
+
   return (
     <div className="w-full space-y-6">
-      {/* View Switcher Header (Widgets vs Data Table) */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={() => setActiveTab('widgets')}
-            className={`flex items-center space-x-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-              activeTab === 'widgets' ? 'clay-pill-active' : 'clay-pill-inactive'
-            }`}
-          >
-            <BarChart2 className="w-3.5 h-3.5" />
-            <span>Executive Widgets</span>
-          </button>
-          <button
-            onClick={() => setActiveTab('table')}
-            className={`flex items-center space-x-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-              activeTab === 'table' ? 'clay-pill-active' : 'clay-pill-inactive'
-            }`}
-          >
-            <TableIcon className="w-3.5 h-3.5" />
-            <span>Data Table ({rows.length})</span>
-          </button>
+      {/* View & Chart Switcher Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Main View Mode Tabs */}
+          <div className="flex items-center bg-white p-1 rounded-full border border-slate-200 shadow-sm">
+            <button
+              onClick={() => setActiveTab('widgets')}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
+                activeTab === 'widgets' ? 'clay-pill-active' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart2 className="w-3.5 h-3.5" />
+              <span>Executive Widgets</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('chart')}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
+                activeTab === 'chart' ? 'clay-pill-active' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-lime-500" />
+              <span>Custom Chart</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('table')}
+              className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${
+                activeTab === 'table' ? 'clay-pill-active' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <TableIcon className="w-3.5 h-3.5" />
+              <span>Data Table ({rows.length})</span>
+            </button>
+          </div>
+
+          {/* Interactive Chart Type Selection Tabs */}
+          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-full border border-slate-200">
+            <button
+              title="Bar Chart"
+              onClick={() => {
+                setChartType('bar');
+                setActiveTab('chart');
+              }}
+              className={`flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                chartType === 'bar' && activeTab === 'chart'
+                  ? 'bg-slate-900 text-lime-400 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <BarChart2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Bar</span>
+            </button>
+            <button
+              title="Line Chart"
+              onClick={() => {
+                setChartType('line');
+                setActiveTab('chart');
+              }}
+              className={`flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                chartType === 'line' && activeTab === 'chart'
+                  ? 'bg-slate-900 text-lime-400 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <LineIcon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Line</span>
+            </button>
+            <button
+              title="Area Chart"
+              onClick={() => {
+                setChartType('area');
+                setActiveTab('chart');
+              }}
+              className={`flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                chartType === 'area' && activeTab === 'chart'
+                  ? 'bg-slate-900 text-lime-400 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <AreaIcon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Area</span>
+            </button>
+            <button
+              title="Pie Chart"
+              onClick={() => {
+                setChartType('pie');
+                setActiveTab('chart');
+              }}
+              className={`flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+                chartType === 'pie' && activeTab === 'chart'
+                  ? 'bg-slate-900 text-lime-400 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <PieIcon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Pie</span>
+            </button>
+          </div>
         </div>
 
         {/* Exporters */}
@@ -234,6 +312,96 @@ export const DataVisualization: React.FC<DataVisualizationProps> = ({
                 </LineChart>
               </ResponsiveContainer>
             </div>
+          </div>
+        </div>
+      ) : activeTab === 'chart' ? (
+        /* Dedicated Custom Chart Tab View */
+        <div className="clay-card p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                <span>{title}</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-slate-900 text-lime-400 text-[10px] font-extrabold uppercase">
+                  {chartType} chart
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                X-Axis: <span className="font-bold text-slate-800">{effectiveXAxis}</span> • Y-Axis: <span className="font-bold text-slate-800">{effectiveYKeys.join(', ')}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="h-80 w-full pt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              {chartType === 'line' ? (
+                <LineChart data={rows}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                  <XAxis dataKey={effectiveXAxis} stroke="#64748B" fontSize={11} />
+                  <YAxis stroke="#64748B" fontSize={11} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderRadius: '16px', color: '#FFF' }} />
+                  {effectiveYKeys.map((yKey, idx) => (
+                    <Line
+                      key={yKey}
+                      type="monotone"
+                      dataKey={yKey}
+                      stroke={idx === 0 ? '#10B981' : '#6366F1'}
+                      strokeWidth={3}
+                      dot={{ r: 4 }}
+                    />
+                  ))}
+                </LineChart>
+              ) : chartType === 'area' ? (
+                <AreaChart data={rows}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                  <XAxis dataKey={effectiveXAxis} stroke="#64748B" fontSize={11} />
+                  <YAxis stroke="#64748B" fontSize={11} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderRadius: '16px', color: '#FFF' }} />
+                  {effectiveYKeys.map((yKey, idx) => (
+                    <Area
+                      key={yKey}
+                      type="monotone"
+                      dataKey={yKey}
+                      stroke={idx === 0 ? '#10B981' : '#6366F1'}
+                      fill={idx === 0 ? '#A3E635' : '#818CF8'}
+                      fillOpacity={0.4}
+                      strokeWidth={2}
+                    />
+                  ))}
+                </AreaChart>
+              ) : chartType === 'pie' ? (
+                <PieChart>
+                  <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderRadius: '16px', color: '#FFF' }} />
+                  <Pie
+                    data={rows}
+                    dataKey={effectiveYKeys[0] || columns[1]}
+                    nameKey={effectiveXAxis}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={110}
+                    label={(entry: any) => `${entry[effectiveXAxis]}: ${entry[effectiveYKeys[0]]}`}
+                  >
+                    {rows.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              ) : (
+                <BarChart data={rows}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                  <XAxis dataKey={effectiveXAxis} stroke="#64748B" fontSize={11} />
+                  <YAxis stroke="#64748B" fontSize={11} />
+                  <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderRadius: '16px', color: '#FFF' }} />
+                  {effectiveYKeys.map((yKey, idx) => (
+                    <Bar
+                      key={yKey}
+                      dataKey={yKey}
+                      fill={idx === 0 ? '#18181B' : '#A3E635'}
+                      radius={[6, 6, 0, 0]}
+                    />
+                  ))}
+                </BarChart>
+              )}
+            </ResponsiveContainer>
           </div>
         </div>
       ) : (

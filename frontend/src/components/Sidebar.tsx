@@ -2,12 +2,12 @@
 
 import React, { useState } from 'react';
 import {
-  Grid, Search, BarChart2, Sliders, Database, Settings,
+  BarChart2, Database,
   CheckCircle2, Clock, AlertTriangle, Loader2, Sparkles, Code2, Wrench
 } from 'lucide-react';
 
 export interface AgentStep {
-  agent_id: 'schema_linker' | 'sql_generator' | 'self_corrector' | 'visualizer';
+  agent_id: 'schema_linker' | 'sql_generator' | 'self_corrector' | 'visualizer' | 'rag_retriever';
   agent_name: string;
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
   execution_time_sec?: number;
@@ -19,15 +19,12 @@ export interface AgentStep {
 interface SidebarProps {
   agentSteps: AgentStep[];
   isPipelineRunning: boolean;
-  onOpenSchema?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   agentSteps,
   isPipelineRunning,
-  onOpenSchema
 }) => {
-  const [activeIcon, setActiveIcon] = useState('grid');
   const [showDrawer, setShowDrawer] = useState(true);
 
   const getAgentIcon = (id: string) => {
@@ -40,12 +37,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return Wrench;
       case 'visualizer':
         return BarChart2;
+      case 'rag_retriever':
+        return Sparkles;
       default:
         return Sparkles;
     }
   };
 
   const defaultAgents: AgentStep[] = [
+    { agent_id: 'rag_retriever', agent_name: 'RAG Retrieval Agent', status: 'PENDING' },
     { agent_id: 'schema_linker', agent_name: 'Schema Linker Agent', status: 'PENDING' },
     { agent_id: 'sql_generator', agent_name: 'SQL Generator Agent', status: 'PENDING' },
     { agent_id: 'self_corrector', agent_name: 'Self-Correction Agent', status: 'PENDING' },
@@ -58,76 +58,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   });
 
   return (
-    <aside className="flex h-[calc(100vh-80px)] sticky top-[80px] shrink-0 pl-6 py-2 gap-4 z-30">
-      {/* Left Icon Pillar matching image (Circular floating buttons) */}
-      <div className="w-14 bg-white/90 backdrop-blur-md rounded-full border border-slate-200 shadow-sm p-3 flex flex-col items-center justify-between">
-        <div className="space-y-4">
-          <button
-            onClick={() => setActiveIcon('grid')}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
-              activeIcon === 'grid'
-                ? 'bg-slate-900 text-white shadow-md'
-                : 'text-slate-500 hover:bg-slate-100'
-            }`}
-          >
-            <Grid className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => setActiveIcon('search')}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
-              activeIcon === 'search'
-                ? 'bg-slate-900 text-white shadow-md'
-                : 'text-slate-500 hover:bg-slate-100'
-            }`}
-          >
-            <Search className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => setActiveIcon('chart')}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${
-              activeIcon === 'chart'
-                ? 'bg-slate-900 text-white shadow-md'
-                : 'text-slate-500 hover:bg-slate-100'
-            }`}
-          >
-            <BarChart2 className="w-4 h-4" />
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveIcon('agents');
-              setShowDrawer(!showDrawer);
-            }}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all relative ${
-              isPipelineRunning
-                ? 'bg-lime-400 text-slate-900 ring-4 ring-lime-200'
-                : activeIcon === 'agents'
-                ? 'bg-slate-900 text-white shadow-md'
-                : 'text-slate-500 hover:bg-slate-100'
-            }`}
-          >
-            <Sliders className="w-4 h-4" />
-            {isPipelineRunning && (
-              <span className="w-2 h-2 rounded-full bg-slate-900 absolute top-1 right-1 animate-ping" />
-            )}
-          </button>
-
-          <button
-            onClick={onOpenSchema}
-            className="w-9 h-9 rounded-full flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-all"
-          >
-            <Database className="w-4 h-4" />
-          </button>
-        </div>
-
-        <button className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 transition-all">
-          <Settings className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Humanized Agent Execution Pipeline Drawer */}
+    <aside className="h-[calc(100vh-80px)] sticky top-[80px] shrink-0 pl-6 py-2 z-30">
+      {/* Persistent agent status; navigation lives in the header. */}
       {showDrawer && (
         <div className="w-64 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-200 p-4 shadow-clay-card flex flex-col justify-between overflow-y-auto">
           <div>

@@ -1,30 +1,51 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Grid, Sparkles, Key, Share2, Database, ChevronDown, Check } from 'lucide-react';
+import { Grid, Sparkles, Key, Share2, Database, UploadCloud, Users, Check, BookOpen } from 'lucide-react';
 
 interface HeaderProps {
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
   apiKey: string;
   setApiKey: (key: string) => void;
   provider: string;
   setProvider: (p: string) => void;
   onOpenSchema: () => void;
+  onOpenApiKeyModal: () => void;
+  onOpenUploadModal: () => void;
+  onOpenKnowledgeModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
+  activeTab,
+  setActiveTab,
   apiKey,
   setApiKey,
   provider,
   setProvider,
-  onOpenSchema
+  onOpenSchema,
+  onOpenApiKeyModal,
+  onOpenUploadModal,
+  onOpenKnowledgeModal,
 }) => {
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [showKeyModal, setShowKeyModal] = useState(false);
+  const [copiedNotice, setCopiedNotice] = useState(false);
+  const [showTeamInfo, setShowTeamInfo] = useState(false);
+
+  const handleCopyLink = () => {
+    if (typeof window !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(window.location.href);
+      setCopiedNotice(true);
+      setTimeout(() => setCopiedNotice(false), 2500);
+    }
+  };
 
   return (
     <header className="w-full px-8 py-4 flex items-center justify-between bg-clay-150/80 backdrop-blur-md sticky top-0 z-40">
       {/* Brand Logo matching Orvion emblem */}
-      <div className="flex items-center space-x-3">
+      <div
+        className="flex items-center space-x-3 cursor-pointer"
+        onClick={() => setActiveTab('dashboard')}
+      >
         <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-md">
           {/* Orvion grid icon */}
           <div className="grid grid-cols-2 gap-0.5 w-4 h-4">
@@ -44,14 +65,14 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Top Center Pill Navigation (Dashboard, Analytics, AI Pulse, Data) */}
+      {/* Top Center Pill Navigation (Dashboard, Analytics, AI Pulse, Data Schema) */}
       <nav className="flex items-center space-x-1.5 bg-white/90 p-1.5 rounded-full border border-slate-200 shadow-sm">
         <button
           onClick={() => setActiveTab('dashboard')}
           className={`flex items-center space-x-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
             activeTab === 'dashboard'
               ? 'clay-pill-active'
-              : 'text-slate-600 hover:text-slate-900'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <Grid className="w-3.5 h-3.5" />
@@ -63,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
           className={`flex items-center space-x-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
             activeTab === 'analytics'
               ? 'clay-pill-active'
-              : 'text-slate-600 hover:text-slate-900'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <span>Analytics</span>
@@ -74,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
           className={`flex items-center space-x-2 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
             activeTab === 'pulse'
               ? 'clay-pill-active'
-              : 'text-slate-600 hover:text-slate-900'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <Sparkles className="w-3.5 h-3.5 text-lime-500" />
@@ -92,6 +113,18 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Top Right User Team Avatars & Action Pills */}
       <div className="flex items-center space-x-3">
+        <button onClick={onOpenKnowledgeModal} className="flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 text-slate-800 text-xs font-bold shadow-sm hover:bg-slate-50">
+          <BookOpen className="w-3.5 h-3.5 text-lime-600" /><span>Knowledge Base</span>
+        </button>
+        {/* Upload Dataset Button Pill */}
+        <button
+          onClick={onOpenUploadModal}
+          className="flex items-center space-x-1.5 px-4 py-1.5 rounded-full bg-lime-400 hover:bg-lime-300 text-slate-900 text-xs font-extrabold shadow-sm transition-all hover:scale-105"
+        >
+          <UploadCloud className="w-3.5 h-3.5" />
+          <span>Upload Dataset</span>
+        </button>
+
         {/* LLM Engine Dropdown */}
         <div className="relative">
           <select
@@ -105,31 +138,83 @@ export const Header: React.FC<HeaderProps> = ({
           </select>
         </div>
 
-        {/* Floating User Team Avatars */}
-        <div className="flex items-center -space-x-2 bg-white px-2 py-1 rounded-full border border-slate-200 shadow-sm">
-          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-amber-400 to-rose-400 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
-            JD
+        {/* Floating User Team Avatars with Interactive Info Drawer */}
+        <div className="relative">
+          <div
+            onClick={() => setShowTeamInfo(!showTeamInfo)}
+            title="View Workspace Members"
+            className="flex items-center -space-x-2 bg-white px-2 py-1 rounded-full border border-slate-200 shadow-sm cursor-pointer hover:border-slate-300 transition-all"
+          >
+            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-amber-400 to-rose-400 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
+              JD
+            </div>
+            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
+              AK
+            </div>
+            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-emerald-400 to-teal-600 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
+              SL
+            </div>
+            <div className="w-6 h-6 rounded-full bg-slate-900 text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-white">
+              +3
+            </div>
           </div>
-          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
-            AK
-          </div>
-          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-emerald-400 to-teal-600 text-white text-[10px] font-bold flex items-center justify-center ring-2 ring-white">
-            SL
-          </div>
-          <div className="w-6 h-6 rounded-full bg-slate-900 text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-white">
-            +3
-          </div>
+
+          {showTeamInfo && (
+            <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl p-4 shadow-xl border border-slate-200 z-50 space-y-2">
+              <div className="flex items-center justify-between border-b pb-2 border-slate-100">
+                <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-lime-500" />
+                  Workspace Team (6)
+                </span>
+                <button
+                  onClick={() => setShowTeamInfo(false)}
+                  className="text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-1.5 text-xs text-slate-700 font-medium">
+                <div className="flex items-center justify-between">
+                  <span>John Doe (Data Architect)</span>
+                  <span className="w-2 h-2 rounded-full bg-lime-400"></span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Alice Kim (AI Engineer)</span>
+                  <span className="w-2 h-2 rounded-full bg-lime-400"></span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Sarah Lee (SQL Admin)</span>
+                  <span className="w-2 h-2 rounded-full bg-lime-400"></span>
+                </div>
+                <div className="text-[10px] text-slate-400 font-semibold pt-1">
+                  +3 Analytics Analysts active
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Share Button Pill */}
-        <button className="flex items-center space-x-1.5 px-4 py-1.5 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-sm transition-all">
-          <Share2 className="w-3.5 h-3.5 text-slate-500" />
-          <span>Shared</span>
+        <button
+          onClick={handleCopyLink}
+          className="flex items-center space-x-1.5 px-4 py-1.5 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-sm transition-all relative"
+        >
+          {copiedNotice ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-lime-600" />
+              <span className="text-lime-600 font-extrabold">Link Copied!</span>
+            </>
+          ) : (
+            <>
+              <Share2 className="w-3.5 h-3.5 text-slate-500" />
+              <span>Shared</span>
+            </>
+          )}
         </button>
 
         {/* API Key Modal Button */}
         <button
-          onClick={() => setShowKeyModal(true)}
+          onClick={onOpenApiKeyModal}
           className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shadow-sm ${
             apiKey
               ? 'bg-lime-400 text-slate-900 border border-lime-500/50'
@@ -137,45 +222,9 @@ export const Header: React.FC<HeaderProps> = ({
           }`}
         >
           <Key className="w-3.5 h-3.5" />
-          <span>{apiKey ? 'Key Set' : 'API Key'}</span>
+          <span>{apiKey ? 'Key Set' : 'Check API Key'}</span>
         </button>
       </div>
-
-      {/* API Key Modal */}
-      {showKeyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 relative shadow-2xl border border-slate-200">
-            <h3 className="text-base font-bold text-slate-900 mb-1 flex items-center gap-2">
-              <Key className="w-5 h-5 text-lime-500" />
-              Configure LLM API Key
-            </h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Enter your Gemini or OpenAI API key. Orvion includes a high-precision deterministic engine when no key is provided.
-            </p>
-
-            <div className="space-y-4">
-              <div>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="AIzaSy... / sk-..."
-                  className="w-full bg-slate-50 border border-slate-200 px-4 py-2.5 rounded-2xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-lime-400"
-                />
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2">
-                <button
-                  onClick={() => setShowKeyModal(false)}
-                  className="px-5 py-2 rounded-full bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all shadow-sm"
-                >
-                  Save & Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 };

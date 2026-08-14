@@ -6,6 +6,7 @@ from backend.app.agents.schema_linker import SchemaLinkerAgent
 from backend.app.agents.sql_generator import SQLGeneratorAgent
 from backend.app.agents.self_corrector import SelfCorrectionAgent
 from backend.app.agents.visualizer import VisualizationAgent
+from backend.app.agents.rag import rag_service
 
 class TextToSqlPipeline:
     """
@@ -19,6 +20,15 @@ class TextToSqlPipeline:
     def run_pipeline(self, user_query: str) -> Dict[str, Any]:
         start_time = time.time()
         agent_steps = []
+
+        # Route document-grounded questions to RAG before touching the database.
+        document_cues = ("document", "policy", "pdf", "according to", "knowledge base", "summarize", "what does", "explain")
+        sql_cues = ("revenue", "sales", "count", "database", "table", "customer", "product", "trend", "sql")
+        if any(cue in user_query.lower() for cue in document_cues) or (rag_service.has_documents and not any(cue in user_query.lower() for cue in sql_cues)):
+            t0 = time.time()
+            rag = rag_service.answer(user_query)
+            agent_steps.append({"agent_id": "rag_retriever", "agent_name": "RAG Retrieval & Reranking Agent", "status": "COMPLETED", "execution_time_sec": round(time.time()-t0, 3), "output_summary": f"Reranked {rag['retrieved_count']} evidence chunks", "thought_logs": ["Rewrote query with conversational memory.", "Ran hybrid BM25 + semantic retrieval.", "Cross-encoder reranked citations."], "data": rag})
+            return {"query": user_query, "success": True, "route": "rag", "answer": rag["answer"], "citations": rag["citations"], "rewritten_query": rag["rewritten_query"], "sql": None, "rows": [], "columns": [], "total_execution_time_sec": round(time.time()-start_time, 3), "visualization": {}, "agent_steps": agent_steps}
 
         # Step 0: DB Schema Extraction
         db_schema = get_db_schema_info()
