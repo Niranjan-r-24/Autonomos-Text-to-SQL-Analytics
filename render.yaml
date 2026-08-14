@@ -2,25 +2,17 @@ services:
   - type: web
     name: autonomos-text2sql-api
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r backend/requirements.txt
     startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: DATA_DIR
-        value: /var/data
-      - key: RAG_STORAGE_DIR
-        value: /var/data/rag_store
       - key: GEMINI_API_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-    disk:
-      name: analytics-data
-      mountPath: /var/data
-      sizeGB: 1
 
   - type: web
     name: autonomos-text2sql-web

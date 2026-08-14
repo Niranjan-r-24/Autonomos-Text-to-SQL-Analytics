@@ -75,7 +75,7 @@ Open your browser at [http://localhost:3000](http://localhost:3000) to access th
 
 The repository includes a [`render.yaml`](render.yaml) Blueprint that deploys the FastAPI API and Next.js web application together. In Render, select **New +** → **Blueprint**, connect this GitHub repository, and deploy the detected Blueprint.
 
-The API uses a paid Starter instance because SQLite uploads and the knowledge base are stored on a 1 GB persistent disk. Set `GEMINI_API_KEY` and/or `OPENAI_API_KEY` in the API service's Environment settings if you want server-side keys; the deterministic engine works without either key.
+Both services use Render's free tier. SQLite uploads and knowledge-base documents are stored on the service filesystem, so they reset after a restart or redeploy. Set `GEMINI_API_KEY` and/or `OPENAI_API_KEY` in the API service's Environment settings if you want server-side keys; the deterministic engine works without either key.
 
 ---
 
