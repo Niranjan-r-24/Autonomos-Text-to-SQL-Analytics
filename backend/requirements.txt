@@ -12,3 +12,13 @@ chromadb>=0.5.0
 sentence-transformers>=3.0.0
 rank-bm25>=0.2.2
 python-multipart>=0.0.9
+# 1. Use API-based LangChain packages (DO NOT install heavy meta-packages like 'langchain-community' if not needed)
+langchain-core
+langchain-openai
+langchain-google-genai
+
+# 2. If using sentence-transformers or embeddings, force CPU-only torch before other dependencies
+--find-links https://download.pytorch.org/whl/cpu
+torch==2.2.0+cpu
+
+
