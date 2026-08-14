@@ -2,6 +2,10 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 pydantic
+pandas
+python-multipart
+pypdf
+openpyxl
 langchain
 langchain-openai
 langchain-google-genai

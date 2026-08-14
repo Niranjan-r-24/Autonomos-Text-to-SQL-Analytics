@@ -4,7 +4,7 @@ import React, { useRef, useState } from 'react';
 import axios from 'axios';
 import { FileText, Loader2, UploadCloud, X } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
 
 export function KnowledgeBaseModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);

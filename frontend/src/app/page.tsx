@@ -17,7 +17,7 @@ import {
   BarChart2, Code2, Sliders, Wrench, CheckCircle2, Clock, RefreshCw, Activity, Loader2
 } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'pulse'>('dashboard');

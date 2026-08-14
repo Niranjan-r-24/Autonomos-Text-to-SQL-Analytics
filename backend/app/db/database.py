@@ -4,9 +4,12 @@ from typing import Dict, List, Any, Tuple
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
-# Default SQLite database path in backend directory
+# Default SQLite database path in backend directory. DATA_DIR can point to a
+# persistent volume in production (for example, Render's /var/data disk).
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(BASE_DIR, "enterprise_analytics.db")
+DATA_DIR = os.getenv("DATA_DIR", BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "enterprise_analytics.db")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DB_PATH}")
 
 engine = create_engine(
