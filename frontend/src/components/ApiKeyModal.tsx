@@ -3,8 +3,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { Key, ShieldCheck, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
+import { API_BASE } from '@/config/api';
 
 interface ApiKeyModalProps {
   isOpen: boolean;

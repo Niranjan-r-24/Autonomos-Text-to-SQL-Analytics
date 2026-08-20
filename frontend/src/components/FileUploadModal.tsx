@@ -5,8 +5,7 @@ import axios from 'axios';
 import {
   UploadCloud, FileText, Database, CheckCircle2, AlertCircle, X, Loader2, Sparkles, Table, ArrowRight
 } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
+import { API_BASE } from '@/config/api';
 
 interface FileUploadModalProps {
   isOpen: boolean;

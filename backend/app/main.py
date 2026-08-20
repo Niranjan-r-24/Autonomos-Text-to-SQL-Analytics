@@ -25,14 +25,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("text2sql.api")
 
-# Add project root to sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Add project root and backend dir to sys.path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
 
-from backend.app.db.database import DB_PATH, DATA_DIR, engine
-from backend.app.db.seed import seed_database
-from backend.app.services.schema_service import get_db_schema_info
-from backend.app.services.sql_executor import execute_safe_query
-from backend.app.services.pipeline import TextToSqlPipeline
+try:
+    from backend.app.db.database import DB_PATH, DATA_DIR, engine
+    from backend.app.db.seed import seed_database
+    from backend.app.services.schema_service import get_db_schema_info
+    from backend.app.services.sql_executor import execute_safe_query
+    from backend.app.services.pipeline import TextToSqlPipeline
+except ImportError:
+    from app.db.database import DB_PATH, DATA_DIR, engine
+    from app.db.seed import seed_database
+    from app.services.schema_service import get_db_schema_info
+    from app.services.sql_executor import execute_safe_query
+    from app.services.pipeline import TextToSqlPipeline
 
 app = FastAPI(
     title="Text-to-SQL Analytics API",
@@ -57,6 +69,24 @@ def startup_event():
         seed_database()
     else:
         logger.info("Connected to database at %s", DB_PATH)
+
+
+@app.get("/")
+def root():
+    """Root endpoint for status check."""
+    return {
+        "status": "online",
+        "service": "Autonomos Text-to-SQL Analytics API",
+        "version": "2.0.0",
+        "docs": "/docs",
+        "health": "/api/health"
+    }
+
+
+@app.get("/health")
+def health():
+    """Alias for health check."""
+    return health_check()
 
 
 class QueryRequest(BaseModel):

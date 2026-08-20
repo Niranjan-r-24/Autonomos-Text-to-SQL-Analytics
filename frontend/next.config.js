@@ -2,13 +2,22 @@
 const nextConfig = {
   reactStrictMode: true,
   async rewrites() {
-    const apiHostPort = process.env.API_HOSTPORT;
+    let backendUrl =
+      process.env.NEXT_PUBLIC_API_URL ||
+      process.env.BACKEND_URL ||
+      (process.env.API_HOSTPORT ? `http://${process.env.API_HOSTPORT}` : null);
 
-    // On Render the browser talks to this service, while Next.js forwards API
-    // requests over Render's private network to the FastAPI service.
-    return apiHostPort
-      ? [{ source: '/api/:path*', destination: `http://${apiHostPort}/api/:path*` }]
-      : [];
+    if (backendUrl) {
+      backendUrl = backendUrl.replace(/\/+$/, '');
+      return [
+        {
+          source: '/api/:path*',
+          destination: `${backendUrl}/api/:path*`,
+        },
+      ];
+    }
+
+    return [];
   },
 };
 

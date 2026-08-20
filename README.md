@@ -71,11 +71,40 @@ npm run dev
 
 Open your browser at [http://localhost:3000](http://localhost:3000) to access the platform!
 
-### Deploy on Render
+### Deploying Frontend on Vercel & Backend on Render 🌐
 
-The repository includes a [`render.yaml`](render.yaml) Blueprint that deploys the FastAPI API and Next.js web application together. In Render, select **New +** → **Blueprint**, connect this GitHub repository, and deploy the detected Blueprint.
+#### 1. Deploy Backend on Render (Web Service)
+1. In [Render Dashboard](https://dashboard.render.com), click **New +** → **Web Service**.
+2. Connect your GitHub repository.
+3. Configure the settings:
+   - **Name**: `autonomos-text2sql-api`
+   - **Environment**: `Python 3`
+   - **Region**: Any (e.g., Oregon or Frankfurt)
+   - **Branch**: `main`
+   - **Root Directory**: (Leave blank or set to repo root)
+   - **Build Command**: `pip install -r backend/requirements.txt`
+   - **Start Command**: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`
+4. *(Optional)* Add Environment Variables under **Environment**:
+   - `GEMINI_API_KEY`: your Google Gemini API key
+   - `OPENAI_API_KEY`: your OpenAI API key
+5. Click **Create Web Service** and copy your Render URL (e.g. `https://autonomos-text2sql-api.onrender.com`).
 
-Both services use Render's free tier. SQLite uploads and knowledge-base documents are stored on the service filesystem, so they reset after a restart or redeploy. Set `GEMINI_API_KEY` and/or `OPENAI_API_KEY` in the API service's Environment settings if you want server-side keys; the deterministic engine works without either key.
+---
+
+#### 2. Deploy Frontend on Vercel
+1. In [Vercel Dashboard](https://vercel.com/dashboard), click **Add New...** → **Project**.
+2. Import your GitHub repository.
+3. Configure the settings:
+   - **Framework Preset**: `Next.js`
+   - **Root Directory**: `frontend`
+4. Add the following **Environment Variables** in Vercel:
+   - **Key**: `NEXT_PUBLIC_API_URL`
+   - **Value**: `https://autonomos-text2sql-api.onrender.com` *(Your Render backend URL without trailing slash)*
+   - **Key**: `BACKEND_URL`
+   - **Value**: `https://autonomos-text2sql-api.onrender.com`
+5. Click **Deploy**.
+
+> **Note**: Whenever you update `NEXT_PUBLIC_API_URL` in Vercel, make sure to trigger a **Redeploy** (without cache) so Next.js embeds the environment variable into the client bundle.
 
 ---
 

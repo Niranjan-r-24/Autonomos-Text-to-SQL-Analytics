@@ -9,7 +9,10 @@ import json
 import logging
 import httpx
 from typing import Dict, Any, Tuple, Optional
-from backend.app.services.schema_service import format_schema_for_llm
+try:
+    from backend.app.services.schema_service import format_schema_for_llm
+except ImportError:
+    from app.services.schema_service import format_schema_for_llm
 
 logger = logging.getLogger("text2sql.generator")
 

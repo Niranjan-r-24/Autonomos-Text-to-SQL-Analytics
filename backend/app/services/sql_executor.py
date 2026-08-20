@@ -8,7 +8,10 @@ import time
 import logging
 from typing import Dict, List, Any, Tuple, Optional
 from sqlalchemy import text
-from backend.app.db.database import engine
+try:
+    from backend.app.db.database import engine
+except ImportError:
+    from app.db.database import engine
 
 logger = logging.getLogger("text2sql.executor")
 

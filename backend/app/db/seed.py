@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from sqlalchemy import create_engine, text
-from backend.app.db.database import DATABASE_URL, engine
+try:
+    from backend.app.db.database import DATABASE_URL, engine
+except ImportError:
+    from app.db.database import DATABASE_URL, engine
 
 def seed_database():
     """

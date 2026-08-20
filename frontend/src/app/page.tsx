@@ -11,8 +11,7 @@ import { SchemaViewerModal } from '@/components/SchemaViewerModal';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
 import { FileUploadModal } from '@/components/FileUploadModal';
 import { AlertCircle, Database, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '');
+import { API_BASE } from '@/config/api';
 
 export default function Home() {
   const [query, setQuery] = useState('');

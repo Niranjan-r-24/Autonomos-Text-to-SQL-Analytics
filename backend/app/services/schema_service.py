@@ -5,7 +5,10 @@ Extracts table schemas, column data types, row counts, and sample records from t
 import logging
 from typing import Dict, Any, List
 from sqlalchemy import inspect, text
-from backend.app.db.database import engine
+try:
+    from backend.app.db.database import engine
+except ImportError:
+    from app.db.database import engine
 
 logger = logging.getLogger("text2sql.schema")
 

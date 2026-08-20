@@ -5,10 +5,14 @@ User Question -> Retrieve Schema -> Generate SQL & Explanation -> Safely Execute
 """
 import time
 import logging
-from typing import Dict, Any, Optional, List
-from backend.app.services.schema_service import get_db_schema_info
-from backend.app.services.sql_generator import SQLGenerator
-from backend.app.services.sql_executor import execute_safe_query
+try:
+    from backend.app.services.schema_service import get_db_schema_info
+    from backend.app.services.sql_generator import SQLGenerator
+    from backend.app.services.sql_executor import execute_safe_query
+except ImportError:
+    from app.services.schema_service import get_db_schema_info
+    from app.services.sql_generator import SQLGenerator
+    from app.services.sql_executor import execute_safe_query
 
 logger = logging.getLogger("text2sql.pipeline")
 
