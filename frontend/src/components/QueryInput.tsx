@@ -1,112 +1,91 @@
 'use client';
 
 import React from 'react';
-import { Search, Sparkles, X, Plus, Calendar, Filter, ArrowUpRight } from 'lucide-react';
+import { Search, Sparkles, X, ArrowUpRight, Database, Play } from 'lucide-react';
 
 interface QueryInputProps {
   query: string;
   setQuery: (q: string) => void;
   onSubmit: (q?: string) => void;
-  isPipelineRunning: boolean;
+  isExecuting: boolean;
+  onOpenSchema?: () => void;
 }
 
 export const QueryInput: React.FC<QueryInputProps> = ({
   query,
   setQuery,
   onSubmit,
-  isPipelineRunning,
+  isExecuting,
+  onOpenSchema,
 }) => {
-  const [selectedTag, setSelectedTag] = React.useState<string>('All');
-
-  const promptTemplates = [
-    { label: "Top 5 revenue products", tag: "Sales" },
-    { label: "Monthly sales trend by region", tag: "Trends" },
-    { label: "Customer distribution by plan & country", tag: "Customers" },
-    { label: "Recent failed audit log events", tag: "Security" },
-    { label: "Product category average ratings", tag: "Products" },
-    { label: "Total sales count per customer", tag: "Sales" },
-    { label: "Audit logs by severity level", tag: "Security" },
+  const samplePrompts = [
+    { label: 'Top 5 revenue products', category: 'Sales' },
+    { label: 'Monthly sales trend by region', category: 'Trends' },
+    { label: 'Customer distribution by plan & country', category: 'Customers' },
+    { label: 'Recent failed audit log events', category: 'Security' },
+    { label: 'Product category average ratings', category: 'Products' },
+    { label: 'Sales revenue by region', category: 'Sales' },
   ];
 
-  const categories = ['All', 'Sales', 'Trends', 'Customers', 'Security', 'Products'];
-
-  const filteredTemplates = selectedTag === 'All'
-    ? promptTemplates
-    : promptTemplates.filter((t) => t.tag === selectedTag);
-
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !isPipelineRunning) {
+    if (e.key === 'Enter' && !isExecuting && query.trim()) {
       onSubmit();
     }
   };
 
   return (
-    <div className="w-full space-y-5">
-      {/* Title Bar matching reference image ("Product Sales Performance") */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="w-full space-y-4">
+      {/* Header with Title & Schema Viewer Trigger */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center space-x-2 text-xs font-semibold text-slate-500 mb-1">
-            <span className="w-2 h-2 rounded-full bg-lime-400"></span>
-            <span>Analytics Canvas</span>
+            <span className="w-2 h-2 rounded-full bg-lime-500 animate-pulse"></span>
+            <span>Natural Language Interface</span>
             <span>/</span>
-            <span>Text-to-SQL AI</span>
+            <span>Text-to-SQL Analytics</span>
           </div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight">
-            Product Sales Performance
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+            Ask Questions in Plain English
           </h1>
         </div>
 
-        {/* Toolbar Pills: Filters, Upload, Date Picker, Add Widget / Run Button */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Category Filter Dropdown / Pill */}
-          <div className="hidden md:flex items-center space-x-1.5 bg-white px-3 py-1.5 rounded-full border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            <select
-              value={selectedTag}
-              onChange={(e) => setSelectedTag(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer"
+        <div className="flex items-center space-x-2">
+          {onOpenSchema && (
+            <button
+              onClick={onOpenSchema}
+              className="flex items-center space-x-1.5 px-4 py-2 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-sm transition-all hover:border-slate-300"
             >
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat === 'All' ? 'All Filters' : cat}
-                </option>
-              ))}
-            </select>
-          </div>
+              <Database className="w-3.5 h-3.5 text-lime-600" />
+              <span>View Database Schema</span>
+            </button>
+          )}
 
-          {/* Date Picker Pill */}
-          <div className="flex items-center space-x-2 bg-white px-3.5 py-1.5 rounded-full border border-slate-200 text-xs font-semibold text-slate-700 shadow-sm">
-            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-            <span>22.8.2026 - 28.8.2026</span>
-          </div>
-
-          {/* Add Widget / Run Query Button */}
           <button
             onClick={() => onSubmit()}
-            disabled={isPipelineRunning || !query.trim()}
+            disabled={isExecuting || !query.trim()}
             className={`flex items-center space-x-2 px-5 py-2 rounded-full font-extrabold text-xs transition-all shadow-sm ${
-              isPipelineRunning || !query.trim()
-                ? 'bg-slate-900 text-white cursor-pointer hover:bg-slate-800'
-                : 'bg-lime-400 text-slate-900 hover:bg-lime-300 shadow-lime-glow hover:scale-[1.02]'
+              isExecuting || !query.trim()
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-lime-400 text-slate-900 hover:bg-lime-300 hover:scale-[1.02] shadow-sm'
             }`}
           >
-            {isPipelineRunning ? (
+            {isExecuting ? (
               <>
                 <Sparkles className="w-4 h-4 animate-spin text-slate-900" />
-                <span>Running Agents...</span>
+                <span>Generating & Executing...</span>
               </>
             ) : (
               <>
-                <Plus className="w-4 h-4" />
-                <span>Execute Pipeline</span>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Run Query</span>
               </>
             )}
           </button>
         </div>
       </div>
 
-      {/* Humanized Conversational AI Search Bar Canvas */}
-      <div className="clay-card p-2 rounded-3xl flex items-center relative shadow-sm border border-slate-200">
+      {/* Search Input Box */}
+      <div className="clay-card p-2 rounded-3xl flex items-center bg-white relative shadow-sm border border-slate-200 focus-within:ring-2 focus-within:ring-lime-400/50">
         <div className="pl-4 text-slate-400">
           <Search className="w-5 h-5" />
         </div>
@@ -116,8 +95,8 @@ export const QueryInput: React.FC<QueryInputProps> = ({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask Orvion AI in plain English (e.g. 'Show top 5 revenue products with ratings')..."
-          disabled={isPipelineRunning}
+          placeholder="e.g. 'Show top 5 revenue products' or 'Monthly sales by region'..."
+          disabled={isExecuting}
           className="w-full bg-transparent px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 font-medium focus:outline-none"
         />
 
@@ -132,56 +111,35 @@ export const QueryInput: React.FC<QueryInputProps> = ({
 
         <button
           onClick={() => onSubmit()}
-          disabled={isPipelineRunning || !query.trim()}
-          className="mr-1 w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center transition-all disabled:opacity-50 shrink-0"
+          disabled={isExecuting || !query.trim()}
+          className="mr-1 w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center transition-all disabled:opacity-40 shrink-0"
         >
           <ArrowUpRight className="w-4 h-4 text-lime-400" />
         </button>
       </div>
 
-      {/* Quick Prompt Template Chips & Category Filter Tabs */}
-      <div className="flex flex-col space-y-2">
-        <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
-          <span className="text-xs text-slate-400 font-bold whitespace-nowrap mr-1">
-            Categories:
-          </span>
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setSelectedTag(cat)}
-              className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                selectedTag === cat
-                  ? 'bg-slate-900 text-lime-400 shadow-sm'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
-          <span className="text-xs text-slate-400 font-bold whitespace-nowrap mr-1">
-            Templates:
-          </span>
-          {filteredTemplates.map((tpl, i) => (
-            <button
-              key={i}
-              onClick={() => {
-                setQuery(tpl.label);
-                onSubmit(tpl.label);
-              }}
-              disabled={isPipelineRunning}
-              className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full clay-pill-inactive text-xs font-semibold whitespace-nowrap hover:border-slate-300"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-lime-400"></span>
-              <span>{tpl.label}</span>
-              <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
-                {tpl.tag}
-              </span>
-            </button>
-          ))}
-        </div>
+      {/* Quick Sample Question Chips */}
+      <div className="flex items-center space-x-2 overflow-x-auto pb-1 scrollbar-none">
+        <span className="text-xs text-slate-400 font-bold whitespace-nowrap mr-1">
+          Sample Questions:
+        </span>
+        {samplePrompts.map((prompt, idx) => (
+          <button
+            key={idx}
+            onClick={() => {
+              setQuery(prompt.label);
+              onSubmit(prompt.label);
+            }}
+            disabled={isExecuting}
+            className="flex items-center space-x-1.5 px-3.5 py-1.5 rounded-full bg-white hover:bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 whitespace-nowrap transition-all hover:border-slate-300 disabled:opacity-50"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-lime-400"></span>
+            <span>{prompt.label}</span>
+            <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">
+              {prompt.category}
+            </span>
+          </button>
+        ))}
       </div>
     </div>
   );

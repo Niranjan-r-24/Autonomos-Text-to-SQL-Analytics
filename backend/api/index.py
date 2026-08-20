@@ -1,26 +1,11 @@
+"""
+Serverless entry point for Vercel/cloud deployments.
+Exports the main FastAPI app from backend.app.main.
+"""
 import os
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import sys
 
-app = FastAPI()
+# Ensure backend root is in sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-# Allow requests from your Next.js frontend (local and production)
-origins = [
-    "http://localhost:3000",
-    "https://autonomos-text-to-sql-analytics.vercel.app/",  # Update after creating frontend project
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/api/health")
-def health_check():
-    return {"status": "ok", "framework": "FastAPI"}
-
-# SQLite Note: On Vercel's serverless platform, the filesystem is read-only except for /tmp.
-# For persistent data, use PostgreSQL (e.g. Vercel Postgres, Supabase, Neon) in production.
+from backend.app.main import app
