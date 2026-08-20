@@ -77,26 +77,3 @@ type Numeric = number | bigint
 type Zero = 0 | 0n
 type Negative<T extends Numeric> = T extends Zero ? never : `${T}` extends `-${string}` ? T : never
 type NonNegative<T extends Numeric> = T extends Zero ? T : Negative<T> extends never ? T : '__invalid_negative_number__'
-
-"use client";
-
-import { useEffect, useState } from "react";
-
-export default function Home() {
-  const [status, setStatus] = useState<string>("Loading...");
-
-  useEffect(() => {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-    
-    fetch(`${backendUrl}/api/health`)
-      .then((res) => res.json())
-      .then((data) => setStatus(data.status))
-      .catch(() => setStatus("Error connecting to backend"));
-  }, []);
-
-  return (
-    <main className="flex min-h-screen items-center justify-center p-24">
-      <h1 className="text-2xl font-bold">Backend Status: {status}</h1>
-    </main>
-  );
-}

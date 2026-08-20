@@ -2,6 +2,9 @@
   "name": "enterprise-text2sql-analytics",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "18.x"
+  },
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
