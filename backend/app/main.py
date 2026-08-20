@@ -391,3 +391,10 @@ async def upload_dataset(file: UploadFile = File(...)):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.get("/")
+def root():
+    return {
+        "status": "running",
+        "message": "Autonomous Text-to-SQL Analytics API is live"
+    }
