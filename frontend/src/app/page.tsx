@@ -4,13 +4,12 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Header } from '@/components/Header';
 import { QueryInput } from '@/components/QueryInput';
-import { SqlViewer } from '@/components/SqlViewer';
-import { QueryExplanation } from '@/components/QueryExplanation';
-import { DataVisualization } from '@/components/DataVisualization';
+import { QueryResponseCard } from '@/components/QueryResponseCard';
+import { SkeletonLoader } from '@/components/SkeletonLoader';
 import { SchemaViewerModal } from '@/components/SchemaViewerModal';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
 import { FileUploadModal } from '@/components/FileUploadModal';
-import { AlertCircle, Database, Sparkles, CheckCircle2, ArrowRight } from 'lucide-react';
+import { AlertCircle, Database, Sparkles, ArrowRight, ShieldCheck, Layers, Terminal } from 'lucide-react';
 import { API_BASE } from '@/config/api';
 
 export default function Home() {
@@ -126,9 +125,11 @@ export default function Home() {
     }
   };
 
+  const tableList = Object.keys(schemaData);
+
   return (
-    <div className="min-h-screen bg-clay-100 flex flex-col font-sans text-slate-900 selection:bg-lime-300">
-      {/* 1. Header & Database Connection */}
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col font-sans text-[#0F172A] selection:bg-[#10B981]/20 selection:text-[#0F172A]">
+      {/* 1. Master Header Navigation */}
       <Header
         apiKey={apiKey}
         provider={provider}
@@ -137,11 +138,12 @@ export default function Home() {
         onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
         onOpenUploadModal={() => setIsUploadModalOpen(true)}
         onReSeed={handleReSeed}
+        tableCount={tableList.length || 4}
       />
 
       {/* Main Container */}
-      <main className="flex-1 p-6 sm:p-8 max-w-6xl mx-auto w-full space-y-6">
-        {/* 2. User Question Input */}
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto w-full space-y-6">
+        {/* 2. User Query Input Section */}
         <section className="w-full">
           <QueryInput
             query={query}
@@ -149,89 +151,121 @@ export default function Home() {
             onSubmit={handleRunQuery}
             isExecuting={isExecuting}
             onOpenSchema={() => setIsSchemaModalOpen(true)}
+            tables={tableList.length > 0 ? tableList : ['sales', 'customers', 'products', 'audit_logs']}
           />
         </section>
 
         {/* Error Notification Banner */}
         {errorMessage && (
-          <div className="w-full p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-semibold flex items-center space-x-3 shadow-sm">
+          <div className="w-full p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-semibold flex items-center space-x-3 shadow-xs">
             <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
-            <div>
-              <span className="font-extrabold block">Query Error</span>
-              <span className="text-rose-700">{errorMessage}</span>
+            <div className="flex-1">
+              <span className="font-bold text-rose-800 block text-xs">Security or Execution Notice</span>
+              <span className="text-rose-700 leading-relaxed">{errorMessage}</span>
             </div>
           </div>
         )}
 
-        {/* Initial Welcome / Quick Start Card (when no query has been run yet) */}
+        {/* Animated Skeleton Loading State */}
+        {isExecuting && (
+          <section className="w-full">
+            <SkeletonLoader />
+          </section>
+        )}
+
+        {/* Initial Welcome / Quick Start Card (Shown before any query has run) */}
         {!pipelineResult && !isExecuting && (
-          <section className="clay-card p-8 bg-white border border-slate-200 text-center space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-lime-100 text-slate-900 mx-auto flex items-center justify-center">
-              <Database className="w-6 h-6 text-lime-600" />
+          <section className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl p-6 sm:p-10 text-center space-y-5 shadow-xs">
+            <div className="w-12 h-12 rounded-2xl bg-[#ECFDF5] border border-[#10B981]/30 text-[#10B981] mx-auto flex items-center justify-center shadow-2xs">
+              <Database className="w-6 h-6 text-[#10B981]" />
             </div>
-            <div>
-              <h2 className="text-lg font-extrabold text-slate-900">
-                Ready to Query Your Database
+            
+            <div className="space-y-1.5 max-w-lg mx-auto">
+              <h2 className="text-lg sm:text-xl font-bold text-[#0F172A] tracking-tight">
+                Enterprise Natural Language Analytics
               </h2>
-              <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                Type any analytical question in plain English above or choose a sample prompt to generate SQL, view explanations, and explore charts.
+              <p className="text-xs text-[#64748B] leading-relaxed">
+                Ask analytical questions in natural language. The pipeline will ground against active schemas, generate safe ANSI SQL, explain query logic, and present interactive charts and tables.
               </p>
             </div>
-            <div className="pt-2 flex flex-wrap justify-center gap-2">
-              {[
-                'Top 5 revenue products',
-                'Monthly sales trend by region',
-                'Customer distribution by plan & country',
-              ].map((sample) => (
-                <button
-                  key={sample}
-                  onClick={() => {
-                    setQuery(sample);
-                    handleRunQuery(sample);
-                  }}
-                  className="px-4 py-2 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-all flex items-center space-x-1.5"
-                >
-                  <span>{sample}</span>
-                  <ArrowRight className="w-3 h-3 text-slate-400" />
-                </button>
-              ))}
+
+            {/* Feature Highlights Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto pt-2 text-left">
+              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#047857]">
+                  <ShieldCheck className="w-4 h-4 text-[#10B981]" />
+                  <span>AST Security Guard</span>
+                </div>
+                <p className="text-[11px] text-[#64748B] leading-normal">
+                  Strictly enforces read-only SELECT execution and hard-stops destructive commands.
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#047857]">
+                  <Sparkles className="w-4 h-4 text-[#10B981]" />
+                  <span>Dual LLM + Offline</span>
+                </div>
+                <p className="text-[11px] text-[#64748B] leading-normal">
+                  Gemini 1.5 Flash, GPT-4o, and an intelligent deterministic offline fallback engine.
+                </p>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#047857]">
+                  <Layers className="w-4 h-4 text-[#10B981]" />
+                  <span>Dynamic Analytics</span>
+                </div>
+                <p className="text-[11px] text-[#64748B] leading-normal">
+                  Instant Bar, Line, Area, and Pie charts with searchable tables, CSV & JSON exports.
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Prompt Starters */}
+            <div className="pt-2">
+              <span className="text-[10px] uppercase font-bold text-[#64748B] tracking-wider block mb-2.5">
+                Popular Sample Questions:
+              </span>
+              <div className="flex flex-wrap justify-center gap-2">
+                {[
+                  'Top 5 revenue products',
+                  'Monthly sales trend by region',
+                  'Customer distribution by plan & country',
+                ].map((sample) => (
+                  <button
+                    key={sample}
+                    onClick={() => {
+                      setQuery(sample);
+                      handleRunQuery(sample);
+                    }}
+                    className="px-3.5 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-[#E2E8F0] hover:border-[#10B981]/50 text-xs font-semibold text-[#0F172A] transition-all flex items-center space-x-1.5 shadow-2xs cursor-pointer group"
+                  >
+                    <span>{sample}</span>
+                    <ArrowRight className="w-3 h-3 text-[#94A3B8] group-hover:text-[#10B981] transition-colors" />
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
         )}
 
-        {/* 3. Query Explanation */}
-        {pipelineResult?.explanation && (
+        {/* 3. Unified Query Response Card (Displayed when query results exist) */}
+        {pipelineResult && !isExecuting && (
           <section className="w-full">
-            <QueryExplanation
-              explanation={pipelineResult.explanation}
+            <QueryResponseCard
+              question={pipelineResult.question || query}
+              sql={pipelineResult.sql || ''}
+              explanation={pipelineResult.explanation || ''}
               generatedBy={pipelineResult.generated_by}
-            />
-          </section>
-        )}
-
-        {/* 4. Generated SQL Viewer */}
-        {pipelineResult?.sql && (
-          <section className="w-full">
-            <SqlViewer
-              sql={pipelineResult.sql}
-              onRunCustomSql={handleRunCustomSql}
-              isExecuting={isExecuting}
-            />
-          </section>
-        )}
-
-        {/* 5. Query Results (Data Table & Charts) */}
-        {pipelineResult?.success && pipelineResult.rows && (
-          <section className="w-full">
-            <DataVisualization
-              rows={pipelineResult.rows}
+              rows={pipelineResult.rows || []}
               columns={pipelineResult.columns || []}
-              recommendedChartType={pipelineResult.visualization?.chart_type}
-              xAxisKey={pipelineResult.visualization?.x_axis}
-              yAxisKeys={pipelineResult.visualization?.y_axes}
-              title={pipelineResult.visualization?.title}
+              rowCount={pipelineResult.row_count}
               executionTimeSec={pipelineResult.execution_time_sec}
               sqlExecutionTimeMs={pipelineResult.sql_execution_time_ms}
+              visualization={pipelineResult.visualization}
+              onRunCustomSql={handleRunCustomSql}
+              isExecuting={isExecuting}
             />
           </section>
         )}

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import axios from 'axios';
-import { Key, ShieldCheck, CheckCircle2, AlertCircle, Loader2, X } from 'lucide-react';
+import { Key, ShieldCheck, CheckCircle2, AlertCircle, Loader2, X, Sparkles, Cpu } from 'lucide-react';
 import { API_BASE } from '@/config/api';
 
 interface ApiKeyModalProps {
@@ -54,48 +54,71 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-      <div className="w-full max-w-md bg-white rounded-3xl p-6 relative shadow-2xl border border-slate-200 space-y-4">
-        <div className="flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md bg-[#FFFFFF] rounded-2xl p-6 relative shadow-2xl border border-[#E2E8F0] space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
           <div className="flex items-center space-x-2.5">
-            <div className="w-8 h-8 rounded-xl bg-lime-400 text-slate-900 flex items-center justify-center font-bold">
+            <div className="w-8 h-8 rounded-xl bg-[#ECFDF5] border border-[#10B981]/30 text-[#10B981] flex items-center justify-center shadow-2xs">
               <Key className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-extrabold text-slate-900">Configure LLM Provider</h3>
-              <p className="text-xs text-slate-500">Select model and configure your API key</p>
+              <h3 className="text-sm font-bold text-[#0F172A]">AI Engine & Model Provider</h3>
+              <p className="text-xs text-[#64748B]">Select LLM or use deterministic offline engine</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-all"
+            className="w-7 h-7 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#E2E8F0] flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
+        {/* Engine Selection & Inputs */}
         <div className="space-y-3.5">
           <div>
-            <label className="text-xs font-bold text-slate-700 block mb-1">
-              Select AI Engine / Provider:
+            <label className="text-xs font-bold text-[#0F172A] block mb-1.5">
+              Active LLM Provider:
             </label>
-            <select
-              value={provider}
-              onChange={(e) => {
-                setProvider(e.target.value);
-                setVerifyResult(null);
-              }}
-              className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-2xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-lime-400"
-            >
-              <option value="gemini">Google Gemini 1.5 Flash (Recommended)</option>
-              <option value="openai">OpenAI GPT-4o</option>
-              <option value="fallback">Deterministic Offline Engine (No Key Needed)</option>
-            </select>
+            <div className="grid grid-cols-1 gap-2">
+              {[
+                { id: 'gemini', label: 'Google Gemini 1.5 Flash', desc: 'Fast, high-token context, recommended', tag: 'Cloud' },
+                { id: 'openai', label: 'OpenAI GPT-4o', desc: 'Deep SQL reasoning & complex schemas', tag: 'Cloud' },
+                { id: 'fallback', label: 'Deterministic Engine', desc: 'Offline rule-based engine (Zero config / No key needed)', tag: 'Offline' },
+              ].map((opt) => (
+                <div
+                  key={opt.id}
+                  onClick={() => {
+                    setProvider(opt.id);
+                    setVerifyResult(null);
+                  }}
+                  className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                    provider === opt.id
+                      ? 'bg-[#ECFDF5] border-[#10B981]/50 text-[#047857] shadow-2xs font-semibold'
+                      : 'bg-[#F8FAFC] border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${provider === opt.id ? 'bg-[#10B981]' : 'bg-[#CBD5E1]'}`} />
+                    <div>
+                      <span className="font-bold text-[#0F172A] block">{opt.label}</span>
+                      <span className="text-[10px] text-[#64748B] block">{opt.desc}</span>
+                    </div>
+                  </div>
+                  <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
+                    opt.tag === 'Offline' ? 'bg-[#E2E8F0] text-[#475569]' : 'bg-[#ECFDF5] text-[#047857]'
+                  }`}>
+                    {opt.tag}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
           {provider !== 'fallback' && (
             <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">
+              <label className="text-xs font-bold text-[#0F172A] block mb-1">
                 API Key:
               </label>
               <input
@@ -106,10 +129,10 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                   setVerifyResult(null);
                 }}
                 placeholder={provider === 'gemini' ? 'AIzaSy...' : 'sk-...'}
-                className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-2xl text-xs text-slate-900 placeholder:text-slate-400 font-mono focus:outline-none focus:ring-2 focus:ring-lime-400"
+                className="w-full bg-[#F8FAFC] border border-[#CBD5E1] px-3.5 py-2 rounded-xl text-xs text-[#0F172A] placeholder:text-[#94A3B8] font-mono focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981]"
               />
-              <p className="text-[10px] text-slate-400 mt-1">
-                Your API key is kept in browser memory and not permanently stored.
+              <p className="text-[10px] text-[#64748B] mt-1">
+                Stored in client-side memory for the current session. Never persisted to database.
               </p>
             </div>
           )}
@@ -117,14 +140,14 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           {/* Verification Status */}
           {verifyResult && (
             <div
-              className={`p-3 rounded-2xl text-xs font-semibold flex items-center space-x-2 border ${
+              className={`p-3 rounded-xl text-xs font-semibold flex items-center space-x-2 border ${
                 verifyResult.valid
-                  ? 'bg-lime-50 border-lime-300 text-lime-900'
+                  ? 'bg-[#ECFDF5] border-[#10B981]/40 text-[#047857]'
                   : 'bg-rose-50 border-rose-300 text-rose-900'
               }`}
             >
               {verifyResult.valid ? (
-                <CheckCircle2 className="w-4 h-4 text-lime-600 shrink-0" />
+                <CheckCircle2 className="w-4 h-4 text-[#10B981] shrink-0" />
               ) : (
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
               )}
@@ -132,34 +155,35 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             </div>
           )}
 
-          <div className="flex justify-between items-center pt-2 border-t border-slate-100">
+          {/* Action Footer */}
+          <div className="flex justify-between items-center pt-2 border-t border-[#E2E8F0]">
             {provider !== 'fallback' ? (
               <button
                 onClick={handleVerify}
                 disabled={isVerifying || !apiKey.trim()}
-                className="flex items-center space-x-1.5 px-4 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all disabled:opacity-50"
+                className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#0F172A] text-xs font-bold border border-[#E2E8F0] transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
               >
                 {isVerifying ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-900" />
-                    <span>Verifying...</span>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#10B981]" />
+                    <span>Testing Key...</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="w-3.5 h-3.5 text-lime-600" />
-                    <span>Test API Key</span>
+                    <ShieldCheck className="w-3.5 h-3.5 text-[#10B981]" />
+                    <span>Test Connectivity</span>
                   </>
                 )}
               </button>
             ) : (
-              <div></div>
+              <div />
             )}
 
             <button
               onClick={onClose}
-              className="px-5 py-2 rounded-full bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all shadow-sm"
+              className="px-5 py-2 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white text-xs font-bold shadow-md shadow-[#10B981]/20 transition-all cursor-pointer"
             >
-              Save & Done
+              Save Configuration
             </button>
           </div>
         </div>

@@ -3,7 +3,7 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import {
-  UploadCloud, FileText, Database, CheckCircle2, AlertCircle, X, Loader2, Sparkles, Table, ArrowRight
+  UploadCloud, FileText, CheckCircle2, AlertCircle, X, Loader2, Table, ArrowRight
 } from 'lucide-react';
 import { API_BASE } from '@/config/api';
 
@@ -85,22 +85,22 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-md p-4">
-      <div className="w-full max-w-xl bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/40 backdrop-blur-sm p-4">
+      <div className="w-full max-w-xl bg-[#FFFFFF] rounded-2xl overflow-hidden shadow-2xl border border-[#E2E8F0] flex flex-col">
         {/* Modal Header */}
-        <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+        <div className="px-6 py-4 bg-[#F8FAFC] border-b border-[#E2E8F0] flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 rounded-xl bg-slate-900 text-lime-400 flex items-center justify-center shadow-sm">
+            <div className="w-9 h-9 rounded-xl bg-[#ECFDF5] border border-[#10B981]/30 text-[#10B981] flex items-center justify-center shadow-2xs">
               <UploadCloud className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                Import Data File
-                <span className="px-2 py-0.5 rounded-full bg-lime-400 text-slate-900 text-[10px] font-extrabold uppercase">
-                  All Formats
+              <h2 className="text-base font-extrabold text-[#0F172A] flex items-center gap-2">
+                Import Dataset
+                <span className="px-2 py-0.5 rounded-md bg-[#ECFDF5] text-[#047857] text-[10px] font-bold border border-[#10B981]/30 uppercase">
+                  10+ Formats
                 </span>
               </h2>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-[#64748B]">
                 Upload custom datasets to instantly query with Text-to-SQL AI
               </p>
             </div>
@@ -108,24 +108,24 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white text-slate-400 hover:text-slate-700 flex items-center justify-center border border-slate-200"
+            className="w-8 h-8 rounded-lg text-[#64748B] hover:text-[#0F172A] hover:bg-[#E2E8F0] flex items-center justify-center transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-4">
           {/* Supported Format Pills */}
           <div>
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block mb-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#047857] block mb-2">
               Supported Data Formats:
             </span>
             <div className="flex flex-wrap gap-1.5">
               {supportedFormats.map((fmt) => (
                 <span
                   key={fmt.label}
-                  className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-[11px] font-extrabold text-slate-700"
+                  className="px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-[11px] font-semibold text-[#0F172A]"
                 >
                   {fmt.label}
                 </span>
@@ -142,12 +142,12 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
             onDragLeave={() => setIsDragOver(false)}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className={`p-8 rounded-3xl border-2 border-dashed transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-3 ${
+            className={`p-8 rounded-2xl border-2 border-dashed transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-3 ${
               isDragOver
-                ? 'border-lime-500 bg-lime-50/50'
+                ? 'border-[#10B981] bg-[#ECFDF5]/50'
                 : selectedFile
-                ? 'border-slate-400 bg-slate-50/60'
-                : 'border-slate-200 bg-slate-50 hover:border-slate-300'
+                ? 'border-[#10B981]/50 bg-[#F8FAFC]'
+                : 'border-[#CBD5E1] bg-[#F8FAFC] hover:border-[#10B981]/60'
             }`}
           >
             <input
@@ -158,26 +158,26 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
               className="hidden"
             />
 
-            <div className="w-12 h-12 rounded-2xl bg-white shadow-sm border border-slate-200 flex items-center justify-center text-slate-700">
-              <FileText className="w-6 h-6 text-lime-500" />
+            <div className="w-12 h-12 rounded-xl bg-[#FFFFFF] shadow-2xs border border-[#E2E8F0] flex items-center justify-center text-[#10B981]">
+              <FileText className="w-6 h-6" />
             </div>
 
             {selectedFile ? (
               <div>
-                <span className="text-xs font-extrabold text-slate-900 block truncate max-w-md">
+                <span className="text-xs font-bold text-[#0F172A] block truncate max-w-md">
                   {selectedFile.name}
                 </span>
-                <span className="text-[10px] text-slate-500 font-semibold">
-                  {(selectedFile.size / 1024).toFixed(1)} KB • Click or drag to replace file
+                <span className="text-[10px] text-[#64748B] font-mono">
+                  {(selectedFile.size / 1024).toFixed(1)} KB • Click or drag to replace
                 </span>
               </div>
             ) : (
               <div>
-                <p className="text-xs font-extrabold text-slate-900 mb-0.5">
-                  Drag and drop your file here, or <span className="text-lime-600 underline">browse</span>
+                <p className="text-xs font-bold text-[#0F172A] mb-0.5">
+                  Drag and drop your dataset here, or <span className="text-[#10B981] underline">browse</span>
                 </p>
-                <p className="text-[10px] text-slate-400 font-medium">
-                  Supports CSV, Excel (.xlsx), JSON, SQLite (.db), SQL dumps, TSV, Parquet
+                <p className="text-[10px] text-[#64748B]">
+                  Supports .csv, .xlsx, .json, .db, .sqlite, .sql, .tsv, .parquet
                 </p>
               </div>
             )}
@@ -185,7 +185,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
 
           {/* Error Banner */}
           {errorMessage && (
-            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center space-x-2">
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-center space-x-2">
               <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
               <span>{errorMessage}</span>
             </div>
@@ -193,18 +193,18 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
 
           {/* Success Summary Card */}
           {uploadResult && (
-            <div className="p-4 rounded-2xl bg-lime-50 border border-lime-200 text-slate-900 space-y-2">
-              <div className="flex items-center space-x-2 text-lime-800 text-xs font-extrabold">
-                <CheckCircle2 className="w-4 h-4 text-lime-600 shrink-0" />
+            <div className="p-4 rounded-xl bg-[#ECFDF5] border border-[#10B981]/30 text-[#0F172A] space-y-2">
+              <div className="flex items-center space-x-2 text-[#047857] text-xs font-bold">
+                <CheckCircle2 className="w-4 h-4 text-[#10B981] shrink-0" />
                 <span>{uploadResult.message}</span>
               </div>
 
               {uploadResult.columns && (
-                <div className="text-[11px] text-slate-600 font-semibold pt-1 border-t border-lime-200/60">
-                  Imported Table: <span className="font-mono font-bold text-slate-900">{uploadResult.table_name}</span> ({uploadResult.row_count} rows)
-                  <div className="flex flex-wrap gap-1 mt-1 font-mono text-[10px]">
+                <div className="text-[11px] text-[#047857] font-medium pt-1 border-t border-[#10B981]/20">
+                  Registered Table: <span className="font-mono font-bold text-[#0F172A]">{uploadResult.table_name}</span> ({uploadResult.row_count} rows)
+                  <div className="flex flex-wrap gap-1 mt-1.5 font-mono text-[10px]">
                     {uploadResult.columns.map((c: string) => (
-                      <span key={c} className="px-2 py-0.5 rounded bg-white text-slate-800 border border-lime-300">
+                      <span key={c} className="px-2 py-0.5 rounded bg-[#FFFFFF] text-[#0F172A] border border-[#10B981]/30">
                         {c}
                       </span>
                     ))}
@@ -215,10 +215,10 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
           )}
 
           {/* Actions */}
-          <div className="flex items-center justify-end space-x-3 pt-2">
+          <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-[#E2E8F0]">
             <button
               onClick={onClose}
-              className="px-5 py-2.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all"
+              className="px-4 py-2 rounded-xl bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#64748B] hover:text-[#0F172A] border border-[#E2E8F0] text-xs font-semibold transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -226,26 +226,26 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
             {uploadResult ? (
               <button
                 onClick={onClose}
-                className="flex items-center space-x-2 px-6 py-2.5 rounded-full bg-slate-900 text-white hover:bg-slate-800 text-xs font-extrabold shadow-sm transition-all"
+                className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white text-xs font-bold shadow-md shadow-[#10B981]/20 transition-all cursor-pointer"
               >
-                <span>Query New Dataset</span>
-                <ArrowRight className="w-4 h-4 text-lime-400" />
+                <span>Query Ingested Dataset</span>
+                <ArrowRight className="w-4 h-4" />
               </button>
             ) : (
               <button
                 onClick={handleUpload}
                 disabled={!selectedFile || isUploading}
-                className="flex items-center space-x-2 px-6 py-2.5 rounded-full bg-lime-400 text-slate-900 hover:bg-lime-300 disabled:opacity-50 text-xs font-extrabold shadow-sm transition-all"
+                className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] text-xs font-bold shadow-md shadow-[#10B981]/20 transition-all cursor-pointer disabled:shadow-none"
               >
                 {isUploading ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin text-slate-900" />
-                    <span>Parsing & Importing...</span>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                    <span>Importing Dataset...</span>
                   </>
                 ) : (
                   <>
                     <UploadCloud className="w-4 h-4" />
-                    <span>Upload & Process Dataset</span>
+                    <span>Upload & Register</span>
                   </>
                 )}
               </button>
