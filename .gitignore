@@ -31,4 +31,9 @@ dist/
 .DS_Store
 Thumbs.db
 .vscode/
-.idea/
+.idea/
+
+# Local Backups
+* - Copy*
+.* - Copy*
+
