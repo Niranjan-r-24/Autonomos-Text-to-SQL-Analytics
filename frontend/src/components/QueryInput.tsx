@@ -18,9 +18,9 @@ export const QueryInput: React.FC<QueryInputProps> = ({
 }) => {
   const samplePrompts = [
     { label: 'Top 5 revenue products', type: 'Highest' },
+    { label: 'Which 3 products sold the highest quantity?', type: 'Quantity' },
     { label: 'Lowest 5 revenue products', type: 'Lowest' },
     { label: 'Monthly sales trend by region', type: 'Trend' },
-    { label: 'Bottom 5 customers by spending', type: 'Lowest' },
   ];
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

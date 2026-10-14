@@ -188,8 +188,9 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern: Products by Revenue / Sales
-        if ("revenue" in q or "sales" in q or "price" in q) and ("product" in q or "item" in q):
+        # Pattern: Products by Revenue / Sales or Default Benchmark Ranking
+        if ("product" in q or "item" in q) and ("revenue" in q or "sales" in q or "price" in q or is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q):
+            is_unspecified_metric = not any(k in q for k in ["revenue", "sales", "price", "profit", "order"])
             sql = (
                 f"SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders "
                 f"FROM sales s JOIN products p ON s.product_id = p.id "
@@ -197,10 +198,16 @@ JSON Response Format:
                 f"GROUP BY p.id, p.name, p.category "
                 f"ORDER BY total_revenue {direction}{limit_clause};"
             )
-            explanation = (
-                f"Joins the 'sales' and 'products' tables, filters for completed transactions, "
-                f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
-            )
+            if is_unspecified_metric:
+                explanation = (
+                    f"Defaulted to total revenue as the primary ranking benchmark since no metric was specified; "
+                    f"aggregates completed sales for {rank_label} products in {direction_word} order (can also rank by quantity sold, order count, or customer rating)."
+                )
+            else:
+                explanation = (
+                    f"Joins the 'sales' and 'products' tables, filters for completed transactions, "
+                    f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
+                )
             return sql, explanation
 
         # Pattern: Customers by Spending / Value
@@ -274,19 +281,31 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Security & Audit logs (Strictly require security or audit or log keywords)
-        if any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and "event" in q):
-            sql = (
-                "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
-                "FROM audit_logs "
-                "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                "GROUP BY action, status, ip_address "
-                "ORDER BY event_count DESC LIMIT 10;"
-            )
-            explanation = (
-                "Queries the 'audit_logs' table for security events with failure status, "
-                "grouping by action and IP address to highlight recurring issues."
-            )
-            return sql, explanation
+        if any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and ("event" in q or "log" in q)):
+            if any(k in q for k in ["record", "recent", "detail", "row", "show"]):
+                sql = (
+                    "SELECT id, action, status, user_id, ip_address, timestamp "
+                    "FROM audit_logs "
+                    "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    "ORDER BY timestamp DESC LIMIT 10;"
+                )
+                explanation = (
+                    "Retrieves recent failed security and audit log event records sorted chronologically in descending order."
+                )
+                return sql, explanation
+            else:
+                sql = (
+                    "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
+                    "FROM audit_logs "
+                    "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    "GROUP BY action, status, ip_address "
+                    "ORDER BY event_count DESC LIMIT 10;"
+                )
+                explanation = (
+                    "Queries the 'audit_logs' table for security events with failure status, "
+                    "grouping by action and IP address to highlight recurring issues."
+                )
+                return sql, explanation
 
         # Pattern: First N rows from specific table (e.g. from table chips or direct prompt)
         first_table_match = re.search(r"(?:from|in|table)\s+([a-zA-Z0-9_]+)", q)

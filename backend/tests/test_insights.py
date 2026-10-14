@@ -560,3 +560,49 @@ def test_regression_empty_results_and_execution_failures():
     assert err_res["row_count"] == 0
 
 
+def test_regression_detailed_audit_records_default_table():
+    """
+    Verify detailed audit records queries default to 'table' visualization.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Show recent failed audit log events")
+
+    assert res["success"] is True
+    assert "audit_logs" in res["sql"].lower()
+    assert res["visualization"]["chart_type"] == "table"
+    assert "Data Records for:" in res["visualization"]["title"]
+
+
+def test_regression_unspecified_ranking_metric_documented():
+    """
+    Verify that when no metric is specified for product ranking (e.g. 'Top 5 products'),
+    an explicit documented default (revenue) is used and clearly noted in the explanation.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Top 5 products")
+
+    assert res["success"] is True
+    assert "total_revenue" in res["sql"].lower()
+    assert "LIMIT 5" in res["sql"]
+    assert "Defaulted to total revenue" in res["explanation"]
+    assert res["visualization"]["chart_type"] == "bar"
+
+
+def test_regression_security_authorizer_blocks_data_modification():
+    """
+    Verify that destructive statements are completely rejected by AST/regex validation
+    and SQLite kernel-level authorization without mutating the database.
+    """
+    res_drop = execute_safe_query("DROP TABLE products;")
+    assert res_drop["success"] is False
+    assert "Security Violation" in res_drop["error"] or "Security Error" in res_drop["error"]
+
+    res_insert = execute_safe_query("INSERT INTO products (id, name) VALUES (999, 'Hacked');")
+    assert res_insert["success"] is False
+    assert "Security" in res_insert["error"]
+
+    res_update = execute_safe_query("UPDATE products SET price = 0;")
+    assert res_update["success"] is False
+    assert "Security" in res_update["error"]
+
+

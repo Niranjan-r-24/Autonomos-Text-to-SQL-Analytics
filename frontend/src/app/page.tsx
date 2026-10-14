@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Header } from '@/components/Header';
 import { QueryInput } from '@/components/QueryInput';
@@ -27,6 +27,9 @@ export default function Home() {
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
   const [pipelineResult, setPipelineResult] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Request ID guard against out-of-order race conditions
+  const activeRequestIdRef = useRef<number>(0);
 
   // Fetch DB Schema on initial load
   useEffect(() => {
@@ -67,6 +70,7 @@ export default function Home() {
     const targetQuery = overrideQuery || query;
     if (!targetQuery.trim() || isExecuting) return;
 
+    const currentRequestId = ++activeRequestIdRef.current;
     setIsExecuting(true);
     setErrorMessage(null);
     setPipelineResult(null);
@@ -78,6 +82,8 @@ export default function Home() {
         provider: provider,
       });
 
+      if (currentRequestId !== activeRequestIdRef.current) return;
+
       if (res.data) {
         setPipelineResult(res.data);
         if (!res.data.success && res.data.error) {
@@ -85,17 +91,21 @@ export default function Home() {
         }
       }
     } catch (err: any) {
+      if (currentRequestId !== activeRequestIdRef.current) return;
       const msg = err.response?.data?.detail || err.message || 'Query execution failed.';
       setErrorMessage(msg);
       setPipelineResult(null);
     } finally {
-      setIsExecuting(false);
+      if (currentRequestId === activeRequestIdRef.current) {
+        setIsExecuting(false);
+      }
     }
   };
 
   const handleRunCustomSql = async (customSql: string) => {
     if (!customSql.trim() || isExecuting) return;
 
+    const currentRequestId = ++activeRequestIdRef.current;
     setIsExecuting(true);
     setErrorMessage(null);
 
@@ -106,6 +116,8 @@ export default function Home() {
         api_key: apiKey,
         provider: provider,
       });
+
+      if (currentRequestId !== activeRequestIdRef.current) return;
 
       if (res.data) {
         if (res.data.success) {
@@ -125,10 +137,13 @@ export default function Home() {
         }
       }
     } catch (err: any) {
+      if (currentRequestId !== activeRequestIdRef.current) return;
       const msg = err.response?.data?.detail || err.message || 'Execution failed.';
       setErrorMessage(msg);
     } finally {
-      setIsExecuting(false);
+      if (currentRequestId === activeRequestIdRef.current) {
+        setIsExecuting(false);
+      }
     }
   };
 

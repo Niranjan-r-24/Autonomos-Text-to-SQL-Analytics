@@ -502,25 +502,37 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             runner_up_val = float(runner_up.get(primary_val_col, 0) or 0) if runner_up else 0
             formatted_runner_val = format_value(runner_up_val, primary_val_col) if runner_up else ""
 
-            # Direct Answer
-            if is_lowest:
-                if runner_up:
-                    direct_answer = (
-                        f"{top_name} ranks lowest in {metric_clean} with {formatted_top_val}, "
-                        f"followed by {runner_up_name} at {formatted_runner_val}."
-                    )
-                else:
-                    direct_answer = f"{top_name} ranks lowest in {metric_clean} with {formatted_top_val}."
-            else:
-                if runner_up:
-                    direct_answer = (
-                        f"{top_name} ranks highest in {metric_clean} with {formatted_top_val}, "
-                        f"followed by {runner_up_name} at {formatted_runner_val}."
-                    )
-                else:
-                    direct_answer = f"{top_name} ranks highest in {metric_clean} with {formatted_top_val}."
+            n_items = len(sorted_rows)
+            num_words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+            count_word = num_words.get(n_items, str(n_items))
+            entity_label = "products" if "product" in primary_label_col or "product" in q else ("customers" if "customer" in primary_label_col or "customer" in q else "items")
+            direction_phrase = "lowest" if is_lowest else "highest"
+            unit_suffix = " units" if "quantity" in metric_clean or "unit" in metric_clean else ""
 
-            if len(numeric_cols) > 1:
+            # Direct Answer: generate concise, natural list of all items when <= 5 items
+            if 1 < n_items <= 5:
+                names = [str(r.get(primary_label_col, f"Item {i+1}")) for i, r in enumerate(sorted_rows)]
+                vals = [format_value(r.get(primary_val_col, 0), primary_val_col) for r in sorted_rows]
+                if len(names) == 2:
+                    names_str = f"{names[0]} and {names[1]}"
+                    vals_str = f"{vals[0]} and {vals[1]}"
+                else:
+                    names_str = f"{', '.join(names[:-1])}, and {names[-1]}"
+                    vals_str = f"{', '.join(vals[:-1])}, and {vals[-1]}"
+                
+                direct_answer = (
+                    f"The {count_word} {entity_label} with the {direction_phrase} {metric_clean} are {names_str}. "
+                    f"They recorded {vals_str}{unit_suffix}, respectively ({top_name} ranks {direction_phrase} in {metric_clean} with {formatted_top_val})."
+                )
+            elif n_items == 1:
+                direct_answer = f"{top_name} ranks {direction_phrase} in {metric_clean} with {formatted_top_val}."
+            else:
+                direct_answer = (
+                    f"{top_name} ranks {direction_phrase} in {metric_clean} with {formatted_top_val}, "
+                    f"followed by {runner_up_name} at {formatted_runner_val}."
+                )
+
+            if len(numeric_cols) > 1 and n_items != 3:
                 sec_val_col = numeric_cols[1]
                 sec_val = format_value(top_row.get(sec_val_col), sec_val_col)
                 direct_answer += f" ({sec_val_col.replace('_', ' ')}: {sec_val})"

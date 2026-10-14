@@ -65,9 +65,18 @@ def validate_safe_sql(sql_query: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
+def _readonly_authorizer(action: int, arg1: Any, arg2: Any, db_name: Any, trigger_name: Any) -> int:
+    """Enforces SQLite engine-level read-only permissions by denying any data-modifying action."""
+    import sqlite3
+    if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION):
+        return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
 def execute_safe_query(sql_query: str) -> Dict[str, Any]:
     """
-    Safely executes a read-only SQL query against the database engine.
+    Safely executes a read-only SQL query against the database engine with both
+    AST/regex pre-validation and SQLite kernel-level authorization checks.
     
     Returns:
         Dict containing:
@@ -94,19 +103,30 @@ def execute_safe_query(sql_query: str) -> Dict[str, Any]:
             "error": validation_error
         }
 
-    # 2. Execute against SQLAlchemy engine
+    # 2. Execute against SQLAlchemy engine with read-only authorizer
     try:
         with engine.connect() as conn:
-            result = conn.execute(text(sql_query))
-            
-            if result.returns_rows:
-                columns = list(result.keys())
-                raw_rows = result.fetchall()
-                # Format each row into a serializable dict
-                rows = [dict(zip(columns, row)) for row in raw_rows]
-            else:
-                columns = []
-                rows = []
+            raw_conn = getattr(getattr(conn, "connection", None), "dbapi_connection", None)
+            is_sqlite = hasattr(raw_conn, "set_authorizer")
+            if is_sqlite:
+                raw_conn.set_authorizer(_readonly_authorizer)
+
+            try:
+                result = conn.execute(text(sql_query))
+                
+                if result.returns_rows:
+                    columns = list(result.keys())
+                    raw_rows = result.fetchmany(1000)
+                    rows = [dict(zip(columns, row)) for row in raw_rows]
+                else:
+                    columns = []
+                    rows = []
+            finally:
+                if is_sqlite:
+                    try:
+                        raw_conn.set_authorizer(None)
+                    except Exception:
+                        pass
 
         exec_duration_ms = round((time.time() - start_time) * 1000, 2)
         logger.info(
@@ -157,6 +177,9 @@ def _format_friendly_db_error(raw_error: str, sql_query: str) -> str:
 
     if "ambiguous column" in err_lower:
         return f"SQL Ambiguity Error: A column name is ambiguous across joined tables. Table prefixes are required."
+
+    if "not authorized" in err_lower:
+        return "Database Security Error: Operation is not authorized. Only read-only queries are permitted."
 
     if "operationalerror" in err_lower or "database is locked" in err_lower:
         return "Database Connection Error: The database is currently busy or unavailable. Please retry in a moment."
