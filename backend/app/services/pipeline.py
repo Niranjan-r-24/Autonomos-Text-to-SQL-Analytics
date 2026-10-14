@@ -5,6 +5,7 @@ User Question -> Retrieve Schema -> Generate SQL & Explanation -> Safely Execute
 """
 import time
 import logging
+from typing import Any, Dict, List, Optional
 try:
     from backend.app.services.schema_service import get_db_schema_info
     from backend.app.services.sql_generator import SQLGenerator
