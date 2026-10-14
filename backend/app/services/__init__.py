@@ -6,6 +6,7 @@ from backend.app.services.schema_service import get_db_schema_info, format_schem
 from backend.app.services.sql_executor import execute_safe_query, validate_safe_sql
 from backend.app.services.sql_generator import SQLGenerator
 from backend.app.services.pipeline import TextToSqlPipeline
+from backend.app.services.insights_service import BusinessInsightsInterpreter
 
 __all__ = [
     "get_db_schema_info",
@@ -14,4 +15,6 @@ __all__ = [
     "validate_safe_sql",
     "SQLGenerator",
     "TextToSqlPipeline",
+    "BusinessInsightsInterpreter",
 ]
+

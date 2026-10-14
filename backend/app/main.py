@@ -39,12 +39,14 @@ try:
     from backend.app.services.schema_service import get_db_schema_info
     from backend.app.services.sql_executor import execute_safe_query
     from backend.app.services.pipeline import TextToSqlPipeline
+    from backend.app.services.insights_service import BusinessInsightsInterpreter
 except ImportError:
     from app.db.database import DB_PATH, DATA_DIR, engine
     from app.db.seed import seed_database
     from app.services.schema_service import get_db_schema_info
     from app.services.sql_executor import execute_safe_query
     from app.services.pipeline import TextToSqlPipeline
+    from app.services.insights_service import BusinessInsightsInterpreter
 
 app = FastAPI(
     title="Text-to-SQL Analytics API",
@@ -97,6 +99,10 @@ class QueryRequest(BaseModel):
 
 class ExecuteSqlRequest(BaseModel):
     sql: str = Field(..., description="Raw SQL query to execute safely")
+    question: Optional[str] = Field("Custom SQL Execution", description="Optional natural language question or description")
+    api_key: Optional[str] = Field(None, description="Optional LLM API Key")
+    provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
+
 
 
 class KeyVerifyRequest(BaseModel):
@@ -227,13 +233,24 @@ def process_nl_query(req: QueryRequest):
 def execute_custom_sql(req: ExecuteSqlRequest):
     """
     Allows safe direct execution of a user-edited SQL query.
-    Enforces read-only SELECT security checks.
+    Enforces read-only SELECT security checks and interprets results into business insights.
     """
     if not req.sql.strip():
         raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
 
     result = execute_safe_query(req.sql.strip())
+    if result.get("success"):
+        interpreter = BusinessInsightsInterpreter(api_key=req.api_key, provider=req.provider or "gemini")
+        insights = interpreter.interpret(
+            question=req.question or "Custom SQL Execution",
+            sql_query=req.sql.strip(),
+            columns=result.get("columns", []),
+            rows=result.get("rows", []),
+            error=result.get("error")
+        )
+        result["insights"] = insights
     return result
+
 
 
 @app.post("/api/upload")

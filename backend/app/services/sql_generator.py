@@ -56,7 +56,7 @@ class SQLGenerator:
         return sql, explanation, "Deterministic Analytics Engine"
 
     def _generate_with_llm(self, user_question: str, schema_info: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-        """Invokes LLM API to generate JSON containing both SQL and explanation."""
+        """Invokes LLM API to generate JSON containing both SQL and explanation with strict ranking direction rules."""
         formatted_schema = format_schema_for_llm(schema_info)
 
         system_prompt = f"""You are an expert SQL Developer and Database Architect.
@@ -65,16 +65,30 @@ Generate a standard SQLite/ANSI SQL query and a short, clear plain English expla
 DATABASE SCHEMA:
 {formatted_schema}
 
-INSTRUCTIONS:
-- Generate strictly read-only SELECT queries (JOINs, aggregations, GROUP BY, ORDER BY, LIMIT).
-- Use clear column aliases (e.g., AS total_revenue, AS customer_count).
-- Provide a 1-2 sentence explanation of what the query does (which tables are joined, filters used, and how results are aggregated/sorted).
-- Respond in strictly valid JSON format with keys "sql" and "explanation".
+CRITICAL INTENT AND RANKING RULES:
+1. Strictly respect requested ranking direction:
+   - For "lowest", "bottom", "least", "cheapest", "worst", "minimum", "ascending", or "ASC": use ORDER BY <metric> ASC.
+   - For "top", "highest", "most", "best", "greatest", "maximum", "descending", or "DESC": use ORDER BY <metric> DESC.
+   - NEVER default to DESC when the user asks for lowest, bottom, or ascending rankings.
+2. Distinguish metrics carefully:
+   - Revenue / Sales volume in currency -> SUM(s.total_price) or p.price
+   - Units sold / Quantity -> SUM(s.quantity)
+   - Order count / Number of sales -> COUNT(s.id)
+   - Customer spending -> c.total_spent or SUM(s.total_price)
+   - Rating -> p.rating or AVG(p.rating)
+3. Respect requested limits:
+   - e.g., "Top 5" -> LIMIT 5, "Lowest 10" -> LIMIT 10, "Bottom 3" -> LIMIT 3.
+4. Security & Safety:
+   - Generate strictly read-only SELECT queries (JOINs, aggregations, GROUP BY, ORDER BY, LIMIT).
+   - Use clear column aliases (e.g., AS total_revenue, AS customer_count, AS total_units_sold).
+5. Explanations:
+   - Provide a 1-2 sentence explanation of what the query does (which tables are joined, filters used, ranking metric, and sort direction).
+   - If the user request is ambiguous, note any assumptions in the explanation.
 
 JSON Response Format:
 {{
   "sql": "SELECT ...",
-  "explanation": "This query joins the sales and products tables to calculate total revenue per product, sorted in descending order."
+  "explanation": "This query joins the sales and products tables to aggregate total revenue for the lowest 5 products, sorted in ascending order."
 }}"""
 
         if "gemini" in self.provider:
@@ -126,25 +140,96 @@ JSON Response Format:
         return None, None
 
     def _generate_deterministic(self, user_question: str, schema_info: Dict[str, Any]) -> Tuple[str, str]:
-        """Provides high-precision deterministic SQL queries and explanations for standard analytical prompts."""
+        """
+        Provides high-precision, intent-aware deterministic SQL queries and explanations.
+        Correctly recognizes ranking direction (ASC for lowest/bottom, DESC for top/highest),
+        metrics (revenue, units sold, spending, orders, rating), filters, and limits.
+        """
         q = user_question.lower()
 
-        # Pattern 1: Top revenue products
-        if "top" in q and ("revenue" in q or "sales" in q or "price" in q) and "product" in q:
+        # 1. Parse ranking direction
+        is_lowest = any(k in q for k in [
+            "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "min", "minimum", "fewest"
+        ])
+        is_highest = any(k in q for k in [
+            "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "max", "maximum"
+        ])
+        direction = "ASC" if is_lowest and not is_highest else ("DESC" if is_highest else ("ASC" if "ascending" in q or " asc" in q else "DESC"))
+        direction_word = "ascending" if direction == "ASC" else "descending"
+        rank_label = "lowest" if direction == "ASC" else "top"
+
+        # 2. Parse limit count
+        limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)?\s*(\d+)\b", q)
+        limit_val = int(limit_match.group(1)) if limit_match else 5
+        has_explicit_limit = bool(limit_match) or any(k in q for k in ["top", "bottom", "lowest", "highest", "limit", "first"])
+        limit_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
+
+        # Pattern: Single aggregate KPI ("total revenue", "what is total sales", "how much revenue")
+        if ("total" in q or "overall" in q or "sum" in q or "how much" in q) and ("revenue" in q or "sales" in q) and not any(k in q for k in ["product", "customer", "region", "month", "by"]):
             sql = (
-                "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders "
-                "FROM sales s JOIN products p ON s.product_id = p.id "
-                "WHERE s.status = 'Completed' "
-                "GROUP BY p.id, p.name, p.category "
-                "ORDER BY total_revenue DESC LIMIT 5;"
+                "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
+                "FROM sales WHERE status = 'Completed';"
+            )
+            explanation = "Calculates overall total revenue and completed sales count across all transactions."
+            return sql, explanation
+
+        # Pattern: Products by Units Sold / Quantity
+        if ("unit" in q or "quantity" in q or "volume" in q or "sold" in q) and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q):
+            sql = (
+                f"SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_units_sold, SUM(s.total_price) AS total_revenue "
+                f"FROM sales s JOIN products p ON s.product_id = p.id "
+                f"WHERE s.status = 'Completed' "
+                f"GROUP BY p.id, p.name, p.category "
+                f"ORDER BY total_units_sold {direction}{limit_clause};"
             )
             explanation = (
-                "Joins the 'sales' and 'products' tables, filters for completed transactions, "
-                "and aggregates total revenue and order count for the top 5 revenue-generating products."
+                f"Joins 'sales' and 'products' tables, filters for completed transactions, "
+                f"and aggregates total units sold for {rank_label} products sorted in {direction_word} order."
             )
             return sql, explanation
 
-        # Pattern 2: Monthly sales trend / revenue over time
+        # Pattern: Products by Revenue / Sales
+        if ("revenue" in q or "sales" in q or "price" in q) and ("product" in q or "item" in q):
+            sql = (
+                f"SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders "
+                f"FROM sales s JOIN products p ON s.product_id = p.id "
+                f"WHERE s.status = 'Completed' "
+                f"GROUP BY p.id, p.name, p.category "
+                f"ORDER BY total_revenue {direction}{limit_clause};"
+            )
+            explanation = (
+                f"Joins 'sales' and 'products' tables, filters for completed transactions, "
+                f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
+            )
+            return sql, explanation
+
+        # Pattern: Customers by Spending / Value
+        if ("customer" in q or "user" in q or "client" in q) and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q):
+            sql = (
+                f"SELECT name AS customer_name, email, company, country, plan, total_spent "
+                f"FROM customers "
+                f"ORDER BY total_spent {direction}{limit_clause};"
+            )
+            explanation = (
+                f"Retrieves customers ranked by total spending in {direction_word} order ({'lowest spenders first' if direction == 'ASC' else 'highest spenders first'})."
+            )
+            return sql, explanation
+
+        # Pattern: Customer Distribution by Plan & Country
+        if "customer" in q and ("plan" in q or "country" in q or "distribution" in q or "count" in q):
+            sql = (
+                "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent "
+                "FROM customers "
+                "GROUP BY country, plan "
+                "ORDER BY customer_count DESC;"
+            )
+            explanation = (
+                "Groups the 'customers' table by country and subscription plan, computing customer counts "
+                "and average spend per segment in descending order."
+            )
+            return sql, explanation
+
+        # Pattern: Monthly Sales Trend / Revenue Over Time
         if ("month" in q or "monthly" in q or "trend" in q or "time" in q) and ("sale" in q or "revenue" in q):
             sql = (
                 "SELECT strftime('%Y-%m', sale_date) AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
@@ -159,22 +244,37 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern 3: Customer distribution by plan / country
-        if "customer" in q and ("plan" in q or "country" in q or "distribution" in q or "count" in q or "spent" in q):
+        # Pattern: Sales by Region
+        if "region" in q:
             sql = (
-                "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent "
-                "FROM customers "
-                "GROUP BY country, plan "
-                "ORDER BY customer_count DESC;"
+                f"SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value "
+                f"FROM sales "
+                f"WHERE status = 'Completed' "
+                f"GROUP BY region "
+                f"ORDER BY total_revenue {direction};"
             )
             explanation = (
-                "Groups the 'customers' table by country and subscription plan, computing customer counts "
-                "and average spend per segment in descending order."
+                f"Calculates total revenue, transaction counts, and average order value across geographical regions in {direction_word} order."
             )
             return sql, explanation
 
-        # Pattern 4: Security & Audit logs
-        if "audit" in q or "log" in q or "security" in q or "failed" in q:
+        # Pattern: Product Categories & Ratings
+        if "category" in q or "rating" in q or "stock" in q:
+            sort_metric = "avg_rating" if "rating" in q else ("total_stock" if "stock" in q else "product_count")
+            sql = (
+                f"SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock "
+                f"FROM products "
+                f"GROUP BY category "
+                f"ORDER BY {sort_metric} {direction};"
+            )
+            explanation = (
+                f"Aggregates the 'products' table by category, computing price, customer rating, "
+                f"and stock levels in {direction_word} order."
+            )
+            return sql, explanation
+
+        # Pattern: Security & Audit logs
+        if "audit" in q or "log" in q or "security" in q or "fail" in q:
             sql = (
                 "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
                 "FROM audit_logs "
@@ -188,38 +288,18 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern 5: Product categories & ratings
-        if "category" in q or "rating" in q or "stock" in q:
-            sql = (
-                "SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock "
-                "FROM products "
-                "GROUP BY category "
-                "ORDER BY avg_rating DESC;"
-            )
-            explanation = (
-                "Aggregates the 'products' table by category, calculating average price, average customer rating, "
-                "and total available stock."
-            )
-            return sql, explanation
-
-        # Pattern 6: Sales by region
-        if "region" in q:
-            sql = (
-                "SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value "
-                "FROM sales "
-                "WHERE status = 'Completed' "
-                "GROUP BY region "
-                "ORDER BY total_revenue DESC;"
-            )
-            explanation = (
-                "Calculates total revenue, transaction counts, and average order value across all geographical regions in the 'sales' table."
-            )
+        # Pattern: First N rows from specific table (e.g. from table chips or direct prompt)
+        first_table_match = re.search(r"(?:from|in|table)\s+([a-zA-Z0-9_]+)", q)
+        target_table = first_table_match.group(1).lower() if first_table_match else None
+        if target_table and schema_info and target_table in schema_info:
+            sql = f'SELECT * FROM "{target_table}" LIMIT {limit_val};'
+            explanation = f"Retrieves the first {limit_val} records from the '{target_table}' table."
             return sql, explanation
 
         # Default query for custom/uploaded tables or unknown intent
         first_table = list(schema_info.keys())[0] if schema_info else "sales"
         sql = f'SELECT * FROM "{first_table}" LIMIT 10;'
-        explanation = f"Retrieves the first 10 sample records from the '{first_table}' table."
+        explanation = f"Retrieves sample records from the '{first_table}' table."
         return sql, explanation
 
     def _clean_sql(self, raw_sql: str) -> str:

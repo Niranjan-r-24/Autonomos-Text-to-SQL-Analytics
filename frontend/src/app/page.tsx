@@ -9,7 +9,7 @@ import { SkeletonLoader } from '@/components/SkeletonLoader';
 import { SchemaViewerModal } from '@/components/SchemaViewerModal';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
 import { FileUploadModal } from '@/components/FileUploadModal';
-import { AlertCircle, Database, Sparkles, ArrowRight, ShieldCheck, Layers, Terminal } from 'lucide-react';
+import { AlertCircle, Database } from 'lucide-react';
 import { API_BASE } from '@/config/api';
 
 export default function Home() {
@@ -100,6 +100,9 @@ export default function Home() {
     try {
       const res = await axios.post(`${API_BASE}/api/execute-sql`, {
         sql: customSql.trim(),
+        question: query || 'Custom SQL Execution',
+        api_key: apiKey,
+        provider: provider,
       });
 
       if (res.data) {
@@ -112,6 +115,7 @@ export default function Home() {
             row_count: res.data.row_count,
             sql_execution_time_ms: res.data.execution_time_ms,
             explanation: prev?.explanation || 'Executed custom SQL query directly.',
+            insights: res.data.insights || prev?.insights,
           }));
         } else {
           setErrorMessage(res.data.error || 'Execution failed.');
@@ -150,8 +154,6 @@ export default function Home() {
             setQuery={setQuery}
             onSubmit={handleRunQuery}
             isExecuting={isExecuting}
-            onOpenSchema={() => setIsSchemaModalOpen(true)}
-            tables={tableList.length > 0 ? tableList : ['sales', 'customers', 'products', 'audit_logs']}
           />
         </section>
 
@@ -173,79 +175,20 @@ export default function Home() {
           </section>
         )}
 
-        {/* Initial Welcome / Quick Start Card (Shown before any query has run) */}
+        {/* Clean Initial Guidance (Shown before any query has run) */}
         {!pipelineResult && !isExecuting && (
-          <section className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl p-6 sm:p-10 text-center space-y-5 shadow-xs">
-            <div className="w-12 h-12 rounded-2xl bg-[#ECFDF5] border border-[#10B981]/30 text-[#10B981] mx-auto flex items-center justify-center shadow-2xs">
-              <Database className="w-6 h-6 text-[#10B981]" />
+          <section className="bg-[#FFFFFF] border border-[#E2E8F0] rounded-2xl p-6 sm:p-8 text-center space-y-3 shadow-xs">
+            <div className="w-10 h-10 rounded-xl bg-[#ECFDF5] border border-[#10B981]/30 text-[#10B981] mx-auto flex items-center justify-center">
+              <Database className="w-5 h-5 text-[#10B981]" />
             </div>
             
-            <div className="space-y-1.5 max-w-lg mx-auto">
-              <h2 className="text-lg sm:text-xl font-bold text-[#0F172A] tracking-tight">
-                Enterprise Natural Language Analytics
+            <div className="space-y-1 max-w-md mx-auto">
+              <h2 className="text-base sm:text-lg font-bold text-[#0F172A] tracking-tight">
+                Ask Questions in Natural Language
               </h2>
               <p className="text-xs text-[#64748B] leading-relaxed">
-                Ask analytical questions in natural language. The pipeline will ground against active schemas, generate safe ANSI SQL, explain query logic, and present interactive charts and tables.
+                Type an analytical prompt or pick a sample query above. The system translates intent into secure SQL, generates grounded business insights, and visualizes trends.
               </p>
-            </div>
-
-            {/* Feature Highlights Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto pt-2 text-left">
-              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#047857]">
-                  <ShieldCheck className="w-4 h-4 text-[#10B981]" />
-                  <span>AST Security Guard</span>
-                </div>
-                <p className="text-[11px] text-[#64748B] leading-normal">
-                  Strictly enforces read-only SELECT execution and hard-stops destructive commands.
-                </p>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#047857]">
-                  <Sparkles className="w-4 h-4 text-[#10B981]" />
-                  <span>Dual LLM + Offline</span>
-                </div>
-                <p className="text-[11px] text-[#64748B] leading-normal">
-                  Gemini 1.5 Flash, GPT-4o, and an intelligent deterministic offline fallback engine.
-                </p>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#047857]">
-                  <Layers className="w-4 h-4 text-[#10B981]" />
-                  <span>Dynamic Analytics</span>
-                </div>
-                <p className="text-[11px] text-[#64748B] leading-normal">
-                  Instant Bar, Line, Area, and Pie charts with searchable tables, CSV & JSON exports.
-                </p>
-              </div>
-            </div>
-
-            {/* Quick Prompt Starters */}
-            <div className="pt-2">
-              <span className="text-[10px] uppercase font-bold text-[#64748B] tracking-wider block mb-2.5">
-                Popular Sample Questions:
-              </span>
-              <div className="flex flex-wrap justify-center gap-2">
-                {[
-                  'Top 5 revenue products',
-                  'Monthly sales trend by region',
-                  'Customer distribution by plan & country',
-                ].map((sample) => (
-                  <button
-                    key={sample}
-                    onClick={() => {
-                      setQuery(sample);
-                      handleRunQuery(sample);
-                    }}
-                    className="px-3.5 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-[#E2E8F0] hover:border-[#10B981]/50 text-xs font-semibold text-[#0F172A] transition-all flex items-center space-x-1.5 shadow-2xs cursor-pointer group"
-                  >
-                    <span>{sample}</span>
-                    <ArrowRight className="w-3 h-3 text-[#94A3B8] group-hover:text-[#10B981] transition-colors" />
-                  </button>
-                ))}
-              </div>
             </div>
           </section>
         )}
@@ -258,6 +201,7 @@ export default function Home() {
               sql={pipelineResult.sql || ''}
               explanation={pipelineResult.explanation || ''}
               generatedBy={pipelineResult.generated_by}
+              insights={pipelineResult.insights}
               rows={pipelineResult.rows || []}
               columns={pipelineResult.columns || []}
               rowCount={pipelineResult.row_count}

@@ -5,15 +5,17 @@ User Question -> Retrieve Schema -> Generate SQL & Explanation -> Safely Execute
 """
 import time
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Optional, Dict, Any, List
 try:
     from backend.app.services.schema_service import get_db_schema_info
     from backend.app.services.sql_generator import SQLGenerator
     from backend.app.services.sql_executor import execute_safe_query
+    from backend.app.services.insights_service import BusinessInsightsInterpreter
 except ImportError:
     from app.services.schema_service import get_db_schema_info
     from app.services.sql_generator import SQLGenerator
     from app.services.sql_executor import execute_safe_query
+    from app.services.insights_service import BusinessInsightsInterpreter
 
 logger = logging.getLogger("text2sql.pipeline")
 
@@ -24,6 +26,8 @@ class TextToSqlPipeline:
         self.api_key = api_key
         self.provider = provider
         self.generator = SQLGenerator(api_key=api_key, provider=provider)
+        self.interpreter = BusinessInsightsInterpreter(api_key=api_key, provider=provider)
+
 
     def run(self, user_question: str) -> Dict[str, Any]:
         """
@@ -55,7 +59,16 @@ class TextToSqlPipeline:
         # 3. Safely execute the query
         exec_result = execute_safe_query(sql_query)
 
-        # 4. Infer optimal visualization settings
+        # 4. Interpret execution results into human-readable business insights
+        insights = self.interpreter.interpret(
+            question=user_question,
+            sql_query=sql_query,
+            columns=exec_result["columns"],
+            rows=exec_result["rows"],
+            error=exec_result.get("error")
+        )
+
+        # 5. Infer optimal visualization settings
         visualization = self._infer_visualization(
             columns=exec_result["columns"],
             rows=exec_result["rows"],
@@ -74,6 +87,7 @@ class TextToSqlPipeline:
             "sql": sql_query,
             "explanation": explanation,
             "generated_by": generated_by,
+            "insights": insights,
             "rows": exec_result["rows"],
             "columns": exec_result["columns"],
             "row_count": exec_result["row_count"],
@@ -84,13 +98,21 @@ class TextToSqlPipeline:
         }
 
     def _infer_visualization(self, columns: List[str], rows: List[Dict[str, Any]], user_question: str) -> Dict[str, Any]:
-        """Recommends chart type, x-axis, and y-axis configurations based on returned columns and data shapes."""
+        """
+        Recommends one appropriate default chart type, axes, metric labels, and ranking order.
+        - Bar chart for rankings and categorical comparisons (with explicit highest/lowest order labeling).
+        - Line chart for time-series trends.
+        - Pie chart for proportions with few categories (<= 6 rows).
+        - Table for detailed records or unsuitable chart data.
+        """
         if not rows or not columns:
             return {
                 "chart_type": "table",
                 "x_axis": "",
                 "y_axes": [],
-                "title": f"Results for: {user_question}"
+                "title": f"Results for: {user_question}",
+                "ranking_order": "none",
+                "metric_label": "Value"
             }
 
         sample_row = rows[0]
@@ -114,25 +136,58 @@ class TextToSqlPipeline:
 
         x_axis = string_cols[0] if string_cols else (date_cols[0] if date_cols else columns[0])
         y_axes = numeric_cols if numeric_cols else [c for c in columns if c != x_axis][:2]
+        primary_metric_label = y_axes[0].replace("_", " ").title() if y_axes else "Value"
 
         q_lower = user_question.lower()
+        is_lowest = any(k in q_lower for k in [
+            "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "min", "minimum", "fewest"
+        ])
+        is_highest = any(k in q_lower for k in [
+            "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "max", "maximum"
+        ])
 
-        # 1. Temporal data -> Line / Area Chart
+        # Determine ranking direction
+        ranking_order = "none"
+        if numeric_cols and (is_lowest or is_highest or "sort" in q_lower or "rank" in q_lower or "order by" in q_lower):
+            if len(rows) > 1:
+                first_v = float(rows[0].get(numeric_cols[0], 0) or 0)
+                last_v = float(rows[-1].get(numeric_cols[0], 0) or 0)
+                if first_v < last_v:
+                    ranking_order = "asc"
+                elif first_v > last_v:
+                    ranking_order = "desc"
+                else:
+                    ranking_order = "asc" if is_lowest else "desc"
+            else:
+                ranking_order = "asc" if is_lowest else "desc"
+
+        # 1. Temporal data -> Line Chart
         if date_cols:
             x_axis = date_cols[0]
-            chart_type = "line" if len(rows) > 6 else "area"
-        # 2. Proportion or small categorical distribution -> Pie Chart
+            chart_type = "line"
+            title = f"{primary_metric_label} Over Time"
+        # 2. Proportion or small categorical distribution -> Pie Chart (<= 6 rows)
         elif len(rows) <= 6 and numeric_cols and any(k in q_lower for k in ["distribution", "share", "plan", "proportion", "breakdown"]):
             chart_type = "pie"
-        # 3. Numeric comparisons -> Bar Chart
+            title = f"{primary_metric_label} Distribution by {x_axis.replace('_', ' ').title()}"
+        # 3. Rankings and categorical comparisons -> Bar Chart
         elif numeric_cols:
             chart_type = "bar"
+            if ranking_order == "asc":
+                title = f"Lowest {len(rows)} by {primary_metric_label} (Ascending Order)"
+            elif ranking_order == "desc":
+                title = f"Top {len(rows)} by {primary_metric_label} (Descending Order)"
+            else:
+                title = f"{primary_metric_label} Comparison"
         else:
             chart_type = "table"
+            title = f"Data Records for: {user_question}"
 
         return {
             "chart_type": chart_type,
             "x_axis": x_axis,
             "y_axes": y_axes,
-            "title": f"Analytics: {user_question.capitalize()}"
+            "title": title,
+            "ranking_order": ranking_order,
+            "metric_label": primary_metric_label
         }

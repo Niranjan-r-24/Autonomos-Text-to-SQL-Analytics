@@ -13,6 +13,7 @@ yarn-error.log*
 
 # Python
 __pycache__/
+.pytest_cache/
 .venv/
 venv/
 *.pyc
