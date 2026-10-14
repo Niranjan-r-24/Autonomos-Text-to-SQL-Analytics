@@ -174,17 +174,17 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Products by Units Sold / Quantity
-        if ("unit" in q or "quantity" in q or "volume" in q or "sold" in q) and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q):
+        if ("unit" in q or "quantity" in q or "volume" in q or "sold" in q) and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q or "highest" in q):
             sql = (
-                f"SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_units_sold, SUM(s.total_price) AS total_revenue "
+                f"SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity "
                 f"FROM sales s JOIN products p ON s.product_id = p.id "
                 f"WHERE s.status = 'Completed' "
                 f"GROUP BY p.id, p.name, p.category "
-                f"ORDER BY total_units_sold {direction}{limit_clause};"
+                f"ORDER BY total_quantity {direction}{limit_clause};"
             )
             explanation = (
-                f"Joins 'sales' and 'products' tables, filters for completed transactions, "
-                f"and aggregates total units sold for {rank_label} products sorted in {direction_word} order."
+                f"Joins the 'sales' and 'products' tables, filters for completed transactions, "
+                f"and aggregates total quantity sold for {rank_label} products sorted in {direction_word} order."
             )
             return sql, explanation
 
@@ -198,7 +198,7 @@ JSON Response Format:
                 f"ORDER BY total_revenue {direction}{limit_clause};"
             )
             explanation = (
-                f"Joins 'sales' and 'products' tables, filters for completed transactions, "
+                f"Joins the 'sales' and 'products' tables, filters for completed transactions, "
                 f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
             )
             return sql, explanation
@@ -273,8 +273,8 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern: Security & Audit logs
-        if "audit" in q or "log" in q or "security" in q or "fail" in q:
+        # Pattern: Security & Audit logs (Strictly require security or audit or log keywords)
+        if any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and "event" in q):
             sql = (
                 "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
                 "FROM audit_logs "
@@ -296,10 +296,24 @@ JSON Response Format:
             explanation = f"Retrieves the first {limit_val} records from the '{target_table}' table."
             return sql, explanation
 
-        # Default query for custom/uploaded tables or unknown intent
-        first_table = list(schema_info.keys())[0] if schema_info else "sales"
-        sql = f'SELECT * FROM "{first_table}" LIMIT 10;'
-        explanation = f"Retrieves sample records from the '{first_table}' table."
+        # Safe Default: NEVER default to audit_logs for business questions!
+        if schema_info:
+            if "product" in q or "item" in q:
+                fallback_table = "products" if "products" in schema_info else "sales"
+            elif "customer" in q or "client" in q:
+                fallback_table = "customers" if "customers" in schema_info else "sales"
+            elif "sale" in q or "revenue" in q or "order" in q or "sales" in schema_info:
+                fallback_table = "sales"
+            elif "products" in schema_info:
+                fallback_table = "products"
+            else:
+                non_audit = [t for t in schema_info.keys() if t != "audit_logs"]
+                fallback_table = non_audit[0] if non_audit else "sales"
+        else:
+            fallback_table = "sales"
+
+        sql = f'SELECT * FROM "{fallback_table}" LIMIT 10;'
+        explanation = f"Retrieves sample records from the '{fallback_table}' table."
         return sql, explanation
 
     def _clean_sql(self, raw_sql: str) -> str:

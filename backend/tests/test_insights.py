@@ -358,11 +358,11 @@ def test_ranking_direction_units_sold_metric():
     
     res = pipeline.run("Show the top 10 products by units sold")
     assert res["success"] is True
-    assert "total_units_sold" in res["sql"]
-    assert "ORDER BY total_units_sold DESC" in res["sql"]
+    assert ("total_quantity" in res["sql"] or "total_units_sold" in res["sql"])
+    assert ("ORDER BY total_quantity DESC" in res["sql"] or "ORDER BY total_units_sold DESC" in res["sql"])
     assert "LIMIT 10" in res["sql"]
     assert res["visualization"]["ranking_order"] == "desc"
-    assert "Units Sold" in res["visualization"]["metric_label"] or "Total Units Sold" in res["visualization"]["metric_label"]
+    assert "Quantity" in res["visualization"]["metric_label"] or "Units" in res["visualization"]["metric_label"]
 
 
 def test_ranking_direction_customers_by_spending():
@@ -407,5 +407,156 @@ def test_ranking_tie_handling():
     assert insights["status"] == "success"
     comp_text = " ".join(insights["comparisons"])
     assert "tied with $500.00" in comp_text
+
+
+# -------------------------------------------------------------------------
+# Test: Critical Bug Regression Suite
+# -------------------------------------------------------------------------
+def test_regression_highest_quantity_products():
+    """
+    CRITICAL REGRESSION TEST:
+    'Which 3 products sold the highest quantity?' must route to sales + products,
+    aggregate SUM(s.quantity) AS total_quantity, sort DESC, LIMIT 3, recommend a Bar Chart,
+    and generate natural language business insights explaining the top products.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Which 3 products sold the highest quantity?")
+
+    assert res["success"] is True
+    assert res["row_count"] == 3
+    assert len(res["rows"]) == 3
+
+    # Validate SQL
+    sql_lower = res["sql"].lower()
+    assert "sales" in sql_lower
+    assert "products" in sql_lower
+    assert "sum(s.quantity)" in sql_lower or "total_quantity" in sql_lower
+    assert "order by total_quantity desc" in sql_lower
+    assert "limit 3" in sql_lower
+    assert "audit_logs" not in sql_lower
+
+    # Validate Returned Columns & Data
+    assert "product_name" in res["columns"]
+    assert "total_quantity" in res["columns"]
+    assert "log_id" not in res["columns"]
+    assert "event_timestamp" not in res["columns"]
+
+    # Validate Visualization Recommendation
+    vis = res["visualization"]
+    assert vis["chart_type"] == "bar"
+    assert vis["x_axis"] == "product_name"
+    assert vis["y_axes"] == ["total_quantity"]
+    assert vis["ranking_order"] == "desc"
+    assert "Total Quantity" in vis["metric_label"]
+    assert "Top 3 by Total Quantity" in vis["title"]
+
+    # Validate Business Insights
+    insights = res["insights"]
+    assert insights["status"] == "success"
+    assert insights["grounded"] is True
+    assert "ranks highest in total quantity" in insights["direct_answer"]
+    assert len(insights["key_findings"]) >= 3
+    assert "#1 (Highest):" in insights["key_findings"][0]
+    assert "share" in insights["key_findings"][0]
+    assert len(insights["caveats"]) >= 1
+    assert bool(insights["business_takeaway"])
+
+
+def test_regression_lowest_quantity_products():
+    """
+    Verify 'Which 3 products sold the lowest quantity?' sorts ASC and labels lowest order.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Which 3 products sold the lowest quantity?")
+
+    assert res["success"] is True
+    assert res["row_count"] == 3
+    assert "order by total_quantity asc" in res["sql"].lower()
+    assert "limit 3" in res["sql"].lower()
+    assert res["visualization"]["chart_type"] == "bar"
+    assert res["visualization"]["x_axis"] == "product_name"
+    assert res["visualization"]["ranking_order"] == "asc"
+    assert "Lowest 3 by Total Quantity" in res["visualization"]["title"]
+    assert "ranks lowest in total quantity" in res["insights"]["direct_answer"]
+
+
+def test_regression_top_5_products_by_revenue():
+    """
+    Verify 'Top 5 products by revenue' targets revenue DESC LIMIT 5.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Top 5 products by revenue")
+
+    assert res["success"] is True
+    assert res["row_count"] <= 5
+    assert "order by total_revenue desc" in res["sql"].lower()
+    assert "limit 5" in res["sql"].lower()
+    assert res["visualization"]["chart_type"] == "bar"
+    assert res["visualization"]["x_axis"] == "product_name"
+    assert "total_revenue" in res["visualization"]["y_axes"]
+
+
+def test_regression_failed_audit_log_events():
+    """
+    Verify security question accurately routes to audit_logs table.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Failed audit log events")
+
+    assert res["success"] is True
+    assert "audit_logs" in res["sql"].lower()
+    assert "event_count" in res["columns"]
+    assert res["visualization"]["chart_type"] == "bar"
+    assert res["visualization"]["x_axis"] == "action"
+    assert "security/audit events" in res["insights"]["direct_answer"]
+
+
+def test_regression_consecutive_queries_isolation():
+    """
+    Verify executing an audit log query followed by a product quantity query
+    completely isolates the results without cross-contamination.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+
+    # Query 1: Audit logs
+    res1 = pipeline.run("Show recent security audit logs")
+    assert res1["success"] is True
+    assert "audit_logs" in res1["sql"].lower()
+
+    # Query 2: Product sales
+    res2 = pipeline.run("Which 3 products sold the highest quantity?")
+    assert res2["success"] is True
+    assert "audit_logs" not in res2["sql"].lower()
+    assert "sales" in res2["sql"].lower()
+    assert "product_name" in res2["columns"]
+    assert res2["visualization"]["chart_type"] == "bar"
+    assert res2["visualization"]["x_axis"] == "product_name"
+
+
+def test_regression_empty_results_and_execution_failures():
+    """
+    Verify empty queries and invalid SQL queries do not crash the pipeline
+    and return clean, well-formed responses.
+    """
+    # Empty result execution
+    res_empty = execute_safe_query("SELECT * FROM sales WHERE region = 'Antarctica';")
+    assert res_empty["success"] is True
+    assert res_empty["row_count"] == 0
+
+    interpreter = BusinessInsightsInterpreter(provider="fallback")
+    empty_insights = interpreter.interpret(
+        question="Show sales in Antarctica",
+        sql_query="SELECT * FROM sales WHERE region = 'Antarctica';",
+        columns=res_empty["columns"],
+        rows=res_empty["rows"]
+    )
+    assert empty_insights["status"] == "empty"
+    assert "No matching records were found" in empty_insights["direct_answer"]
+
+    # SQL execution error via execute_safe_query
+    err_res = execute_safe_query("SELECT * FROM non_existent_table_abc;")
+    assert err_res["success"] is False
+    assert err_res["error"] is not None
+    assert err_res["row_count"] == 0
 
 

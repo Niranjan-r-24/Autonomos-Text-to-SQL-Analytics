@@ -69,6 +69,7 @@ export default function Home() {
 
     setIsExecuting(true);
     setErrorMessage(null);
+    setPipelineResult(null);
 
     try {
       const res = await axios.post(`${API_BASE}/api/query`, {
@@ -86,6 +87,7 @@ export default function Home() {
     } catch (err: any) {
       const msg = err.response?.data?.detail || err.message || 'Query execution failed.';
       setErrorMessage(msg);
+      setPipelineResult(null);
     } finally {
       setIsExecuting(false);
     }
@@ -116,6 +118,7 @@ export default function Home() {
             sql_execution_time_ms: res.data.execution_time_ms,
             explanation: prev?.explanation || 'Executed custom SQL query directly.',
             insights: res.data.insights || prev?.insights,
+            visualization: res.data.visualization || prev?.visualization,
           }));
         } else {
           setErrorMessage(res.data.error || 'Execution failed.');

@@ -240,6 +240,14 @@ def execute_custom_sql(req: ExecuteSqlRequest):
 
     result = execute_safe_query(req.sql.strip())
     if result.get("success"):
+        pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider or "gemini")
+        visualization = pipeline._infer_visualization(
+            columns=result.get("columns", []),
+            rows=result.get("rows", []),
+            user_question=req.question or "Custom SQL Execution"
+        )
+        result["visualization"] = visualization
+
         interpreter = BusinessInsightsInterpreter(api_key=req.api_key, provider=req.provider or "gemini")
         insights = interpreter.interpret(
             question=req.question or "Custom SQL Execution",

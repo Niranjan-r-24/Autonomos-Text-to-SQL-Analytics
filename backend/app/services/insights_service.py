@@ -471,7 +471,8 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
         # Pattern 3: Rankings / Top & Lowest Performers
         # ----------------------------------------------------
         if is_ranking and text_cols and numeric_cols:
-            primary_label_col = text_cols[0]
+            preferred_labels = ["product_name", "product", "customer_name", "customer", "name", "action", "status", "category"]
+            primary_label_col = next((c for c in preferred_labels if c in text_cols), text_cols[0])
             primary_val_col = numeric_cols[0]
             metric_clean = primary_val_col.replace('_', ' ')
             

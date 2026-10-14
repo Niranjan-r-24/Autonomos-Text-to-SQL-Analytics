@@ -83,6 +83,15 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
+  // Reset filter, metric, and pagination state on new query execution
+  React.useEffect(() => {
+    setSelectedMetric('');
+    setSearchTerm('');
+    setSortColumn(null);
+    setCurrentPage(1);
+    setIsEditingSql(false);
+  }, [sql, question]);
+
   // Reset editedSql if prop changes
   React.useEffect(() => {
     setEditedSql(sql);
@@ -90,8 +99,8 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
 
   // Sync activeView if visualization changes
   React.useEffect(() => {
-    if (visualization?.chart_type && visualization.chart_type !== 'table') {
-      setActiveView(visualization.chart_type as any);
+    if (visualization?.chart_type) {
+      setActiveView(visualization.chart_type === 'table' ? 'table' : (visualization.chart_type as any));
     }
   }, [visualization?.chart_type]);
 
@@ -114,9 +123,17 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
       if (['date', 'time', 'month', 'year', 'day'].some((k) => colLower.includes(k))) {
         dKeys.push(col);
       } else if (typeof val === 'number') {
-        nKeys.push(col);
+        if (!colLower.endsWith('_id') && colLower !== 'id') {
+          nKeys.push(col);
+        } else {
+          tKeys.push(col);
+        }
       } else if (typeof val === 'string' && val.trim() !== '' && !isNaN(Number(val))) {
-        nKeys.push(col);
+        if (!colLower.endsWith('_id') && colLower !== 'id') {
+          nKeys.push(col);
+        } else {
+          tKeys.push(col);
+        }
       } else {
         tKeys.push(col);
       }
@@ -130,15 +147,33 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
     if (visualization?.x_axis && effectiveColumns.includes(visualization.x_axis)) {
       return visualization.x_axis;
     }
-    return dateKeys[0] || textKeys[0] || effectiveColumns[0] || '';
-  }, [visualization, effectiveColumns, dateKeys, textKeys]);
+    const preferredNames = ['product_name', 'product', 'customer_name', 'customer', 'name', 'category', 'action', 'status'];
+    for (const p of preferredNames) {
+      if (textKeys.includes(p)) return p;
+    }
+    return textKeys[0] || dateKeys[0] || effectiveColumns[0] || '';
+  }, [visualization, effectiveColumns, textKeys, dateKeys]);
+
+  const activeYMetrics = useMemo(() => {
+    if (selectedMetric && numericKeys.includes(selectedMetric)) {
+      return [selectedMetric];
+    }
+    if (visualization?.y_axes && visualization.y_axes.length > 0) {
+      const valid = visualization.y_axes.filter((y) => numericKeys.includes(y));
+      if (valid.length > 0) return valid;
+    }
+    return numericKeys.slice(0, 2);
+  }, [selectedMetric, visualization, numericKeys]);
 
   const activeYMetric = useMemo(() => {
     if (selectedMetric && numericKeys.includes(selectedMetric)) {
       return selectedMetric;
     }
-    return numericKeys[0] || effectiveColumns[1] || effectiveColumns[0] || '';
-  }, [selectedMetric, numericKeys, effectiveColumns]);
+    if (visualization?.y_axes && visualization.y_axes.length > 0 && numericKeys.includes(visualization.y_axes[0])) {
+      return visualization.y_axes[0];
+    }
+    return numericKeys[0] || '';
+  }, [selectedMetric, visualization, numericKeys]);
 
   // Chart Data
   const chartData = useMemo(() => {
@@ -446,7 +481,7 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
                           }}
                         />
                         <Legend />
-                        {(selectedMetric ? [selectedMetric] : numericKeys).map((key, idx) => (
+                        {activeYMetrics.map((key, idx) => (
                           <Bar
                             key={key}
                             dataKey={key}
@@ -485,7 +520,7 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
                           }}
                         />
                         <Legend />
-                        {(selectedMetric ? [selectedMetric] : numericKeys).map((key, idx) => (
+                        {activeYMetrics.map((key, idx) => (
                           <Line
                             key={key}
                             type="monotone"
@@ -526,7 +561,7 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
                           }}
                         />
                         <Legend />
-                        {(selectedMetric ? [selectedMetric] : numericKeys).map((key, idx) => (
+                        {activeYMetrics.map((key, idx) => (
                           <Area
                             key={key}
                             type="monotone"

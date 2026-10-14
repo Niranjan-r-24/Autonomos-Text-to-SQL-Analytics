@@ -134,8 +134,17 @@ class TextToSqlPipeline:
             else:
                 string_cols.append(col)
 
-        x_axis = string_cols[0] if string_cols else (date_cols[0] if date_cols else columns[0])
-        y_axes = numeric_cols if numeric_cols else [c for c in columns if c != x_axis][:2]
+        # Prioritize the most descriptive categorical column for x_axis
+        preferred_x = ["product_name", "product", "customer_name", "customer", "name", "category", "action", "status", "channel", "plan"]
+        x_axis = None
+        for p in preferred_x:
+            if p in string_cols:
+                x_axis = p
+                break
+        if not x_axis:
+            x_axis = string_cols[0] if string_cols else (date_cols[0] if date_cols else columns[0])
+
+        y_axes = numeric_cols if numeric_cols else []
         primary_metric_label = y_axes[0].replace("_", " ").title() if y_axes else "Value"
 
         q_lower = user_question.lower()
@@ -161,17 +170,22 @@ class TextToSqlPipeline:
             else:
                 ranking_order = "asc" if is_lowest else "desc"
 
-        # 1. Temporal data -> Line Chart
-        if date_cols:
+        # Determine chart type:
+        # If no numeric metrics are present (e.g. raw audit logs, customer lists), default to table view
+        if not numeric_cols:
+            chart_type = "table"
+            title = f"Data Records for: {user_question}"
+        # 1. Temporal trend -> Line Chart (ONLY when we have numeric metrics over time and not a ranking query)
+        elif date_cols and not (is_highest or is_lowest or "product" in q_lower or "customer" in q_lower or "top" in q_lower or "bottom" in q_lower):
             x_axis = date_cols[0]
             chart_type = "line"
             title = f"{primary_metric_label} Over Time"
         # 2. Proportion or small categorical distribution -> Pie Chart (<= 6 rows)
-        elif len(rows) <= 6 and numeric_cols and any(k in q_lower for k in ["distribution", "share", "plan", "proportion", "breakdown"]):
+        elif len(rows) <= 6 and any(k in q_lower for k in ["distribution", "share", "proportion", "breakdown"]):
             chart_type = "pie"
             title = f"{primary_metric_label} Distribution by {x_axis.replace('_', ' ').title()}"
         # 3. Rankings and categorical comparisons -> Bar Chart
-        elif numeric_cols:
+        else:
             chart_type = "bar"
             if ranking_order == "asc":
                 title = f"Lowest {len(rows)} by {primary_metric_label} (Ascending Order)"
@@ -179,9 +193,6 @@ class TextToSqlPipeline:
                 title = f"Top {len(rows)} by {primary_metric_label} (Descending Order)"
             else:
                 title = f"{primary_metric_label} Comparison"
-        else:
-            chart_type = "table"
-            title = f"Data Records for: {user_question}"
 
         return {
             "chart_type": chart_type,
