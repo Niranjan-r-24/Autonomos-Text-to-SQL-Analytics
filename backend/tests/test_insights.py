@@ -606,3 +606,61 @@ def test_regression_security_authorizer_blocks_data_modification():
     assert "Security" in res_update["error"]
 
 
+def test_regression_monthly_sales_trends_by_region():
+    """
+    Verify 'Show monthly sales trends by region' extracts months, groups by region,
+    recommends Line Chart visualization, and generates time-series insights.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Show monthly sales trends by region")
+
+    assert res["success"] is True
+    assert "sales_month" in res["sql"].lower() or "month" in res["sql"].lower()
+    assert "region" in res["sql"].lower()
+    assert "sales" in res["sql"].lower()
+    assert res["visualization"]["chart_type"] == "line"
+    assert res["insights"]["status"] == "success"
+    assert len(res["insights"]["key_findings"]) >= 2
+
+
+def test_regression_product_followed_by_lowest_ranking():
+    """
+    Verify running a top product query followed by a lowest product query produces
+    clean distinct results with DESC and ASC ordering respectively.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+
+    res_top = pipeline.run("Top 5 revenue products")
+    assert res_top["success"] is True
+    assert "order by total_revenue desc" in res_top["sql"].lower()
+    assert res_top["visualization"]["ranking_order"] == "desc"
+
+    res_lowest = pipeline.run("Lowest 5 revenue products")
+    assert res_lowest["success"] is True
+    assert "order by total_revenue asc" in res_lowest["sql"].lower()
+    assert res_lowest["visualization"]["ranking_order"] == "asc"
+    assert "lowest" in res_lowest["insights"]["direct_answer"].lower()
+
+
+def test_regression_rapid_consecutive_requests():
+    """
+    Verify running multiple rapid queries through the API endpoint produces
+    independent, consistent results with correct row counts and matching column metadata.
+    """
+    queries = [
+        "Which 3 products sold the highest quantity?",
+        "Top 5 products by revenue",
+        "Show recent failed audit log events"
+    ]
+
+    for q in queries:
+        resp = client.post("/api/query", json={"query": q, "provider": "fallback"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["row_count"] == len(data["rows"])
+        assert len(data["columns"]) > 0
+        assert data["insights"]["status"] == "success"
+        assert bool(data["visualization"]["chart_type"])
+
+

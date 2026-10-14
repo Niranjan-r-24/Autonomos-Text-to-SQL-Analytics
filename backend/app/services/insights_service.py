@@ -441,13 +441,24 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             top_actor = top_record.get("ip_address") or top_record.get("action") or "Unknown"
             top_count = top_record.get(count_col, 0) if count_col else 1
 
-            direct_answer = f"Identified {int(total_events):,} security/audit events across {row_count} logged segments, led by '{top_actor}' with {int(top_count):,} occurrences."
+            if count_col:
+                direct_answer = f"Identified {int(total_events):,} security/audit events across {row_count} logged segments, led by '{top_actor}' with {int(top_count):,} occurrences."
+            else:
+                failure_count = sum(1 for r in rows if str(r.get("status", "")).upper() == "FAILURE")
+                unique_ips = len(set(str(r.get("ip_address", "")) for r in rows if r.get("ip_address")))
+                direct_answer = f"Retrieved {row_count} security/audit events ({failure_count} failed) across {unique_ips} distinct IP addresses, led by action '{top_actor}'."
+
             key_findings = []
             for idx, r in enumerate(rows[:5], 1):
                 label_parts = [str(r.get(c, '')) for c in text_cols if r.get(c) is not None]
                 label = " - ".join(label_parts) or f"Record {idx}"
-                c_val = format_value(r.get(count_col), count_col) if count_col else "logged"
-                key_findings.append(f"#{idx}: {label} ({c_val} occurrences)")
+                if count_col:
+                    c_val = format_value(r.get(count_col), count_col)
+                    key_findings.append(f"#{idx}: {label} ({c_val} occurrences)")
+                else:
+                    ts = r.get("timestamp", "Recent")
+                    status_str = r.get("status", "LOG")
+                    key_findings.append(f"#{idx}: [{status_str}] {label} at {ts}")
 
             caveats = [
                 f"Results include {row_count} distinct audit event categories.",

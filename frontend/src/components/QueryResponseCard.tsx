@@ -158,12 +158,18 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
     if (selectedMetric && numericKeys.includes(selectedMetric)) {
       return [selectedMetric];
     }
+    // Default to the single primary metric so that metrics with vastly different scales (e.g. $100k revenue vs 5 orders) do not crush each other on an unscaled Y-axis
     if (visualization?.y_axes && visualization.y_axes.length > 0) {
       const valid = visualization.y_axes.filter((y) => numericKeys.includes(y));
-      if (valid.length > 0) return valid;
+      if (valid.length > 0) return [valid[0]];
     }
-    return numericKeys.slice(0, 2);
+    return numericKeys.slice(0, 1);
   }, [selectedMetric, visualization, numericKeys]);
+
+  const isCurrencyMetric = useMemo(() => {
+    const m = (activeYMetrics[0] || selectedMetric || visualization?.metric_label || '').toLowerCase();
+    return m.includes('revenue') || m.includes('price') || m.includes('spent') || m.includes('cost') || m.includes('profit');
+  }, [activeYMetrics, selectedMetric, visualization?.metric_label]);
 
   const activeYMetric = useMemo(() => {
     if (selectedMetric && numericKeys.includes(selectedMetric)) {
@@ -174,6 +180,31 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
     }
     return numericKeys[0] || '';
   }, [selectedMetric, visualization, numericKeys]);
+
+  const formatYAxisTick = (val: any) => {
+    if (typeof val === 'number') {
+      const prefix = isCurrencyMetric ? '$' : '';
+      if (Math.abs(val) >= 1000000) return `${prefix}${(val / 1000000).toFixed(1)}M`;
+      if (Math.abs(val) >= 1000) return `${prefix}${(val / 1000).toFixed(0)}k`;
+      return `${prefix}${val}`;
+    }
+    return String(val ?? '');
+  };
+
+  const formatXAxisTick = (val: any) => {
+    const s = String(val ?? '');
+    return s.length > 20 ? s.slice(0, 18) + '...' : s;
+  };
+
+  const formatTooltipValue = (value: any, name: any) => {
+    const num = Number(value);
+    const nStr = String(name || '');
+    const isCurr = isCurrencyMetric || nStr.toLowerCase().includes('revenue') || nStr.toLowerCase().includes('price') || nStr.toLowerCase().includes('spent');
+    const formatted = !isNaN(num)
+      ? (isCurr ? `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : num.toLocaleString('en-US'))
+      : String(value ?? '');
+    return [formatted, nStr.replace(/_/g, ' ')];
+  };
 
   // Chart Data
   const chartData = useMemo(() => {
@@ -202,8 +233,10 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
       list.sort((a, b) => {
         const valA = a[sortColumn];
         const valB = b[sortColumn];
-        if (typeof valA === 'number' && typeof valB === 'number') {
-          return sortDirection === 'asc' ? valA - valB : valB - valA;
+        const numA = Number(valA);
+        const numB = Number(valB);
+        if (!isNaN(numA) && !isNaN(numB) && valA !== null && valB !== null && valA !== '' && valB !== '') {
+          return sortDirection === 'asc' ? numA - numB : numB - numA;
         }
         const strA = String(valA ?? '').toLowerCase();
         const strB = String(valB ?? '').toLowerCase();
@@ -238,10 +271,11 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
   };
 
   const handleCopyMd = () => {
-    if (!rows.length) return;
+    const exportData = filteredAndSortedRows.length > 0 ? filteredAndSortedRows : rows;
+    if (!exportData.length) return;
     const headerRow = `| ${effectiveColumns.join(' | ')} |`;
     const dividerRow = `| ${effectiveColumns.map(() => '---').join(' | ')} |`;
-    const dataRows = rows
+    const dataRows = exportData
       .map((r) => `| ${effectiveColumns.map((c) => String(r[c] ?? '')).join(' | ')} |`)
       .join('\n');
     navigator.clipboard.writeText(`${headerRow}\n${dividerRow}\n${dataRows}`);
@@ -250,16 +284,18 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
   };
 
   const handleCopyJson = () => {
-    if (!rows.length) return;
-    navigator.clipboard.writeText(JSON.stringify(rows, null, 2));
+    const exportData = filteredAndSortedRows.length > 0 ? filteredAndSortedRows : rows;
+    if (!exportData.length) return;
+    navigator.clipboard.writeText(JSON.stringify(exportData, null, 2));
     setCopiedJson(true);
     setTimeout(() => setCopiedJson(false), 2000);
   };
 
   const exportCSV = () => {
-    if (!rows.length) return;
+    const exportData = filteredAndSortedRows.length > 0 ? filteredAndSortedRows : rows;
+    if (!exportData.length) return;
     const header = effectiveColumns.join(',');
-    const csvLines = rows.map((r) =>
+    const csvLines = exportData.map((r) =>
       effectiveColumns.map((c) => `"${String(r[c] ?? '').replace(/"/g, '""')}"`).join(',')
     );
     const blob = new Blob([header + '\n' + csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -467,10 +503,11 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
                     <ResponsiveContainer width="100%" height={260}>
                       <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis dataKey={xAxisKey} stroke="#475569" fontSize={11} />
-                        <YAxis stroke="#475569" fontSize={11} />
+                        <XAxis dataKey={xAxisKey} stroke="#475569" fontSize={11} tickFormatter={formatXAxisTick} />
+                        <YAxis stroke="#475569" fontSize={11} tickFormatter={formatYAxisTick} />
                         <Tooltip
                           cursor={{ fill: 'rgba(16, 185, 129, 0.08)' }}
+                          formatter={formatTooltipValue}
                           contentStyle={{
                             backgroundColor: '#FFFFFF',
                             borderColor: '#10B981',
@@ -507,9 +544,10 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
                     <ResponsiveContainer width="100%" height={260}>
                       <LineChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis dataKey={xAxisKey} stroke="#475569" fontSize={11} />
-                        <YAxis stroke="#475569" fontSize={11} />
+                        <XAxis dataKey={xAxisKey} stroke="#475569" fontSize={11} tickFormatter={formatXAxisTick} />
+                        <YAxis stroke="#475569" fontSize={11} tickFormatter={formatYAxisTick} />
                         <Tooltip
+                          formatter={formatTooltipValue}
                           contentStyle={{
                             backgroundColor: '#FFFFFF',
                             borderColor: '#10B981',
@@ -548,9 +586,10 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
                     <ResponsiveContainer width="100%" height={260}>
                       <AreaChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis dataKey={xAxisKey} stroke="#475569" fontSize={11} />
-                        <YAxis stroke="#475569" fontSize={11} />
+                        <XAxis dataKey={xAxisKey} stroke="#475569" fontSize={11} tickFormatter={formatXAxisTick} />
+                        <YAxis stroke="#475569" fontSize={11} tickFormatter={formatYAxisTick} />
                         <Tooltip
+                          formatter={formatTooltipValue}
                           contentStyle={{
                             backgroundColor: '#FFFFFF',
                             borderColor: '#10B981',

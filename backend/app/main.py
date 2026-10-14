@@ -48,10 +48,22 @@ except ImportError:
     from app.services.pipeline import TextToSqlPipeline
     from app.services.insights_service import BusinessInsightsInterpreter
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if not os.path.exists(DB_PATH):
+        logger.info("Database file not found at %s. Seeding sample database...", DB_PATH)
+        seed_database()
+    else:
+        logger.info("Connected to database at %s", DB_PATH)
+    yield
+
 app = FastAPI(
     title="Text-to-SQL Analytics API",
     version="2.0.0",
-    description="Clean, secure, and beginner-friendly Text-to-SQL Analytics backend."
+    description="Clean, secure, and beginner-friendly Text-to-SQL Analytics backend.",
+    lifespan=lifespan
 )
 
 # Enable CORS for frontend requests
@@ -62,15 +74,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Auto-seed database if it doesn't exist
-@app.on_event("startup")
-def startup_event():
-    if not os.path.exists(DB_PATH):
-        logger.info("Database file not found at %s. Seeding sample database...", DB_PATH)
-        seed_database()
-    else:
-        logger.info("Connected to database at %s", DB_PATH)
 
 
 @app.get("/")
