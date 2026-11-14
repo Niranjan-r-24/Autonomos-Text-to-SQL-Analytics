@@ -41,7 +41,7 @@ class TextToSqlPipeline:
         self.interpreter = BusinessInsightsInterpreter(api_key=api_key, provider=provider)
         self.corrector = SelfCorrectionService(max_retries=3, api_key=api_key, provider=provider)
 
-    def run(self, user_question: str) -> Dict[str, Any]:
+    def run(self, user_question: str, active_table: Optional[str] = None) -> Dict[str, Any]:
         """
         Executes the full multi-agent pipeline for a user question.
         """
@@ -184,7 +184,7 @@ class TextToSqlPipeline:
             explanation = "Executed user-provided SQL query directly."
             generated_by = "Direct User SQL"
         else:
-            sql_query, explanation, generated_by = self.generator.generate(user_question, schema_info)
+            sql_query, explanation, generated_by = self.generator.generate(user_question, schema_info, active_table=active_table)
         gen_time = round(time.time() - t_gen, 3)
 
         agent_steps.append({

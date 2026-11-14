@@ -30,13 +30,23 @@ class SQLGenerator:
             os.getenv("GEMINI_API_KEY") if "gemini" in self.provider else os.getenv("OPENAI_API_KEY")
         )
 
-    def generate(self, user_question: str, schema_info: Dict[str, Any]) -> Tuple[str, str, str]:
+    @staticmethod
+    def _has_cols(schema_info: Dict[str, Any], table_name: str, required_cols: List[str]) -> bool:
+        """Verifies that table_name exists in schema_info and contains all required_cols."""
+        if not schema_info or table_name not in schema_info:
+            return False
+        meta = schema_info[table_name]
+        actual_cols = {c["name"].lower() for c in meta.get("columns", [])}
+        return all(rc.lower() in actual_cols for rc in required_cols)
+
+    def generate(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[str, str, str]:
         """
         Generates SQL query and explanation for the provided user question.
         
         Args:
             user_question: The plain English question from the user.
             schema_info: Structured database schema dictionary.
+            active_table: Optional target table to prioritize (e.g. from upload or active context).
             
         Returns:
             Tuple of (sql_query: str, explanation: str, generated_by: str)
@@ -56,7 +66,7 @@ class SQLGenerator:
                 logger.warning("LLM generation failed, falling back to deterministic engine: %s", str(e))
 
         # 2. Deterministic Rule-Based Fallback Engine
-        sql, explanation = self._generate_deterministic(user_question, schema_info)
+        sql, explanation = self._generate_deterministic(user_question, schema_info, active_table=active_table)
         logger.info("Generated SQL via Deterministic Engine: %s", sql)
         return sql, explanation, "Deterministic Analytics Engine"
 
@@ -144,13 +154,31 @@ JSON Response Format:
 
         return None, None
 
-    def _generate_deterministic(self, user_question: str, schema_info: Dict[str, Any]) -> Tuple[str, str]:
+    def _generate_deterministic(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[str, str]:
         """
         Provides high-precision, intent-aware deterministic SQL queries and explanations.
         Correctly recognizes ranking direction (ASC for lowest/bottom, DESC for top/highest),
         metrics (revenue, units sold, spending, orders, rating), filters, and limits.
+        Strictly guards benchmark queries so they only fire when tables and columns exist in active schema.
         """
         q = user_question.lower()
+        q_tokens = set(re.findall(r"[a-z0-9_]+", q))
+
+        # Check if user prompt explicitly references a custom/uploaded table
+        # or if active_table was specified
+        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
+        target_custom_table = None
+        for tbl in schema_info.keys():
+            tbl_l = tbl.lower()
+            if tbl_l not in canonical_tables:
+                if tbl_l in q_tokens or tbl_l in q or tbl_l.replace("_", " ") in q or tbl_l.rstrip("s") in q_tokens:
+                    target_custom_table = tbl
+                    break
+        if not target_custom_table and active_table and active_table in schema_info and active_table.lower() not in canonical_tables:
+            target_custom_table = active_table
+
+        if target_custom_table:
+            return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_custom_table)
 
         # 1. Parse ranking direction
         is_lowest = any(k in q for k in [
@@ -216,7 +244,7 @@ JSON Response Format:
             date_desc = f" in {yr}"
 
         # Pattern: Compare Regions
-        if ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("region" in q or any(r in q for r in ["north", "south", "east", "west", "europe", "asia", "america", "apac", "latam", "emea"])):
+        if self._has_cols(schema_info, "sales", ["region", "total_price", "status"]) and ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("region" in q or any(r in q for r in ["north", "south", "east", "west", "europe", "asia", "america", "apac", "latam", "emea"])):
             region_candidates = ["North America", "Latin America", "Asia-Pacific", "Europe", "North", "South", "East", "West"]
             regions = [r for r in region_candidates if r.lower() in q]
             if "North America" in regions and "North" in regions:
@@ -234,7 +262,7 @@ JSON Response Format:
                 return sql, explanation
 
         # Pattern: Compare Departments
-        if ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("dept" in q or "department" in q or "salary" in q) and "employees" in schema_info:
+        if self._has_cols(schema_info, "employees", ["department", "salary"]) and ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("dept" in q or "department" in q or "salary" in q):
             depts = [d for d in ["Engineering", "Product", "Marketing", "Sales", "Finance", "HR"] if d.lower() in q]
             if len(depts) >= 2:
                 d_in = ", ".join([f"'{d}'" for d in depts])
@@ -247,7 +275,7 @@ JSON Response Format:
                 return sql, explanation
 
         # Pattern: Single aggregate KPI ("total revenue", "what is total sales", "how much revenue")
-        if ("total" in q or "overall" in q or "sum" in q or "how much" in q) and ("revenue" in q or "sales" in q) and not any(k in q for k in ["product", "customer", "region", "month", "by"]):
+        if self._has_cols(schema_info, "sales", ["total_price", "status"]) and ("total" in q or "overall" in q or "sum" in q or "how much" in q) and ("revenue" in q or "sales" in q) and not any(k in q for k in ["product", "customer", "region", "month", "by"]):
             sql = (
                 f"SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
                 f"FROM sales WHERE status = 'Completed'{date_where_sales};"
@@ -256,7 +284,14 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Completed Sales Detailed Transactions with Customer and Product Names (Multi-Table 3-Way Join)
-        if ("sale" in q or "transaction" in q or "order" in q) and ("customer" in q or "user" in q) and ("product" in q or "item" in q):
+        if (
+            self._has_cols(schema_info, "sales", ["id", "customer_id", "product_id", "total_price", "sale_date", "status"])
+            and self._has_cols(schema_info, "customers", ["id", "name"])
+            and self._has_cols(schema_info, "products", ["id", "name"])
+            and ("sale" in q or "transaction" in q or "order" in q)
+            and ("customer" in q or "user" in q)
+            and ("product" in q or "item" in q)
+        ):
             sql = (
                 "SELECT s.id, c.name AS customer_name, p.name AS product_name, s.total_price, s.sale_date "
                 "FROM sales s "
@@ -272,7 +307,14 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Customer Spending by Product Category (Multi-Table 3-Way Join)
-        if ("customer" in q or "plan" in q) and ("category" in q or "product category" in q) and ("spent" in q or "spending" in q or "revenue" in q or "sales" in q):
+        if (
+            self._has_cols(schema_info, "sales", ["id", "customer_id", "product_id", "total_price", "status"])
+            and self._has_cols(schema_info, "customers", ["id", "plan"])
+            and self._has_cols(schema_info, "products", ["id", "category"])
+            and ("customer" in q or "plan" in q)
+            and ("category" in q or "product category" in q)
+            and ("spent" in q or "spending" in q or "revenue" in q or "sales" in q)
+        ):
             sql = (
                 "SELECT c.plan, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count "
                 "FROM sales s "
@@ -289,7 +331,12 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Average Order Value per Customer Plan (Multi-Table Join)
-        if "plan" in q and ("order value" in q or "average order" in q or "avg order" in q or ("order" in q and ("average" in q or "avg" in q)) or "aov" in q):
+        if (
+            self._has_cols(schema_info, "sales", ["id", "customer_id", "total_price", "status"])
+            and self._has_cols(schema_info, "customers", ["id", "plan"])
+            and "plan" in q
+            and ("order value" in q or "average order" in q or "avg order" in q or ("order" in q and ("average" in q or "avg" in q)) or "aov" in q)
+        ):
             sql = (
                 "SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
                 "FROM sales s "
@@ -305,7 +352,13 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Products by Units Sold / Quantity
-        if (("unit" in q and ("sold" in q or "sale" in q)) or "quantity" in q or "volume" in q or "sold" in q) and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q or "highest" in q) and not ("inventory" in q or "stock" in q):
+        if (
+            self._has_cols(schema_info, "sales", ["id", "product_id", "quantity", "status"])
+            and self._has_cols(schema_info, "products", ["id", "name", "category"])
+            and (("unit" in q and ("sold" in q or "sale" in q)) or "quantity" in q or "volume" in q or "sold" in q)
+            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q or "highest" in q)
+            and not ("inventory" in q or "stock" in q)
+        ):
             sql = (
                 f"SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity "
                 f"FROM sales s JOIN products p ON s.product_id = p.id "
@@ -320,7 +373,17 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Products by Revenue / Sales or Default Benchmark Ranking
-        if ("product" in q or "item" in q) and ("revenue" in q or "sales" in q or ("rank" in q and not "price" in q and not "rating" in q and not "stock" in q) or (is_highest and not "price" in q and not "rating" in q and not "stock" in q and not "unit" in q) or (is_lowest and not "price" in q and not "rating" in q and not "stock" in q and not "unit" in q)):
+        if (
+            self._has_cols(schema_info, "sales", ["id", "product_id", "total_price", "status"])
+            and self._has_cols(schema_info, "products", ["id", "name", "category"])
+            and ("product" in q or "item" in q)
+            and (
+                "revenue" in q or "sales" in q
+                or ("rank" in q and not "price" in q and not "rating" in q and not "stock" in q)
+                or (is_highest and not "price" in q and not "rating" in q and not "stock" in q and not "unit" in q)
+                or (is_lowest and not "price" in q and not "rating" in q and not "stock" in q and not "unit" in q)
+            )
+        ):
             is_unspecified_metric = not any(k in q for k in ["revenue", "sales", "price", "profit", "order"])
             sql = (
                 f"SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders "
@@ -341,10 +404,12 @@ JSON Response Format:
                 )
             return sql, explanation
 
-
-
         # Pattern: Customers by Spending / Value
-        if ("customer" in q or "user" in q or "client" in q) and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q):
+        if (
+            self._has_cols(schema_info, "customers", ["name", "email", "company", "country", "plan", "total_spent"])
+            and ("customer" in q or "user" in q or "client" in q)
+            and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q)
+        ):
             sql = (
                 f"SELECT name AS customer_name, email, company, country, plan, total_spent "
                 f"FROM customers "
@@ -356,7 +421,11 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Customer Distribution by Plan & Country
-        if "customer" in q and ("plan" in q or "country" in q or "distribution" in q or "count" in q):
+        if (
+            self._has_cols(schema_info, "customers", ["country", "plan", "id", "total_spent"])
+            and "customer" in q
+            and ("plan" in q or "country" in q or "distribution" in q or "count" in q)
+        ):
             sql = (
                 "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent "
                 "FROM customers "
@@ -370,7 +439,11 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Monthly Sales Trend / Revenue Over Time
-        if ("month" in q or "monthly" in q or "trend" in q or "time" in q) and ("sale" in q or "revenue" in q):
+        if (
+            self._has_cols(schema_info, "sales", ["sale_date", "total_price", "region", "status"])
+            and ("month" in q or "monthly" in q or "trend" in q or "time" in q)
+            and ("sale" in q or "revenue" in q)
+        ):
             is_postgres = (engine is not None and getattr(engine, "dialect", None) is not None and engine.dialect.name == "postgresql")
             month_expr = "TO_CHAR(sale_date, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', sale_date)"
             sql = (
@@ -387,7 +460,7 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Sales by Region
-        if "region" in q:
+        if self._has_cols(schema_info, "sales", ["region", "total_price", "status"]) and "region" in q:
             sql = (
                 f"SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value "
                 f"FROM sales "
@@ -401,7 +474,7 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Product Categories & Ratings
-        if "category" in q or "rating" in q or "stock" in q:
+        if self._has_cols(schema_info, "products", ["category", "id", "price", "rating", "stock_quantity"]) and ("category" in q or "rating" in q or "stock" in q):
             sort_metric = "avg_rating" if "rating" in q else ("total_stock" if "stock" in q else "product_count")
             sql = (
                 f"SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock "
@@ -416,7 +489,7 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Security & Audit logs (Strictly require security or audit or log keywords)
-        if any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and ("event" in q or "log" in q)):
+        if self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and ("event" in q or "log" in q))):
             if "action" in q and ("ip" in q or "address" in q):
                 sql = (
                     "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
@@ -467,9 +540,9 @@ JSON Response Format:
             return sql, explanation
 
         # Dynamic Schema Synthesizer: Intelligently handles custom tables, columns, metrics, and filters
-        return self._synthesize_dynamic_sql(user_question, schema_info)
+        return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_custom_table)
 
-    def _synthesize_dynamic_sql(self, user_question: str, schema_info: Dict[str, Any]) -> Tuple[str, str]:
+    def _synthesize_dynamic_sql(self, user_question: str, schema_info: Dict[str, Any], target_table: Optional[str] = None) -> Tuple[str, str]:
         """
         Dynamically synthesizes schema-grounded SQL for arbitrary databases and custom tables
         when no static benchmark pattern matches.
@@ -512,55 +585,70 @@ JSON Response Format:
             limit_val = 10
             has_explicit_limit = False
 
-        # 2. Multi-Factor Table Resolution
-        scores = {}
-        for tbl_name, meta in schema_info.items():
-            tbl_clean = tbl_name.lower()
-            score = 0
-            
-            # Exact or token match
-            if tbl_clean in q_tokens or tbl_clean in q:
-                score += 150
-            elif tbl_clean.rstrip("s") in q_tokens or (tbl_clean + "s") in q_tokens:
-                score += 100
-            elif any(part in q_tokens for part in tbl_clean.split("_") if len(part) > 2):
-                score += 40
-            
-            # Column token matches
-            cols = meta.get("columns", [])
-            for c in cols:
-                c_name = c["name"].lower()
-                if c_name in q_tokens:
-                    score += 35
-                elif c_name.replace("_", " ") in q:
-                    score += 30
-                elif len(c_name) > 3 and c_name in q:
-                    score += 20
-            
-            # Sample row value matches
-            for row in meta.get("sample_rows", []):
-                for val in row.values():
-                    if isinstance(val, str) and len(val) >= 3:
-                        v_lower = val.lower()
-                        if v_lower in q_tokens or v_lower in q:
-                            score += 25
-                            break
-            
-            # Penalize audit_logs if no security/audit terms
-            if tbl_clean == "audit_logs" and not any(k in q for k in ["audit", "log", "security", "ip", "fail"]):
-                score -= 100
-                
-            scores[tbl_name] = score
+        # 2. Multi-Factor Table Resolution (if not already locked to a target table)
+        if not target_table or target_table not in schema_info:
+            scores = {}
+            canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
 
-        if len(schema_info) == 1:
-            target_table = list(schema_info.keys())[0]
-        else:
-            best_tbl = max(scores, key=scores.get)
-            if scores[best_tbl] > 0:
-                target_table = best_tbl
+            for tbl_name, meta in schema_info.items():
+                tbl_clean = tbl_name.lower()
+                if tbl_clean == "sqlite_sequence":
+                    continue
+                score = 0
+                
+                # Exact or token match on table name
+                if tbl_clean in q_tokens or tbl_clean in q:
+                    score += 250
+                elif tbl_clean.rstrip("s") in q_tokens or (tbl_clean + "s") in q_tokens:
+                    score += 180
+                elif any(part in q_tokens for part in tbl_clean.split("_") if len(part) > 2):
+                    score += 80
+                
+                # Column token and semantic matches
+                cols = meta.get("columns", [])
+                for c in cols:
+                    c_name = c["name"].lower()
+                    if c_name in q_tokens:
+                        score += 45
+                    elif c_name.replace("_", " ") in q:
+                        score += 40
+                    elif len(c_name) > 3 and c_name in q:
+                        score += 25
+
+                    # Semantic synonym match
+                    if any(k in q for k in ["revenue", "sales", "spending", "amount", "total"]):
+                        if any(syn in c_name for syn in ["total_amount", "amount", "revenue", "sales", "total_price", "price"]):
+                            score += 50
+                    if any(k in q for k in ["product", "item", "good"]):
+                        if any(syn in c_name for syn in ["product_name", "product", "item_name", "title"]):
+                            score += 50
+                    if any(k in q for k in ["customer", "user", "client"]):
+                        if any(syn in c_name for syn in ["customer_name", "customer", "user", "username"]):
+                            score += 50
+
+                # Sample row value matches
+                for row in meta.get("sample_rows", []):
+                    for val in row.values():
+                        if isinstance(val, str) and len(val) >= 3:
+                            v_lower = val.lower()
+                            if v_lower in q_tokens or v_lower in q:
+                                score += 30
+                                break
+
+                # Boost custom uploaded tables if they have matching columns
+                if tbl_clean not in canonical_tables and score > 0:
+                    score += 75
+
+                # Penalize audit_logs if no security/audit terms
+                if tbl_clean == "audit_logs" and not any(k in q for k in ["audit", "log", "security", "ip", "fail"]):
+                    score -= 100
+                    
+                scores[tbl_name] = score
+
+            if not scores:
+                target_table = list(schema_info.keys())[0]
             else:
-                non_audit = [t for t in schema_info.keys() if t != "audit_logs"]
-                target_table = non_audit[0] if non_audit else list(schema_info.keys())[0]
+                target_table = max(scores, key=scores.get)
 
         table_meta = schema_info.get(target_table, {})
         cols_meta = table_meta.get("columns", [])
@@ -589,17 +677,56 @@ JSON Response Format:
             else:
                 text_cols.append(c_name)
 
-        # 4. Metric Column Selection
+        # 4. Metric Column Selection with Semantic Synonyms
         mentioned_num = [c for c in numeric_cols if c.lower() in q or c.lower().replace("_", " ") in q]
         if mentioned_num:
             metric_col = mentioned_num[0]
-        elif numeric_cols:
-            pref = ["salary", "total_price", "price", "revenue", "amount", "total_spent", "spent", "quantity", "stock_quantity", "stock", "rating", "units", "score", "cost", "credits", "value"]
-            metric_col = next((c for p in pref for c in numeric_cols if p in c.lower()), numeric_cols[0])
         else:
-            metric_col = None
+            if any(k in q for k in ["revenue", "sales", "spending", "amount", "income", "turnover", "total", "spent"]):
+                pref = ["total_amount", "amount", "revenue", "sales", "total_price", "total_spent", "price", "unit_price", "value", "total"]
+            elif any(k in q for k in ["quantity", "units", "volume", "sold", "stock"]):
+                pref = ["quantity", "units_sold", "units", "qty", "volume", "stock_quantity", "stock"]
+            elif any(k in q for k in ["price", "cost", "cheap", "expensive"]):
+                pref = ["price", "unit_price", "cost", "retail_price"]
+            elif any(k in q for k in ["salary", "pay", "wage", "compensation"]):
+                pref = ["salary", "compensation", "pay"]
+            elif any(k in q for k in ["rating", "score", "stars"]):
+                pref = ["rating", "score"]
+            else:
+                pref = ["total_amount", "salary", "total_price", "price", "revenue", "amount", "total_spent", "spent", "quantity", "stock_quantity", "stock", "rating", "units", "score", "cost", "credits", "value"]
+            metric_col = next((c for p in pref for c in numeric_cols if p in c.lower()), (numeric_cols[0] if numeric_cols else None))
 
-        # 5. Dimension / Group By Detection
+        # 5. Entity / Dimension Detection with Semantic Synonyms
+        entity_col = None
+        if any(k in q for k in ["product", "item", "good"]):
+            prod_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["product_name", "product", "item_name", "item", "title", "sku"])]
+            if not prod_cols:
+                prod_cols = [c for c in text_cols if "name" in c.lower() and "customer" not in c.lower() and "user" not in c.lower()]
+            if prod_cols:
+                entity_col = prod_cols[0]
+        elif any(k in q for k in ["customer", "client", "user"]):
+            cust_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["customer_name", "customer", "user_name", "username", "client_name"])]
+            if not cust_cols:
+                cust_cols = [c for c in text_cols if "name" in c.lower() and "product" not in c.lower()]
+            if cust_cols:
+                entity_col = cust_cols[0]
+        elif any(k in q for k in ["department", "dept"]):
+            dept_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["department", "dept"])]
+            if dept_cols:
+                entity_col = dept_cols[0]
+        elif any(k in q for k in ["category", "genre", "type"]):
+            cat_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["category", "type", "genre"])]
+            if cat_cols:
+                entity_col = cat_cols[0]
+        elif any(k in q for k in ["region", "country", "city", "state"]):
+            geo_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["region", "country", "city", "state"])]
+            if geo_cols:
+                entity_col = geo_cols[0]
+        elif text_cols and (is_highest or is_lowest or any(k in q for k in ["top", "bottom", "rank", "sort", "who", "which", "list", "show", "first"])):
+            candidate_text = [c for c in text_cols if not (c.lower() == "id" or c.lower().endswith("_id"))]
+            entity_col = candidate_text[0] if candidate_text else text_cols[0]
+
+        # Explicit Group By parsing (e.g. "by category", "per region", "by department")
         group_col = None
         by_match = re.search(r"\b(?:by|per|for each|in each|across)\s+([a-zA-Z0-9_]+)", q)
         if by_match:
@@ -612,15 +739,11 @@ JSON Response Format:
                         group_col = c
                     break
 
-        if not group_col:
-            # Check if any descriptive categorical column appears in q alongside aggregation intent
-            if any(k in q for k in ["average", "avg", "mean", "total", "sum", "count", "how many", "distribution", "breakdown"]):
-                candidate_text = [c for c in text_cols if not (c.lower() == "id" or c.lower().endswith("_id"))]
-                for c in candidate_text:
-                    c_l = c.lower()
-                    if c_l in q_tokens or c_l.rstrip("s") in q_tokens or c_l in q:
-                        group_col = c
-                        break
+        if not group_col and entity_col and (
+            any(k in q for k in ["distribution", "breakdown"])
+            or (any(k in q for k in ["top", "bottom", "highest", "lowest", "rank", "best", "worst"]) and any(k in q for k in ["product", "customer", "department", "user", "item", "category"]))
+        ):
+            group_col = entity_col
 
         # 6. Filter (WHERE Clause) Detection
         where_filters = []
@@ -738,37 +861,46 @@ JSON Response Format:
 
         # Aggregation intent
         is_avg = any(k in q for k in ["average", "avg", "mean"])
-        is_sum = any(k in q for k in ["total", "sum", "overall", "how much"])
+        is_sum = any(k in q for k in ["total", "sum", "overall", "how much", "revenue", "sales", "spending", "spent", "amount", "volume"])
         is_count = any(k in q for k in ["count", "how many", "number of"])
         is_max = any(k in q for k in ["highest", "max", "maximum", "greatest"]) and not has_explicit_limit
         is_min = any(k in q for k in ["lowest", "min", "minimum", "least", "cheapest"]) and not has_explicit_limit
 
-        # Branch 1: Group By Query
-        if group_col:
+        # Determine if query requires GROUP BY aggregation or individual row ordering
+        target_group = group_col or (entity_col if any(k in q for k in ["revenue", "sales", "spending", "spent", "volume", "total", "sum"]) else None)
+        needs_group_by = bool(target_group and (
+            by_match
+            or any(k in q for k in ["average", "avg", "mean", "total", "sum", "distribution", "breakdown", "revenue", "sales", "spending", "spent", "volume"])
+        ))
+
+        # Branch 1: Group By Aggregation Query
+        if needs_group_by and target_group:
             if is_avg and metric_col:
                 agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
             elif is_sum and metric_col:
-                agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
+                alias_name = "total_revenue" if ("revenue" in q or "sales" in q) and "revenue" not in metric_col.lower() else f"total_{metric_col}"
+                agg_fn, agg_alias = f'SUM("{metric_col}")', alias_name
             elif is_max and metric_col:
                 agg_fn, agg_alias = f'MAX("{metric_col}")', f'max_{metric_col}'
             elif is_min and metric_col:
                 agg_fn, agg_alias = f'MIN("{metric_col}")', f'min_{metric_col}'
             elif metric_col and not is_count:
-                agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
+                agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
             else:
                 agg_fn, agg_alias = 'COUNT(*)', 'total_count'
 
             l_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
-            sql = f'SELECT "{group_col}", {agg_fn} AS {agg_alias} FROM "{target_table}"{where_clause} GROUP BY "{group_col}" ORDER BY {agg_alias} {direction}{l_clause};'
-            explanation = f"Groups the '{target_table}' table by '{group_col}', computing {agg_alias.replace('_', ' ')} sorted in {direction_word} order."
+            sql = f'SELECT "{target_group}", {agg_fn} AS {agg_alias} FROM "{target_table}"{where_clause} GROUP BY "{target_group}" ORDER BY {agg_alias} {direction}{l_clause};'
+            explanation = f"Groups the '{target_table}' table by '{target_group}', computing {agg_alias.replace('_', ' ')} sorted in {direction_word} order."
             return sql, explanation
 
         # Branch 2: Single Scalar Aggregate (No Group By, No explicit limit > 1)
-        if (is_avg or is_sum or is_count or is_max or is_min) and not (has_explicit_limit and limit_val > 1):
+        if (is_avg or is_sum or is_count or is_max or is_min or any(k in q for k in ["how much", "how many", "overall", "total", "revenue"])) and not (has_explicit_limit and limit_val > 1):
             if is_avg and metric_col:
                 agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
             elif is_sum and metric_col:
-                agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
+                alias_name = "total_revenue" if ("revenue" in q or "sales" in q) and "revenue" not in metric_col.lower() else f"total_{metric_col}"
+                agg_fn, agg_alias = f'SUM("{metric_col}")', alias_name
             elif is_max and metric_col:
                 agg_fn, agg_alias = f'MAX("{metric_col}")', f'highest_{metric_col}'
             elif is_min and metric_col:
@@ -786,6 +918,8 @@ JSON Response Format:
         if (is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q) and metric_col:
             preferred_disp = ["name", "emp_name", "customer_name", "product_name", "title", "department", "dept", "category", "country", "plan", "role", "email"]
             disp = [c for c in preferred_disp if c in all_cols]
+            if not disp and entity_col:
+                disp = [entity_col]
             if metric_col not in disp:
                 disp.append(metric_col)
             sel_cols = ", ".join([f'"{c}"' for c in disp]) if disp else "*"

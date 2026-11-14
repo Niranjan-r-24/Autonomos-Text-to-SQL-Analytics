@@ -25,6 +25,7 @@ export default function Home() {
 
   // Data & Execution states
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
+  const [activeTable, setActiveTable] = useState<string | null>(null);
   const [pipelineResult, setPipelineResult] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -52,6 +53,7 @@ export default function Home() {
       const res = await axios.post(`${API_BASE}/api/seed`);
       if (res.data && res.data.schema) {
         setSchemaData(res.data.schema);
+        setActiveTable(null);
       }
     } catch (err) {
       console.error('Failed to re-seed database:', err);
@@ -59,14 +61,15 @@ export default function Home() {
   };
 
   const handleUploadSuccess = (tableName: string, updatedSchema: Record<string, any>) => {
+    setActiveTable(tableName);
     setSchemaData(updatedSchema);
     const targetQuery = `Show first 10 rows from ${tableName}`;
     setQuery(targetQuery);
     setIsUploadModalOpen(false);
-    handleRunQuery(targetQuery);
+    handleRunQuery(targetQuery, tableName);
   };
 
-  const handleRunQuery = async (overrideQuery?: string) => {
+  const handleRunQuery = async (overrideQuery?: string, overrideTable?: string) => {
     const targetQuery = overrideQuery || query;
     if (!targetQuery.trim() || isExecuting) return;
 
@@ -80,6 +83,7 @@ export default function Home() {
         query: targetQuery.trim(),
         api_key: apiKey,
         provider: provider,
+        active_table: overrideTable || activeTable || undefined,
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;

@@ -137,22 +137,46 @@ class SelfCorrectionService:
                 logger.warning("LLM self-correction call failed: %s", str(e))
 
         # 2. Deterministic Rule-Based Self-Healing Heuristics
-        healed_sql, rule_name = self._heuristic_heal(failed_sql, error_msg, schema_info)
+        healed_sql, rule_name = self._heuristic_heal(failed_sql, error_msg, schema_info, user_question)
         return healed_sql, rule_name
 
-    def _heuristic_heal(self, failed_sql: str, error_msg: str, schema_info: Dict[str, Any]) -> Tuple[str, str]:
+    def _heuristic_heal(
+        self,
+        failed_sql: str,
+        error_msg: str,
+        schema_info: Dict[str, Any],
+        user_question: str = ""
+    ) -> Tuple[str, str]:
         """Applies deterministic regex and schema-aware repairs to failing SQL."""
         err_lower = error_msg.lower()
         fixed = failed_sql
 
-        # Rule 1: Unknown Column -> Find closest matching column in active schema
-        if "no such column" in err_lower or "does not exist" in err_lower:
-            match = re.search(r"no such column:\s*([a-zA-Z0-9_\.]+)", error_msg, re.IGNORECASE)
+        # Rule 0: Unknown / Non-existent Table -> Re-synthesize using active schema
+        if any(k in err_lower for k in ["no such table", "table", "does not exist"]):
+            tbl_match = re.search(r"(?:no such table:\s*|table\s*['\"]?)([a-zA-Z0-9_\.]+)", error_msg, re.IGNORECASE)
+            if tbl_match:
+                bad_tbl = tbl_match.group(1).split(".")[-1].lower()
+                if bad_tbl not in [t.lower() for t in schema_info.keys()]:
+                    from backend.app.services.sql_generator import SQLGenerator
+                    gen = SQLGenerator()
+                    healed_sql, exp = gen._synthesize_dynamic_sql(user_question, schema_info)
+                    if healed_sql and healed_sql.strip() != failed_sql.strip():
+                        return healed_sql, f"Schema Recovery: Replaced non-existent table '{bad_tbl}' with grounded query"
+
+        # Rule 1: Unknown Column -> Find closest matching column in active schema or re-synthesize
+        if any(k in err_lower for k in ["no such column", "does not exist", "was not found", "unknown column"]):
+            match = re.search(r"(?:no such column:\s*|column\s*['\"]?)([a-zA-Z0-9_\.]+)", error_msg, re.IGNORECASE)
             if match:
                 bad_col_raw = match.group(1)
                 bad_col = bad_col_raw.split(".")[-1].lower()
 
-                # Gather all known columns across tables
+                # Gather columns from tables mentioned in failed_sql first, or all known columns
+                sql_tables = [t for t in schema_info.keys() if re.search(r"\b" + re.escape(t) + r"\b", failed_sql, re.IGNORECASE)]
+                candidate_cols = []
+                if sql_tables:
+                    for t in sql_tables:
+                        candidate_cols.extend([c["name"] for c in schema_info[t].get("columns", [])])
+                
                 all_cols = []
                 table_for_col = {}
                 for tbl, meta in schema_info.items():
@@ -161,14 +185,32 @@ class SelfCorrectionService:
                         all_cols.append(c_name)
                         table_for_col[c_name.lower()] = tbl
 
-                # Find closest match
-                matches = difflib.get_close_matches(bad_col, all_cols, n=1, cutoff=0.5)
+                # 1. First attempt fuzzy matching against candidate/targeted table columns
+                matches = difflib.get_close_matches(bad_col, candidate_cols, n=1, cutoff=0.6)
+                if not matches:
+                    # 2. Fuzzy match against all schema columns
+                    matches = difflib.get_close_matches(bad_col, all_cols, n=1, cutoff=0.6)
+                if not matches:
+                    # 3. Substring matching with lower threshold
+                    matches = [c for c in candidate_cols if bad_col in c.lower()]
+                if not matches:
+                    matches = [c for c in all_cols if bad_col in c.lower()]
+                if not matches:
+                    matches = difflib.get_close_matches(bad_col, all_cols, n=1, cutoff=0.35)
                 if matches:
                     best_replacement = matches[0]
                     # Replace in SQL
                     fixed = re.sub(r"\b" + re.escape(bad_col_raw) + r"\b", best_replacement, fixed)
                     if fixed != failed_sql:
                         return fixed, f"Schema Alignment: Corrected column '{bad_col_raw}' to '{best_replacement}'"
+
+                # If direct string replacement failed, re-synthesize cleanly
+                if schema_info:
+                    from backend.app.services.sql_generator import SQLGenerator
+                    gen = SQLGenerator()
+                    healed_sql, exp = gen._synthesize_dynamic_sql(user_question, schema_info)
+                    if healed_sql and healed_sql.strip() != failed_sql.strip():
+                        return healed_sql, f"Schema Recovery: Re-synthesized query to resolve missing column '{bad_col_raw}'"
 
         # Rule 2: Ambiguous Column -> Add explicit table alias prefixes
         if "ambiguous column" in err_lower:

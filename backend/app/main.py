@@ -102,6 +102,7 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="Natural language question to translate into SQL")
     api_key: Optional[str] = Field(None, description="Optional LLM API Key (Gemini or OpenAI)")
     provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
+    active_table: Optional[str] = Field(None, description="Optional active table name to prioritize")
 
 
 class ExecuteSqlRequest(BaseModel):
@@ -241,7 +242,7 @@ def process_nl_query(req: QueryRequest):
 
     try:
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider)
-        result = pipeline.run(req.query.strip())
+        result = pipeline.run(req.query.strip(), active_table=req.active_table)
         return result
     except Exception as e:
         logger.error("Pipeline execution error: %s", str(e), exc_info=True)
