@@ -33,7 +33,19 @@ def seed_database():
         conn.execute(text(f"DROP TABLE IF EXISTS audit_logs{cascade};"))
         conn.execute(text(f"DROP TABLE IF EXISTS customers{cascade};"))
         conn.execute(text(f"DROP TABLE IF EXISTS products{cascade};"))
+        conn.execute(text(f"DROP TABLE IF EXISTS employees{cascade};"))
         conn.commit()
+
+        # 1. Create employees table
+        conn.execute(text(f"""
+            CREATE TABLE employees (
+                {pk_col},
+                name VARCHAR(100) NOT NULL,
+                department VARCHAR(50) NOT NULL,
+                salary DECIMAL(10, 2) NOT NULL,
+                hire_date {dt_type} NOT NULL
+            );
+        """))
 
         # 1. Create customers table
         conn.execute(text(f"""
@@ -187,6 +199,32 @@ def seed_database():
             conn.execute(
                 text("INSERT INTO audit_logs (user_id, action, status, ip_address, timestamp) VALUES (:u, :a, :s, :ip, :t)"),
                 {"u": user_id, "a": action, "s": l_status, "ip": ip, "t": log_time.strftime("%Y-%m-%d %H:%M:%S")}
+            )
+
+        # Seed Employees
+        employees_data = [
+            ("Sarah Connor", "Engineering", 145000.00, "2021-03-15"),
+            ("James Miller", "Engineering", 132000.00, "2022-06-01"),
+            ("Elena Rostova", "Engineering", 158000.00, "2020-01-10"),
+            ("Michael Chang", "Engineering", 125000.00, "2023-02-20"),
+            ("David Kim", "Product", 135000.00, "2021-09-12"),
+            ("Priya Patel", "Product", 142000.00, "2022-04-18"),
+            ("Marcus Vance", "Marketing", 95000.00, "2021-11-05"),
+            ("Chloe Bennett", "Marketing", 88000.00, "2023-08-14"),
+            ("Sophia Taylor", "Marketing", 102000.00, "2020-05-22"),
+            ("Lucas Rossi", "Sales", 110000.00, "2021-07-19"),
+            ("Olivia Martin", "Sales", 118000.00, "2022-10-03"),
+            ("Liam Johnson", "Sales", 96000.00, "2023-03-29"),
+            ("Noah Davis", "Finance", 128000.00, "2020-11-16"),
+            ("Emma Wilson", "Finance", 134000.00, "2022-01-24"),
+            ("Alexander Wright", "HR", 92000.00, "2021-04-08"),
+            ("Grace Hall", "HR", 89000.00, "2023-05-15")
+        ]
+
+        for emp in employees_data:
+            conn.execute(
+                text("INSERT INTO employees (name, department, salary, hire_date) VALUES (:n, :d, :s, :h)"),
+                {"n": emp[0], "d": emp[1], "s": emp[2], "h": emp[3]}
             )
 
         conn.commit()

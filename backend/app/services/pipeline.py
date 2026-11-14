@@ -51,11 +51,10 @@ class TextToSqlPipeline:
 
         # 0. Intent Routing: Route document/knowledge queries to RAG
         q_lower = user_question.lower()
-        doc_cues = ("document", "policy", "pdf", "guide", "portfolio", "resume", "according to", "knowledge base", "what is the step", "steps to", "master prompt", "checklist")
-        sql_cues = ("revenue", "sales", "price", "order", "spend", "table", "customer", "product", "trend", "sql", "count", "top", "lowest", "bottom", "highest", "average", "database", "stock", "audit", "select")
+        doc_cues = ("document", "policy", "pdf", "guide", "portfolio", "resume", "according to", "knowledge base", "what is the step", "steps to", "master prompt", "checklist", "handbook", "procedure")
 
         is_doc_query = any(c in q_lower for c in doc_cues) or (
-            rag_service.has_documents and not any(c in q_lower for c in sql_cues) and ("what" in q_lower or "how" in q_lower or "explain" in q_lower or "summarize" in q_lower or "tell" in q_lower)
+            rag_service.has_documents and any(c in q_lower for c in ["in the document", "in the pdf", "in the policy", "in the guide", "from the document", "from the manual", "knowledge base"])
         )
 
         if is_doc_query and rag_service.has_documents:
@@ -374,10 +373,15 @@ class TextToSqlPipeline:
                 ranking_order = "asc" if is_lowest else "desc"
 
         # Determine chart type:
+        is_time_series = (
+            any(k in q_lower for k in ["trend", "monthly", "over time", "by month", "by year", "history", "timeline"])
+            or any(k in [c.lower() for c in columns] for k in ["month", "sales_month", "year"])
+        )
+
         if not numeric_cols:
             chart_type = "table"
             title = f"Data Records for: {user_question}"
-        elif date_cols and not (is_highest or is_lowest or "product" in q_lower or "customer" in q_lower or "top" in q_lower or "bottom" in q_lower):
+        elif date_cols and is_time_series:
             x_axis = date_cols[0]
             chart_type = "line"
             title = f"{primary_metric_label} Over Time"

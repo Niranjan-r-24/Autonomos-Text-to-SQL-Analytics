@@ -374,6 +374,7 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
         numeric_cols = []
         text_cols = []
         date_cols = []
+        id_cols = []
 
         for col in columns:
             col_l = col.lower()
@@ -384,13 +385,22 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
                 numeric_cols.append(col)
             elif any(k == col_l or col_l.endswith(f"_{k}") or col_l.startswith(f"{k}_") or k in col_l.split("_") for k in ["date", "time", "month", "year", "day"]):
                 date_cols.append(col)
+            elif col_l == "id" or col_l.endswith("_id"):
+                id_cols.append(col)
             else:
                 text_cols.append(col)
+
+        # Append ID columns to the end of text_cols so descriptive columns take priority
+        text_cols.extend(id_cols)
 
         # Detect Common Query Patterns
         is_ranking = any(k in q for k in ["top", "highest", "most", "lowest", "least", "bottom", "rank", "best", "worst"]) or "order by" in sql_lower
         is_single_row = row_count == 1
-        is_trend = bool(date_cols) or any(k in q for k in ["trend", "month", "monthly", "time", "over time", "growth"]) or any(k in sql_lower for k in ["strftime", "sale_date", "group by month"])
+        is_trend = (
+            any(k in q for k in ["trend", "monthly", "over time", "growth", "by month", "by year", "by date", "per month"])
+            or any(k in sql_lower for k in ["strftime", "group by month", "sales_month", "to_char", "group by date"])
+            or (bool(date_cols) and any(k in q for k in ["timeline", "history", "trend", "over time", "by date", "by month"]))
+        )
         is_security = any(k in q for k in ["audit", "security", "fail", "log", "ip", "login"]) or "audit_logs" in sql_lower
         is_breakdown = bool(text_cols and numeric_cols and not is_single_row)
 
@@ -407,11 +417,25 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             if numeric_cols:
                 primary_metric = numeric_cols[0]
                 primary_val = format_value(sample_row.get(primary_metric), primary_metric)
-                direct_answer = f"The query returned a single summary record: {primary_metric.replace('_', ' ')} is {primary_val}."
-                if len(numeric_cols) > 1:
+
+                # Check for accompanying descriptive text attributes (e.g. Elena Rostova, Engineering)
+                descriptive_parts = []
+                for tc in text_cols:
+                    if not tc.lower().endswith("_id") and tc.lower() != "id":
+                        val_str = str(sample_row.get(tc, "")).strip()
+                        if val_str:
+                            descriptive_parts.append(val_str)
+                desc_label = f" ({', '.join(descriptive_parts)})" if descriptive_parts else ""
+
+                if is_ranking or any(k in q for k in ["highest", "lowest", "max", "min", "top", "bottom"]):
+                    rank_word = "lowest" if any(k in q for k in ["lowest", "min", "cheapest", "least"]) else "highest"
+                    direct_answer = f"For '{question}', the {rank_word} {primary_metric.replace('_', ' ')} is {primary_val}{desc_label}."
+                elif len(numeric_cols) > 1:
                     sec_metric = numeric_cols[1]
                     sec_val = format_value(sample_row.get(sec_metric), sec_metric)
-                    direct_answer = f"For '{question}', {primary_metric.replace('_', ' ')} is {primary_val} and {sec_metric.replace('_', ' ')} is {sec_val}."
+                    direct_answer = f"For '{question}', {primary_metric.replace('_', ' ')} is {primary_val} and {sec_metric.replace('_', ' ')} is {sec_val}{desc_label}."
+                else:
+                    direct_answer = f"The query returned a single summary record: {primary_metric.replace('_', ' ')} is {primary_val}{desc_label}."
                 takeaway = f"Monitor {primary_metric.replace('_', ' ')} ({primary_val}) as a foundational KPI for performance tracking."
             else:
                 primary_metric = columns[0]
@@ -697,7 +721,10 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
         # Pattern 5: Categorical Breakdown / Distribution
         # ----------------------------------------------------
         if is_breakdown:
-            group_col = text_cols[0]
+            preferred_groups = ["department", "dept", "category", "company", "name", "customer_name", "product_name", "country", "plan", "region", "status", "action", "role", "city", "state"]
+            # Prioritize columns that have > 1 unique values across rows
+            varied_groups = [c for p in preferred_groups for c in text_cols if p == c.lower() and len(set(str(r.get(c, '')) for r in rows)) > 1]
+            group_col = varied_groups[0] if varied_groups else (text_cols[0] if text_cols else columns[0])
             val_col = numeric_cols[0]
 
             total_val = sum(float(r.get(val_col, 0) or 0) for r in rows)
@@ -706,10 +733,18 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             top_val = float(top_group.get(val_col, 0) or 0)
             top_share = (top_val / total_val * 100) if total_val > 0 else 0
 
-            direct_answer = (
-                f"The data breaks down across {row_count} {group_col.replace('_', ' ')} segments, led by {top_name} "
-                f"with {format_value(top_val, val_col)} ({top_share:.1f}% of total {val_col.replace('_', ' ')})."
-            )
+            distinct_groups_count = len(set(str(r.get(group_col, '')) for r in rows))
+            if distinct_groups_count > 1:
+                direct_answer = (
+                    f"The data breaks down across {distinct_groups_count} {group_col.replace('_', ' ')} segments, led by {top_name} "
+                    f"with {format_value(top_val, val_col)} ({top_share:.1f}% of total {val_col.replace('_', ' ')})."
+                )
+            else:
+                top_entity = str(rows[0].get("name", rows[0].get("company", top_name)))
+                direct_answer = (
+                    f"Retrieved {row_count} records for '{question}' ({group_col.replace('_', ' ')}: {top_name}), "
+                    f"totaling {format_value(total_val, val_col)} in {val_col.replace('_', ' ')} (led by {top_entity} at {format_value(top_val, val_col)})."
+                )
 
             key_findings = []
             for r in rows[:5]:

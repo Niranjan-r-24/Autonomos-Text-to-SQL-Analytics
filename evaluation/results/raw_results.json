@@ -13,7 +13,7 @@
     "post_correction_sql": "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 71.91,
+    "latency_ms": 22.17,
     "rows_returned": 1,
     "error": null
   },
@@ -31,7 +31,7 @@
     "post_correction_sql": "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 67.08,
+    "latency_ms": 13.56,
     "rows_returned": 1,
     "error": null
   },
@@ -49,7 +49,7 @@
     "post_correction_sql": "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 63.1,
+    "latency_ms": 12.64,
     "rows_returned": 1,
     "error": null
   },
@@ -67,7 +67,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue DESC LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 79.55,
+    "latency_ms": 15.47,
     "rows_returned": 5,
     "error": null
   },
@@ -85,7 +85,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue DESC LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 73.48,
+    "latency_ms": 15.8,
     "rows_returned": 5,
     "error": null
   },
@@ -103,7 +103,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue ASC LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 71.64,
+    "latency_ms": 25.25,
     "rows_returned": 5,
     "error": null
   },
@@ -121,7 +121,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue DESC LIMIT 3;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 44.89,
+    "latency_ms": 15.81,
     "rows_returned": 3,
     "error": null
   },
@@ -139,7 +139,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue ASC LIMIT 3;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 27.77,
+    "latency_ms": 17.89,
     "rows_returned": 3,
     "error": null
   },
@@ -157,7 +157,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue ASC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 23.37,
+    "latency_ms": 16.91,
     "rows_returned": 10,
     "error": null
   },
@@ -175,7 +175,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity DESC LIMIT 3;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 21.25,
+    "latency_ms": 20.52,
     "rows_returned": 3,
     "error": null
   },
@@ -193,7 +193,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity ASC LIMIT 3;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 21.72,
+    "latency_ms": 19.75,
     "rows_returned": 3,
     "error": null
   },
@@ -211,7 +211,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity DESC LIMIT 10;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 22.81,
+    "latency_ms": 21.24,
     "rows_returned": 10,
     "error": null
   },
@@ -229,7 +229,7 @@
     "post_correction_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity DESC LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 27.89,
+    "latency_ms": 21.11,
     "rows_returned": 5,
     "error": null
   },
@@ -247,7 +247,7 @@
     "post_correction_sql": "SELECT name AS customer_name, email, company, country, plan, total_spent FROM customers ORDER BY total_spent ASC LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 27.67,
+    "latency_ms": 18.77,
     "rows_returned": 5,
     "error": null
   },
@@ -265,7 +265,7 @@
     "post_correction_sql": "SELECT name AS customer_name, email, company, country, plan, total_spent FROM customers ORDER BY total_spent DESC LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 25.81,
+    "latency_ms": 16.1,
     "rows_returned": 5,
     "error": null
   },
@@ -283,7 +283,7 @@
     "post_correction_sql": "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent FROM customers GROUP BY country, plan ORDER BY customer_count DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 32.92,
+    "latency_ms": 15.49,
     "rows_returned": 25,
     "error": null
   },
@@ -301,7 +301,7 @@
     "post_correction_sql": "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent FROM customers GROUP BY country, plan ORDER BY customer_count DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 34.69,
+    "latency_ms": 17.06,
     "rows_returned": 25,
     "error": null
   },
@@ -319,7 +319,7 @@
     "post_correction_sql": "SELECT strftime('%Y-%m', sale_date) AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions FROM sales WHERE status = 'Completed' GROUP BY sales_month, region ORDER BY sales_month ASC, monthly_revenue DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 29.76,
+    "latency_ms": 20.65,
     "rows_returned": 25,
     "error": null
   },
@@ -337,7 +337,7 @@
     "post_correction_sql": "SELECT strftime('%Y-%m', sale_date) AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions FROM sales WHERE status = 'Completed' GROUP BY sales_month, region ORDER BY sales_month ASC, monthly_revenue DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 32.08,
+    "latency_ms": 20.36,
     "rows_returned": 25,
     "error": null
   },
@@ -355,7 +355,7 @@
     "post_correction_sql": "SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value FROM sales WHERE status = 'Completed' GROUP BY region ORDER BY total_revenue DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 55.33,
+    "latency_ms": 14.31,
     "rows_returned": 4,
     "error": null
   },
@@ -373,7 +373,7 @@
     "post_correction_sql": "SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value FROM sales WHERE status = 'Completed' GROUP BY region ORDER BY total_revenue DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 49.62,
+    "latency_ms": 15.48,
     "rows_returned": 4,
     "error": null
   },
@@ -391,7 +391,7 @@
     "post_correction_sql": "SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock FROM products GROUP BY category ORDER BY avg_rating DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 49.22,
+    "latency_ms": 13.4,
     "rows_returned": 8,
     "error": null
   },
@@ -409,7 +409,7 @@
     "post_correction_sql": "SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock FROM products GROUP BY category ORDER BY total_stock DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 48.33,
+    "latency_ms": 17.99,
     "rows_returned": 8,
     "error": null
   },
@@ -427,7 +427,7 @@
     "post_correction_sql": "SELECT * FROM \"products\" LIMIT 5;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 50.78,
+    "latency_ms": 14.64,
     "rows_returned": 5,
     "error": null
   },
@@ -445,7 +445,7 @@
     "post_correction_sql": "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' GROUP BY action, status, ip_address ORDER BY event_count DESC LIMIT 10;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 52.93,
+    "latency_ms": 12.75,
     "rows_returned": 10,
     "error": null
   },
@@ -463,7 +463,7 @@
     "post_correction_sql": "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' GROUP BY action, status, ip_address ORDER BY event_count DESC LIMIT 10;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 46.27,
+    "latency_ms": 17.88,
     "rows_returned": 10,
     "error": null
   },
@@ -481,7 +481,7 @@
     "post_correction_sql": "SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' ORDER BY timestamp DESC LIMIT 10;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 49.03,
+    "latency_ms": 20.15,
     "rows_returned": 10,
     "error": null
   },
@@ -499,7 +499,7 @@
     "post_correction_sql": "SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' ORDER BY timestamp DESC LIMIT 10;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 54.47,
+    "latency_ms": 18.86,
     "rows_returned": 10,
     "error": null
   },
@@ -517,7 +517,7 @@
     "post_correction_sql": "SELECT c.plan, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count FROM sales s JOIN customers c ON s.customer_id = c.id JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY c.plan, p.category ORDER BY total_revenue DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 46.31,
+    "latency_ms": 20.83,
     "rows_returned": 31,
     "error": null
   },
@@ -535,7 +535,7 @@
     "post_correction_sql": "SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent FROM sales s JOIN customers c ON s.customer_id = c.id WHERE s.status = 'Completed' GROUP BY c.plan ORDER BY avg_order_value DESC;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 47.97,
+    "latency_ms": 14.68,
     "rows_returned": 4,
     "error": null
   },
@@ -553,7 +553,7 @@
     "post_correction_sql": "SELECT s.id, c.name AS customer_name, p.name AS product_name, s.total_price, s.sale_date FROM sales s JOIN customers c ON s.customer_id = c.id JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' ORDER BY s.sale_date DESC LIMIT 10;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 54.17,
+    "latency_ms": 17.64,
     "rows_returned": 10,
     "error": null
   },
@@ -571,7 +571,7 @@
     "post_correction_sql": "DROP TABLE sales;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 0.69,
+    "latency_ms": 1.36,
     "rows_returned": 0,
     "error": "Security Error: Only read-only SELECT queries are permitted. Modifying statements are blocked."
   },
@@ -589,7 +589,7 @@
     "post_correction_sql": "DELETE FROM customers WHERE id > 0;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 0.43,
+    "latency_ms": 0.26,
     "rows_returned": 0,
     "error": "Security Error: Only read-only SELECT queries are permitted. Modifying statements are blocked."
   },
@@ -607,7 +607,7 @@
     "post_correction_sql": "UPDATE products SET price = 0.00;",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 0.53,
+    "latency_ms": 0.13,
     "rows_returned": 0,
     "error": "Security Error: Only read-only SELECT queries are permitted. Modifying statements are blocked."
   },
@@ -625,7 +625,7 @@
     "post_correction_sql": "INSERT INTO products (name, category, price) VALUES ('Rogue Product', 'Malicious', 999.0);",
     "post_correction_correct": true,
     "self_correction_applied": false,
-    "latency_ms": 0.53,
+    "latency_ms": 0.15,
     "rows_returned": 0,
     "error": "Security Error: Only read-only SELECT queries are permitted. Modifying statements are blocked."
   }

@@ -1,5 +1,5 @@
 {
-  "evaluation_timestamp": "2026-11-14 18:55:19",
+  "evaluation_timestamp": "2026-11-14 19:36:54",
   "model_configuration": {
     "provider": "fallback",
     "active_engine": "Deterministic Analytics Engine",
@@ -15,8 +15,8 @@
     "relative_improvement_pct": 0.0,
     "sql_execution_failure_rate_pct": 0.0,
     "invalid_or_timed_out_count": 0,
-    "mean_response_latency_ms": 40.17,
-    "median_response_latency_ms": 46.27,
-    "p95_response_latency_ms": 73.48
+    "mean_response_latency_ms": 15.63,
+    "median_response_latency_ms": 16.91,
+    "p95_response_latency_ms": 22.17
   }
 }
