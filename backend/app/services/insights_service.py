@@ -428,14 +428,20 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
                 desc_label = f" ({', '.join(descriptive_parts)})" if descriptive_parts else ""
 
                 if is_ranking or any(k in q for k in ["highest", "lowest", "max", "min", "top", "bottom"]):
-                    rank_word = "lowest" if any(k in q for k in ["lowest", "min", "cheapest", "least"]) else "highest"
-                    direct_answer = f"For '{question}', the {rank_word} {primary_metric.replace('_', ' ')} is {primary_val}{desc_label}."
+                    rank_word = "lowest" if any(k in q for k in ["lowest", "min", "cheapest", "least"]) else "top"
+                    entity_str = descriptive_parts[0] if descriptive_parts else "record"
+                    extra_desc = f" ({descriptive_parts[1]})" if len(descriptive_parts) > 1 else ""
+                    direct_answer = f"{entity_str} is the {rank_word}-performing record during the selected period with {primary_val} in {primary_metric.replace('_', ' ')}{extra_desc}."
                 elif len(numeric_cols) > 1:
+                    metric_name = primary_metric.replace('_', ' ')
+                    metric_lead = metric_name.capitalize() if metric_name.lower().startswith("total") else f"Total {metric_name}"
                     sec_metric = numeric_cols[1]
                     sec_val = format_value(sample_row.get(sec_metric), sec_metric)
-                    direct_answer = f"For '{question}', {primary_metric.replace('_', ' ')} is {primary_val} and {sec_metric.replace('_', ' ')} is {sec_val}{desc_label}."
+                    direct_answer = f"{metric_lead} during the selected period is {primary_val} across {sec_val} {sec_metric.replace('_', ' ')}{desc_label}."
                 else:
-                    direct_answer = f"The query returned a single summary record: {primary_metric.replace('_', ' ')} is {primary_val}{desc_label}."
+                    metric_name = primary_metric.replace('_', ' ')
+                    metric_lead = metric_name.capitalize() if metric_name.lower().startswith("total") else f"Total {metric_name}"
+                    direct_answer = f"{metric_lead} during the selected period is {primary_val}{desc_label}."
                 takeaway = f"Monitor {primary_metric.replace('_', ' ')} ({primary_val}) as a foundational KPI for performance tracking."
             else:
                 primary_metric = columns[0]
@@ -540,12 +546,39 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             n_items = len(sorted_rows)
             num_words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
             count_word = num_words.get(n_items, str(n_items))
-            entity_label = "products" if "product" in primary_label_col or "product" in q else ("customers" if "customer" in primary_label_col or "customer" in q else "items")
+
+            lbl_lower = primary_label_col.lower()
+            if "product" in lbl_lower or "product" in q:
+                entity_label, entity_singular = "products", "product"
+            elif "customer" in lbl_lower or "customer" in q:
+                entity_label, entity_singular = "customers", "customer"
+            elif any(k in lbl_lower or k in q for k in ["department", "dept"]):
+                entity_label, entity_singular = "departments", "department"
+            elif any(k in lbl_lower or k in q for k in ["employee", "emp", "worker", "staff"]):
+                entity_label, entity_singular = "employees", "employee"
+            elif "region" in lbl_lower or "region" in q:
+                entity_label, entity_singular = "regions", "region"
+            elif "country" in lbl_lower or "country" in q:
+                entity_label, entity_singular = "countries", "country"
+            elif "category" in lbl_lower or "category" in q:
+                entity_label, entity_singular = "categories", "category"
+            else:
+                entity_label, entity_singular = "items", "item"
+
             direction_phrase = "lowest" if is_lowest else "highest"
+            perf_adjective = "lowest-performing" if is_lowest else "top-performing"
             unit_suffix = " units" if "quantity" in metric_clean or "unit" in metric_clean else ""
 
-            # Direct Answer: generate concise, natural list of all items when <= 5 items
-            if 1 < n_items <= 5:
+            hero_statement = f"{top_name} is the {perf_adjective} {entity_singular} during the selected period and ranks {direction_phrase} in {metric_clean} with {formatted_top_val}{unit_suffix}."
+
+            # Direct Answer: lead with punchy executive statement followed by cohort breakdown
+            if any(k in q for k in ["compare", "vs", "versus", "between"]) and n_items == 2:
+                diff = top_val - runner_up_val
+                pct_lead = ((diff / runner_up_val) * 100) if runner_up_val > 0 else 0
+                direct_answer = (
+                    f"{top_name} outperformed {runner_up_name} during the selected period with {formatted_top_val} vs {formatted_runner_val} in {metric_clean} (+{pct_lead:.1f}% higher)."
+                )
+            elif 1 < n_items <= 5:
                 names = [str(r.get(primary_label_col, f"Item {i+1}")) for i, r in enumerate(sorted_rows)]
                 vals = [format_value(r.get(primary_val_col, 0), primary_val_col) for r in sorted_rows]
                 if len(names) == 2:
@@ -556,15 +589,13 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
                     vals_str = f"{', '.join(vals[:-1])}, and {vals[-1]}"
                 
                 direct_answer = (
-                    f"The {count_word} {entity_label} with the {direction_phrase} {metric_clean} are {names_str}. "
-                    f"They recorded {vals_str}{unit_suffix}, respectively ({top_name} ranks {direction_phrase} in {metric_clean} with {formatted_top_val})."
+                    f"{hero_statement} The {count_word} {entity_label} with the {direction_phrase} {metric_clean} are {names_str}, recording {vals_str}{unit_suffix}, respectively."
                 )
             elif n_items == 1:
-                direct_answer = f"{top_name} ranks {direction_phrase} in {metric_clean} with {formatted_top_val}."
+                direct_answer = hero_statement
             else:
                 direct_answer = (
-                    f"{top_name} ranks {direction_phrase} in {metric_clean} with {formatted_top_val}, "
-                    f"followed by {runner_up_name} at {formatted_runner_val}."
+                    f"{hero_statement} Followed by {runner_up_name} at {formatted_runner_val}."
                 )
 
             if len(numeric_cols) > 1 and n_items != 3:
@@ -684,8 +715,7 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             growth_str = f"grew by {growth:.1f}%" if growth > 0 else (f"declined by {abs(growth):.1f}%" if growth < 0 else "remained flat")
 
             direct_answer = (
-                f"From {first_period} to {last_period}, {val_col.replace('_', ' ')} {growth_str} "
-                f"(from {format_value(first_val, val_col)} to {format_value(last_val, val_col)}), "
+                f"{val_col.replace('_', ' ').capitalize()} {growth_str} during the selected period (from {first_period} to {last_period}), "
                 f"peaking in {peak_period} at {format_value(peak_val, val_col)}."
             )
 
@@ -735,14 +765,25 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
 
             distinct_groups_count = len(set(str(r.get(group_col, '')) for r in rows))
             if distinct_groups_count > 1:
-                direct_answer = (
-                    f"The data breaks down across {distinct_groups_count} {group_col.replace('_', ' ')} segments, led by {top_name} "
-                    f"with {format_value(top_val, val_col)} ({top_share:.1f}% of total {val_col.replace('_', ' ')})."
-                )
+                if any(k in q for k in ["compare", "vs", "versus", "between"]) and row_count == 2:
+                    other_group = rows[1] if rows[0] == top_group else rows[0]
+                    other_name = str(other_group.get(group_col, 'Second Segment'))
+                    other_val = float(other_group.get(val_col, 0) or 0)
+                    diff = top_val - other_val
+                    pct_lead = ((diff / other_val) * 100) if other_val > 0 else 0
+                    direct_answer = (
+                        f"{top_name} outperformed {other_name} during the selected period with {format_value(top_val, val_col)} "
+                        f"vs {format_value(other_val, val_col)} in {val_col.replace('_', ' ')} (+{pct_lead:.1f}% higher)."
+                    )
+                else:
+                    direct_answer = (
+                        f"{top_name} is the top-performing {group_col.replace('_', ' ')} during the selected period with {format_value(top_val, val_col)} in {val_col.replace('_', ' ')} "
+                        f"({top_share:.1f}% share across {distinct_groups_count} {group_col.replace('_', ' ')} segments)."
+                    )
             else:
                 top_entity = str(rows[0].get("name", rows[0].get("company", top_name)))
                 direct_answer = (
-                    f"Retrieved {row_count} records for '{question}' ({group_col.replace('_', ' ')}: {top_name}), "
+                    f"Retrieved {row_count} records during the selected period ({group_col.replace('_', ' ')}: {top_name}), "
                     f"totaling {format_value(total_val, val_col)} in {val_col.replace('_', ' ')} (led by {top_entity} at {format_value(top_val, val_col)})."
                 )
 

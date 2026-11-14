@@ -215,14 +215,19 @@ export const BusinessInsightsPanel: React.FC<BusinessInsightsPanelProps> = ({
         </div>
       </div>
 
-      {/* 2. Direct Answer Highlight Card (Requirement 3) */}
+      {/* 2. Natural-Language Insight Hero Banner (Above Results) */}
       {insights.direct_answer && (
-        <div className="p-3.5 bg-linear-to-r from-[#ECFDF5] to-[#F0FDF4] border border-[#10B981]/30 rounded-xl space-y-1">
-          <div className="flex items-center gap-1.5 text-[#047857] font-bold text-[10px] uppercase tracking-wider">
-            <Target className="w-3.5 h-3.5 text-[#10B981]" />
-            <span>Direct Answer</span>
+        <div className="p-4 bg-linear-to-r from-[#ECFDF5] via-[#F0FDF4] to-[#F8FAFC] border-2 border-[#10B981]/40 rounded-xl space-y-1.5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-[#047857] font-bold text-[11px] uppercase tracking-wider">
+              <Sparkles className="w-4 h-4 text-[#10B981]" />
+              <span>Natural-Language Business Insight</span>
+            </div>
+            <span className="text-[10px] font-bold text-[#047857] bg-[#ECFDF5] border border-[#10B981]/30 px-2 py-0.5 rounded-md">
+              Dynamic Query Result
+            </span>
           </div>
-          <p className="text-xs sm:text-[13px] font-semibold text-[#064E3B] leading-relaxed pl-0.5">
+          <p className="text-sm sm:text-base font-bold text-[#064E3B] leading-relaxed">
             {insights.direct_answer}
           </p>
         </div>

@@ -169,13 +169,90 @@ JSON Response Format:
         has_explicit_limit = bool(limit_match) or any(k in q for k in ["top", "bottom", "lowest", "highest", "limit", "first"])
         limit_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
 
+        # 3. Parse date / temporal filters if specified
+        date_where_s = ""
+        date_where_sales = ""
+        date_desc = ""
+
+        month_names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+        month_map = {
+            "january": "01", "february": "02", "march": "03", "april": "04",
+            "may": "05", "june": "06", "july": "07", "august": "08",
+            "september": "09", "october": "10", "november": "11", "december": "12"
+        }
+        month_pat = r"\b(" + "|".join(month_names) + r")(?:\s+(20[12]\d))?\b"
+
+        between_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\s*(?:and|to)\s*(\d{4}-\d{2}-\d{2})\b", q)
+        rel_year_match = re.search(r"\b(after|since|before|earlier than|later than)\s+(20[12]\d)\b", q)
+        month_match = re.search(month_pat, q)
+        year_match = re.search(r"\b(?:in|for|during|year|of)?\s*(20[12]\d)\b", q)
+
+        if between_match:
+            d1, d2 = between_match.group(1), between_match.group(2)
+            date_where_s = f" AND s.sale_date BETWEEN '{d1}' AND '{d2}'"
+            date_where_sales = f" AND sale_date BETWEEN '{d1}' AND '{d2}'"
+            date_desc = f" between {d1} and {d2}"
+        elif rel_year_match:
+            op_w, yr = rel_year_match.group(1), rel_year_match.group(2)
+            if op_w in ["after", "since", "later than"]:
+                date_where_s = f" AND s.sale_date >= '{yr}-01-01'"
+                date_where_sales = f" AND sale_date >= '{yr}-01-01'"
+                date_desc = f" after {yr}"
+            else:
+                date_where_s = f" AND s.sale_date < '{yr}-01-01'"
+                date_where_sales = f" AND sale_date < '{yr}-01-01'"
+                date_desc = f" before {yr}"
+        elif month_match:
+            m_name = month_match.group(1).lower()
+            m_yr = month_match.group(2) or "2026"
+            m_code = month_map[m_name]
+            date_where_s = f" AND s.sale_date LIKE '{m_yr}-{m_code}%'"
+            date_where_sales = f" AND sale_date LIKE '{m_yr}-{m_code}%'"
+            date_desc = f" in {m_name.capitalize()} {m_yr}"
+        elif year_match:
+            yr = year_match.group(1)
+            date_where_s = f" AND s.sale_date LIKE '{yr}%'"
+            date_where_sales = f" AND sale_date LIKE '{yr}%'"
+            date_desc = f" in {yr}"
+
+        # Pattern: Compare Regions
+        if ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("region" in q or any(r in q for r in ["north", "south", "east", "west", "europe", "asia", "america", "apac", "latam", "emea"])):
+            region_candidates = ["North America", "Latin America", "Asia-Pacific", "Europe", "North", "South", "East", "West"]
+            regions = [r for r in region_candidates if r.lower() in q]
+            if "North America" in regions and "North" in regions:
+                regions.remove("North")
+            if "Latin America" in regions and "Latin" in regions:
+                regions.remove("Latin")
+            if len(regions) >= 2:
+                region_or = " OR ".join([f"(region = '{r}' OR region LIKE '{r}%')" for r in regions])
+                sql = (
+                    f"SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
+                    f"FROM sales WHERE status = 'Completed' AND ({region_or}){date_where_sales} "
+                    f"GROUP BY region ORDER BY total_revenue DESC;"
+                )
+                explanation = f"Compares sales performance between the {', '.join(regions)} regions{date_desc}."
+                return sql, explanation
+
+        # Pattern: Compare Departments
+        if ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("dept" in q or "department" in q or "salary" in q) and "employees" in schema_info:
+            depts = [d for d in ["Engineering", "Product", "Marketing", "Sales", "Finance", "HR"] if d.lower() in q]
+            if len(depts) >= 2:
+                d_in = ", ".join([f"'{d}'" for d in depts])
+                sql = (
+                    f"SELECT department, AVG(salary) AS avg_salary, COUNT(id) AS employee_count "
+                    f"FROM employees WHERE department IN ({d_in}) "
+                    f"GROUP BY department ORDER BY avg_salary DESC;"
+                )
+                explanation = f"Compares average salary and employee count between the {', '.join(depts)} departments."
+                return sql, explanation
+
         # Pattern: Single aggregate KPI ("total revenue", "what is total sales", "how much revenue")
         if ("total" in q or "overall" in q or "sum" in q or "how much" in q) and ("revenue" in q or "sales" in q) and not any(k in q for k in ["product", "customer", "region", "month", "by"]):
             sql = (
-                "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
-                "FROM sales WHERE status = 'Completed';"
+                f"SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
+                f"FROM sales WHERE status = 'Completed'{date_where_sales};"
             )
-            explanation = "Calculates overall total revenue and completed sales count across all transactions."
+            explanation = f"Calculates overall total revenue and completed sales count across all transactions{date_desc}."
             return sql, explanation
 
         # Pattern: Completed Sales Detailed Transactions with Customer and Product Names (Multi-Table 3-Way Join)
@@ -185,12 +262,12 @@ JSON Response Format:
                 "FROM sales s "
                 "JOIN customers c ON s.customer_id = c.id "
                 "JOIN products p ON s.product_id = p.id "
-                "WHERE s.status = 'Completed' "
+                f"WHERE s.status = 'Completed'{date_where_s} "
                 f"ORDER BY s.sale_date DESC{limit_clause or ' LIMIT 10'};"
             )
             explanation = (
-                "Performs a three-table join across sales, customers, and products to list completed "
-                "transaction records with customer and product names."
+                f"Performs a three-table join across sales, customers, and products to list completed "
+                f"transaction records with customer and product names{date_desc}."
             )
             return sql, explanation
 
@@ -201,13 +278,13 @@ JSON Response Format:
                 "FROM sales s "
                 "JOIN customers c ON s.customer_id = c.id "
                 "JOIN products p ON s.product_id = p.id "
-                "WHERE s.status = 'Completed' "
+                f"WHERE s.status = 'Completed'{date_where_s} "
                 "GROUP BY c.plan, p.category "
                 "ORDER BY total_revenue DESC;"
             )
             explanation = (
-                "Performs a three-table join between sales, customers, and products to aggregate "
-                "total revenue and transaction count by customer plan and product category."
+                f"Performs a three-table join between sales, customers, and products to aggregate "
+                f"total revenue and transaction count by customer plan and product category{date_desc}."
             )
             return sql, explanation
 
@@ -217,13 +294,13 @@ JSON Response Format:
                 "SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
                 "FROM sales s "
                 "JOIN customers c ON s.customer_id = c.id "
-                "WHERE s.status = 'Completed' "
+                f"WHERE s.status = 'Completed'{date_where_s} "
                 "GROUP BY c.plan "
                 "ORDER BY avg_order_value DESC;"
             )
             explanation = (
-                "Joins sales and customers by plan to calculate order count, average order value, "
-                "and total spending per subscription tier."
+                f"Joins sales and customers by plan to calculate order count, average order value, "
+                f"and total spending per subscription tier{date_desc}."
             )
             return sql, explanation
 
@@ -232,12 +309,12 @@ JSON Response Format:
             sql = (
                 f"SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity "
                 f"FROM sales s JOIN products p ON s.product_id = p.id "
-                f"WHERE s.status = 'Completed' "
+                f"WHERE s.status = 'Completed'{date_where_s} "
                 f"GROUP BY p.id, p.name, p.category "
                 f"ORDER BY total_quantity {direction}{limit_clause};"
             )
             explanation = (
-                f"Joins the 'sales' and 'products' tables, filters for completed transactions, "
+                f"Joins the 'sales' and 'products' tables, filters for completed transactions{date_desc}, "
                 f"and aggregates total quantity sold for {rank_label} products sorted in {direction_word} order."
             )
             return sql, explanation
@@ -248,18 +325,18 @@ JSON Response Format:
             sql = (
                 f"SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders "
                 f"FROM sales s JOIN products p ON s.product_id = p.id "
-                f"WHERE s.status = 'Completed' "
+                f"WHERE s.status = 'Completed'{date_where_s} "
                 f"GROUP BY p.id, p.name, p.category "
                 f"ORDER BY total_revenue {direction}{limit_clause};"
             )
             if is_unspecified_metric:
                 explanation = (
                     f"Defaulted to total revenue as the primary ranking benchmark since no metric was specified; "
-                    f"aggregates completed sales for {rank_label} products in {direction_word} order (can also rank by quantity sold, order count, or customer rating)."
+                    f"aggregates completed sales for {rank_label} products in {direction_word} order{date_desc} (can also rank by quantity sold, order count, or customer rating)."
                 )
             else:
                 explanation = (
-                    f"Joins the 'sales' and 'products' tables, filters for completed transactions, "
+                    f"Joins the 'sales' and 'products' tables, filters for completed transactions{date_desc}, "
                     f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
                 )
             return sql, explanation
@@ -299,13 +376,13 @@ JSON Response Format:
             sql = (
                 f"SELECT {month_expr} AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
                 "FROM sales "
-                "WHERE status = 'Completed' "
+                f"WHERE status = 'Completed'{date_where_sales} "
                 "GROUP BY sales_month, region "
                 "ORDER BY sales_month ASC, monthly_revenue DESC;"
             )
             explanation = (
                 "Extracts year and month from 'sale_date' in the 'sales' table, grouping by month and geographical region "
-                "to calculate monthly revenue and transaction volume."
+                f"to calculate monthly revenue and transaction volume{date_desc}."
             )
             return sql, explanation
 
@@ -314,12 +391,12 @@ JSON Response Format:
             sql = (
                 f"SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value "
                 f"FROM sales "
-                f"WHERE status = 'Completed' "
+                f"WHERE status = 'Completed'{date_where_sales} "
                 f"GROUP BY region "
                 f"ORDER BY total_revenue {direction};"
             )
             explanation = (
-                f"Calculates total revenue, transaction counts, and average order value across geographical regions in {direction_word} order."
+                f"Calculates total revenue, transaction counts, and average order value across geographical regions in {direction_word} order{date_desc}."
             )
             return sql, explanation
 
@@ -618,6 +695,44 @@ JSON Response Format:
                 op = op_map.get(op_raw, ">")
                 where_filters.append(f'"{num_c}" {op} {n_val}')
                 filter_descriptions.append(f"{num_c} {op} {n_val}")
+
+        # Date / Temporal filters on target table
+        if date_cols:
+            d_col = date_cols[0]
+            month_names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
+            month_map = {
+                "january": "01", "february": "02", "march": "03", "april": "04",
+                "may": "05", "june": "06", "july": "07", "august": "08",
+                "september": "09", "october": "10", "november": "11", "december": "12"
+            }
+            month_pat = r"\b(" + "|".join(month_names) + r")(?:\s+(20[12]\d))?\b"
+            dyn_between_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\s*(?:and|to)\s*(\d{4}-\d{2}-\d{2})\b", q)
+            dyn_rel_year_match = re.search(r"\b(after|since|before|earlier than|later than)\s+(20[12]\d)\b", q)
+            dyn_month_match = re.search(month_pat, q)
+            dyn_year_match = re.search(r"\b(?:in|for|during|year|of)?\s*(20[12]\d)\b", q)
+
+            if dyn_between_match:
+                d1, d2 = dyn_between_match.group(1), dyn_between_match.group(2)
+                where_filters.append(f'"{d_col}" BETWEEN \'{d1}\' AND \'{d2}\'')
+                filter_descriptions.append(f"{d_col} between {d1} and {d2}")
+            elif dyn_rel_year_match:
+                op_w, yr = dyn_rel_year_match.group(1), dyn_rel_year_match.group(2)
+                if op_w in ["after", "since", "later than"]:
+                    where_filters.append(f'"{d_col}" >= \'{yr}-01-01\'')
+                    filter_descriptions.append(f"{d_col} after {yr}")
+                else:
+                    where_filters.append(f'"{d_col}" < \'{yr}-01-01\'')
+                    filter_descriptions.append(f"{d_col} before {yr}")
+            elif dyn_month_match:
+                m_name = dyn_month_match.group(1).lower()
+                m_yr = dyn_month_match.group(2) or "2026"
+                m_code = month_map[m_name]
+                where_filters.append(f'"{d_col}" LIKE \'{m_yr}-{m_code}%\'')
+                filter_descriptions.append(f"{d_col} in {m_name.capitalize()} {m_yr}")
+            elif dyn_year_match:
+                yr = dyn_year_match.group(1)
+                where_filters.append(f'"{d_col}" LIKE \'{yr}%\'')
+                filter_descriptions.append(f"{d_col} in {yr}")
 
         where_clause = f" WHERE {' AND '.join(where_filters)}" if where_filters else ""
 
