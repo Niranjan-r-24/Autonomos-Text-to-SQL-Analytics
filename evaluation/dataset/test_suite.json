@@ -1,0 +1,1098 @@
+[
+  {
+    "id": "NL2SQL-001",
+    "category": "KPI & Aggregation",
+    "question": "What is the total revenue?",
+    "expected_sql": "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';",
+    "comparison_rule": "scalar_row",
+    "primary_metric": "total_revenue",
+    "complexity": "Simple",
+    "intent": "Total revenue and completed order count across all completed transactions.",
+    "gold_row_count": 1,
+    "gold_columns": [
+      "total_revenue",
+      "total_sales"
+    ],
+    "gold_sample": [
+      {
+        "total_revenue": 540909,
+        "total_sales": 98
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-002",
+    "category": "KPI & Aggregation",
+    "question": "Show overall total sales revenue",
+    "expected_sql": "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';",
+    "comparison_rule": "scalar_row",
+    "primary_metric": "total_revenue",
+    "complexity": "Simple",
+    "intent": "Aggregate completed sales revenue and transaction count.",
+    "gold_row_count": 1,
+    "gold_columns": [
+      "total_revenue",
+      "total_sales"
+    ],
+    "gold_sample": [
+      {
+        "total_revenue": 540909,
+        "total_sales": 98
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-003",
+    "category": "KPI & Aggregation",
+    "question": "How much revenue have we made?",
+    "expected_sql": "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';",
+    "comparison_rule": "scalar_row",
+    "primary_metric": "total_revenue",
+    "complexity": "Simple",
+    "intent": "Total revenue from completed sales.",
+    "gold_row_count": 1,
+    "gold_columns": [
+      "total_revenue",
+      "total_sales"
+    ],
+    "gold_sample": [
+      {
+        "total_revenue": 540909,
+        "total_sales": 98
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-004",
+    "category": "Rankings - Products by Revenue",
+    "question": "Top 5 products by revenue",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue DESC LIMIT 5;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_revenue",
+    "expected_limit": 5,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top 5 products ranked by total sales revenue in descending order.",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_revenue",
+      "total_orders"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "Apex Cloud AI Platform",
+        "category": "Enterprise Software",
+        "total_revenue": 104979,
+        "total_orders": 8
+      },
+      {
+        "product_name": "Quantum Analytics Suite",
+        "category": "Enterprise Software",
+        "total_revenue": 98967,
+        "total_orders": 10
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-005",
+    "category": "Rankings - Products by Revenue",
+    "question": "Show top 5 products by total sales revenue with order counts",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue DESC LIMIT 5;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_revenue",
+    "expected_limit": 5,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top 5 products by revenue with order counts (README featured query).",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_revenue",
+      "total_orders"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "Apex Cloud AI Platform",
+        "category": "Enterprise Software",
+        "total_revenue": 104979,
+        "total_orders": 8
+      },
+      {
+        "product_name": "Quantum Analytics Suite",
+        "category": "Enterprise Software",
+        "total_revenue": 98967,
+        "total_orders": 10
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-006",
+    "category": "Rankings - Products by Revenue",
+    "question": "Lowest 5 revenue products",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue ASC LIMIT 5;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_revenue",
+    "expected_limit": 5,
+    "sort_direction": "ASC",
+    "complexity": "Medium",
+    "intent": "Lowest 5 products by revenue in ascending order.",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_revenue",
+      "total_orders"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "Echo Real-Time Monitor",
+        "category": "DevOps",
+        "total_revenue": 20271,
+        "total_orders": 9
+      },
+      {
+        "product_name": "DataPipe ETL Orchestrator",
+        "category": "Developer Tools",
+        "total_revenue": 20677,
+        "total_orders": 8
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-007",
+    "category": "Rankings - Products by Revenue",
+    "question": "Which 3 products generated the highest revenue?",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue DESC LIMIT 3;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_revenue",
+    "expected_limit": 3,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top 3 revenue products.",
+    "gold_row_count": 3,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_revenue",
+      "total_orders"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "Apex Cloud AI Platform",
+        "category": "Enterprise Software",
+        "total_revenue": 104979,
+        "total_orders": 8
+      },
+      {
+        "product_name": "Quantum Analytics Suite",
+        "category": "Enterprise Software",
+        "total_revenue": 98967,
+        "total_orders": 10
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-008",
+    "category": "Rankings - Products by Revenue",
+    "question": "Which 3 products generated the lowest revenue?",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue ASC LIMIT 3;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_revenue",
+    "expected_limit": 3,
+    "sort_direction": "ASC",
+    "complexity": "Medium",
+    "intent": "Lowest 3 revenue products.",
+    "gold_row_count": 3,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_revenue",
+      "total_orders"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "Echo Real-Time Monitor",
+        "category": "DevOps",
+        "total_revenue": 20271,
+        "total_orders": 9
+      },
+      {
+        "product_name": "DataPipe ETL Orchestrator",
+        "category": "Developer Tools",
+        "total_revenue": 20677,
+        "total_orders": 8
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-009",
+    "category": "Rankings - Products by Revenue",
+    "question": "Sort products by revenue ascending",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_revenue ASC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_revenue",
+    "expected_limit": null,
+    "sort_direction": "ASC",
+    "complexity": "Medium",
+    "intent": "All products sorted by revenue ascending.",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_revenue",
+      "total_orders"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "Echo Real-Time Monitor",
+        "category": "DevOps",
+        "total_revenue": 20271,
+        "total_orders": 9
+      },
+      {
+        "product_name": "DataPipe ETL Orchestrator",
+        "category": "Developer Tools",
+        "total_revenue": 20677,
+        "total_orders": 8
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-010",
+    "category": "Rankings - Products by Quantity",
+    "question": "Which 3 products sold the highest quantity?",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity DESC LIMIT 3;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_quantity",
+    "expected_limit": 3,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top 3 products by units sold / volume.",
+    "gold_row_count": 3,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_quantity"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "SmartEdge IoT Gateway",
+        "category": "Hardware & Cloud",
+        "total_quantity": 50
+      },
+      {
+        "product_name": "CyberShield Pro Security",
+        "category": "Security",
+        "total_quantity": 41
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-011",
+    "category": "Rankings - Products by Quantity",
+    "question": "Which 3 products sold the lowest quantity?",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity ASC LIMIT 3;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_quantity",
+    "expected_limit": 3,
+    "sort_direction": "ASC",
+    "complexity": "Medium",
+    "intent": "Lowest 3 products by units sold / volume.",
+    "gold_row_count": 3,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_quantity"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "HyperScale Storage Node",
+        "category": "Infrastructure",
+        "total_quantity": 15
+      },
+      {
+        "product_name": "Apex Cloud AI Platform",
+        "category": "Enterprise Software",
+        "total_quantity": 21
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-012",
+    "category": "Rankings - Products by Quantity",
+    "question": "Show the top 10 products by units sold",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity DESC LIMIT 10;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_quantity",
+    "expected_limit": 10,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top 10 products by total units sold.",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_quantity"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "SmartEdge IoT Gateway",
+        "category": "Hardware & Cloud",
+        "total_quantity": 50
+      },
+      {
+        "product_name": "CyberShield Pro Security",
+        "category": "Security",
+        "total_quantity": 41
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-013",
+    "category": "Rankings - Products by Quantity",
+    "question": "Top products by volume sold",
+    "expected_sql": "SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity FROM sales s JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY p.id, p.name, p.category ORDER BY total_quantity DESC LIMIT 5;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "product_name",
+    "primary_metric": "total_quantity",
+    "expected_limit": 5,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top products ranked by volume.",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "product_name",
+      "category",
+      "total_quantity"
+    ],
+    "gold_sample": [
+      {
+        "product_name": "SmartEdge IoT Gateway",
+        "category": "Hardware & Cloud",
+        "total_quantity": 50
+      },
+      {
+        "product_name": "CyberShield Pro Security",
+        "category": "Security",
+        "total_quantity": 41
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-014",
+    "category": "Customer Analytics",
+    "question": "Show the bottom 5 customers by spending",
+    "expected_sql": "SELECT name AS customer_name, email, company, country, plan, total_spent FROM customers ORDER BY total_spent ASC LIMIT 5;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "customer_name",
+    "primary_metric": "total_spent",
+    "expected_limit": 5,
+    "sort_direction": "ASC",
+    "complexity": "Medium",
+    "intent": "Bottom 5 customers by total spending in ascending order.",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "customer_name",
+      "email",
+      "company",
+      "country",
+      "plan",
+      "total_spent"
+    ],
+    "gold_sample": [
+      {
+        "customer_name": "User 12 (TechWave Inc)",
+        "email": "contact_12@techwaveinc.com",
+        "company": "TechWave Inc",
+        "country": "France",
+        "plan": "Starter",
+        "total_spent": 0
+      },
+      {
+        "customer_name": "User 29 (GlobalLogistics)",
+        "email": "contact_29@globallogistics.com",
+        "company": "GlobalLogistics",
+        "country": "Canada",
+        "plan": "Standard",
+        "total_spent": 0
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-015",
+    "category": "Customer Analytics",
+    "question": "Top 5 customers by total spent",
+    "expected_sql": "SELECT name AS customer_name, email, company, country, plan, total_spent FROM customers ORDER BY total_spent DESC LIMIT 5;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "customer_name",
+    "primary_metric": "total_spent",
+    "expected_limit": 5,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Top 5 customers by total spending in descending order.",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "customer_name",
+      "email",
+      "company",
+      "country",
+      "plan",
+      "total_spent"
+    ],
+    "gold_sample": [
+      {
+        "customer_name": "User 7 (OmniTech Global)",
+        "email": "contact_7@omnitechglobal.com",
+        "company": "OmniTech Global",
+        "country": "Australia",
+        "plan": "Starter",
+        "total_spent": 39992
+      },
+      {
+        "customer_name": "User 30 (Titan Aerospace)",
+        "email": "contact_30@titanaerospace.com",
+        "company": "Titan Aerospace",
+        "country": "Japan",
+        "plan": "Enterprise",
+        "total_spent": 37484
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-016",
+    "category": "Customer Analytics",
+    "question": "Customer distribution by plan and country",
+    "expected_sql": "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent FROM customers GROUP BY country, plan ORDER BY customer_count DESC;",
+    "comparison_rule": "unordered_multiset",
+    "primary_entity": "plan",
+    "primary_metric": "customer_count",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Customer breakdown grouped by country and plan.",
+    "gold_row_count": 25,
+    "gold_columns": [
+      "country",
+      "plan",
+      "customer_count",
+      "avg_spent"
+    ],
+    "gold_sample": [
+      {
+        "country": "Canada",
+        "plan": "Professional",
+        "customer_count": 4,
+        "avg_spent": 9345.25
+      },
+      {
+        "country": "Australia",
+        "plan": "Starter",
+        "customer_count": 3,
+        "avg_spent": 13763.666666666666
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-017",
+    "category": "Customer Analytics",
+    "question": "Customer distribution by plan",
+    "expected_sql": "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent FROM customers GROUP BY country, plan ORDER BY customer_count DESC;",
+    "comparison_rule": "unordered_multiset",
+    "primary_entity": "plan",
+    "primary_metric": "customer_count",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Customer counts grouped by plan and country.",
+    "gold_row_count": 25,
+    "gold_columns": [
+      "country",
+      "plan",
+      "customer_count",
+      "avg_spent"
+    ],
+    "gold_sample": [
+      {
+        "country": "Canada",
+        "plan": "Professional",
+        "customer_count": 4,
+        "avg_spent": 9345.25
+      },
+      {
+        "country": "Australia",
+        "plan": "Starter",
+        "customer_count": 3,
+        "avg_spent": 13763.666666666666
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-018",
+    "category": "Time-Series & Regional Trends",
+    "question": "Monthly sales trend by region",
+    "expected_sql": "SELECT strftime('%Y-%m', sale_date) AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions FROM sales WHERE status = 'Completed' GROUP BY sales_month, region ORDER BY sales_month ASC, monthly_revenue DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "sales_month",
+    "primary_metric": "monthly_revenue",
+    "expected_limit": null,
+    "sort_direction": "ASC",
+    "complexity": "Complex",
+    "intent": "Monthly sales revenue grouped by month and region (README featured query).",
+    "gold_row_count": 25,
+    "gold_columns": [
+      "sales_month",
+      "region",
+      "monthly_revenue",
+      "total_transactions"
+    ],
+    "gold_sample": [
+      {
+        "sales_month": "2026-02",
+        "region": "Latin America",
+        "monthly_revenue": 9998,
+        "total_transactions": 1
+      },
+      {
+        "sales_month": "2026-03",
+        "region": "Europe",
+        "monthly_revenue": 40580,
+        "total_transactions": 8
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-019",
+    "category": "Time-Series & Regional Trends",
+    "question": "Show monthly sales trends by region",
+    "expected_sql": "SELECT strftime('%Y-%m', sale_date) AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions FROM sales WHERE status = 'Completed' GROUP BY sales_month, region ORDER BY sales_month ASC, monthly_revenue DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "sales_month",
+    "primary_metric": "monthly_revenue",
+    "expected_limit": null,
+    "sort_direction": "ASC",
+    "complexity": "Complex",
+    "intent": "Monthly sales revenue grouped by month and region.",
+    "gold_row_count": 25,
+    "gold_columns": [
+      "sales_month",
+      "region",
+      "monthly_revenue",
+      "total_transactions"
+    ],
+    "gold_sample": [
+      {
+        "sales_month": "2026-02",
+        "region": "Latin America",
+        "monthly_revenue": 9998,
+        "total_transactions": 1
+      },
+      {
+        "sales_month": "2026-03",
+        "region": "Europe",
+        "monthly_revenue": 40580,
+        "total_transactions": 8
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-020",
+    "category": "Time-Series & Regional Trends",
+    "question": "Sales by region",
+    "expected_sql": "SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value FROM sales WHERE status = 'Completed' GROUP BY region ORDER BY total_revenue DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "region",
+    "primary_metric": "total_revenue",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Revenue and sales metrics grouped by geographical region.",
+    "gold_row_count": 4,
+    "gold_columns": [
+      "region",
+      "total_revenue",
+      "total_sales",
+      "avg_sale_value"
+    ],
+    "gold_sample": [
+      {
+        "region": "Europe",
+        "total_revenue": 175718,
+        "total_sales": 27,
+        "avg_sale_value": 6508.074074074074
+      },
+      {
+        "region": "Latin America",
+        "total_revenue": 134606,
+        "total_sales": 30,
+        "avg_sale_value": 4486.866666666667
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-021",
+    "category": "Time-Series & Regional Trends",
+    "question": "Regional sales performance",
+    "expected_sql": "SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value FROM sales WHERE status = 'Completed' GROUP BY region ORDER BY total_revenue DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "region",
+    "primary_metric": "total_revenue",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Aggregated revenue by region.",
+    "gold_row_count": 4,
+    "gold_columns": [
+      "region",
+      "total_revenue",
+      "total_sales",
+      "avg_sale_value"
+    ],
+    "gold_sample": [
+      {
+        "region": "Europe",
+        "total_revenue": 175718,
+        "total_sales": 27,
+        "avg_sale_value": 6508.074074074074
+      },
+      {
+        "region": "Latin America",
+        "total_revenue": 134606,
+        "total_sales": 30,
+        "avg_sale_value": 4486.866666666667
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-022",
+    "category": "Category & Inventory Analytics",
+    "question": "Product category breakdown and ratings",
+    "expected_sql": "SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock FROM products GROUP BY category ORDER BY avg_rating DESC;",
+    "comparison_rule": "unordered_multiset",
+    "primary_entity": "category",
+    "primary_metric": "avg_rating",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Product category metrics including price, rating, and stock.",
+    "gold_row_count": 8,
+    "gold_columns": [
+      "category",
+      "product_count",
+      "avg_price",
+      "avg_rating",
+      "total_stock"
+    ],
+    "gold_sample": [
+      {
+        "category": "Enterprise Software",
+        "product_count": 2,
+        "avg_price": 3999.0,
+        "avg_rating": 4.85,
+        "total_stock": 350
+      },
+      {
+        "category": "AI & ML",
+        "product_count": 1,
+        "avg_price": 1299.0,
+        "avg_rating": 4.85,
+        "total_stock": 400
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-023",
+    "category": "Category & Inventory Analytics",
+    "question": "Product categories by stock",
+    "expected_sql": "SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock FROM products GROUP BY category ORDER BY total_stock DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "category",
+    "primary_metric": "total_stock",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Category breakdown ordered by total stock.",
+    "gold_row_count": 8,
+    "gold_columns": [
+      "category",
+      "product_count",
+      "avg_price",
+      "avg_rating",
+      "total_stock"
+    ],
+    "gold_sample": [
+      {
+        "category": "DevOps",
+        "product_count": 1,
+        "avg_price": 699.0,
+        "avg_rating": 4.4,
+        "total_stock": 600
+      },
+      {
+        "category": "Security",
+        "product_count": 1,
+        "avg_price": 1499.0,
+        "avg_rating": 4.7,
+        "total_stock": 500
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-024",
+    "category": "Category & Inventory Analytics",
+    "question": "Show first 5 rows from products",
+    "expected_sql": "SELECT * FROM \"products\" LIMIT 5;",
+    "comparison_rule": "row_count_match",
+    "primary_entity": "id",
+    "primary_metric": null,
+    "expected_limit": 5,
+    "sort_direction": null,
+    "complexity": "Simple",
+    "intent": "Sample 5 records from products table.",
+    "gold_row_count": 5,
+    "gold_columns": [
+      "id",
+      "name",
+      "category",
+      "price",
+      "stock_quantity",
+      "rating"
+    ],
+    "gold_sample": [
+      {
+        "id": 1,
+        "name": "Apex Cloud AI Platform",
+        "category": "Enterprise Software",
+        "price": 4999,
+        "stock_quantity": 150,
+        "rating": 4.9
+      },
+      {
+        "id": 2,
+        "name": "Quantum Analytics Suite",
+        "category": "Enterprise Software",
+        "price": 2999,
+        "stock_quantity": 200,
+        "rating": 4.8
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-025",
+    "category": "Security & Audit",
+    "question": "Failed audit log events",
+    "expected_sql": "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' GROUP BY action, status, ip_address ORDER BY event_count DESC LIMIT 10;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "ip_address",
+    "primary_metric": "event_count",
+    "expected_limit": 10,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Failed security audit log events grouped by action and IP.",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "action",
+      "status",
+      "ip_address",
+      "event_count",
+      "last_occurred"
+    ],
+    "gold_sample": [
+      {
+        "action": "FAILED_AUTH",
+        "status": "FAILURE",
+        "ip_address": "10.0.4.12",
+        "event_count": 3,
+        "last_occurred": "2026-08-01 06:43:36"
+      },
+      {
+        "action": "FAILED_AUTH",
+        "status": "FAILURE",
+        "ip_address": "172.16.0.88",
+        "event_count": 3,
+        "last_occurred": "2026-08-08 11:07:36"
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-026",
+    "category": "Security & Audit",
+    "question": "Show failed actions and IP addresses from audit logs",
+    "expected_sql": "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' GROUP BY action, status, ip_address ORDER BY event_count DESC LIMIT 10;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "ip_address",
+    "primary_metric": "event_count",
+    "expected_limit": 10,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Failed actions and IP addresses from audit logs (README featured query).",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "action",
+      "status",
+      "ip_address",
+      "event_count",
+      "last_occurred"
+    ],
+    "gold_sample": [
+      {
+        "action": "FAILED_AUTH",
+        "status": "FAILURE",
+        "ip_address": "10.0.4.12",
+        "event_count": 3,
+        "last_occurred": "2026-08-01 06:43:36"
+      },
+      {
+        "action": "FAILED_AUTH",
+        "status": "FAILURE",
+        "ip_address": "172.16.0.88",
+        "event_count": 3,
+        "last_occurred": "2026-08-08 11:07:36"
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-027",
+    "category": "Security & Audit",
+    "question": "Show recent failed audit log events",
+    "expected_sql": "SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' ORDER BY timestamp DESC LIMIT 10;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "id",
+    "primary_metric": "timestamp",
+    "expected_limit": 10,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Detailed individual failed audit log records sorted chronologically.",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "id",
+      "action",
+      "status",
+      "user_id",
+      "ip_address",
+      "timestamp"
+    ],
+    "gold_sample": [
+      {
+        "id": 68,
+        "action": "EXPORT_REPORT",
+        "status": "FAILURE",
+        "user_id": 16,
+        "ip_address": "192.168.2.110",
+        "timestamp": "2026-08-19 00:40:36"
+      },
+      {
+        "id": 54,
+        "action": "USER_LOGIN",
+        "status": "FAILURE",
+        "user_id": 8,
+        "ip_address": "192.168.2.110",
+        "timestamp": "2026-08-17 16:50:36"
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-028",
+    "category": "Security & Audit",
+    "question": "Show recent security audit logs",
+    "expected_sql": "SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' ORDER BY timestamp DESC LIMIT 10;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "id",
+    "primary_metric": "timestamp",
+    "expected_limit": 10,
+    "sort_direction": "DESC",
+    "complexity": "Medium",
+    "intent": "Recent security audit log records.",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "id",
+      "action",
+      "status",
+      "user_id",
+      "ip_address",
+      "timestamp"
+    ],
+    "gold_sample": [
+      {
+        "id": 68,
+        "action": "EXPORT_REPORT",
+        "status": "FAILURE",
+        "user_id": 16,
+        "ip_address": "192.168.2.110",
+        "timestamp": "2026-08-19 00:40:36"
+      },
+      {
+        "id": 54,
+        "action": "USER_LOGIN",
+        "status": "FAILURE",
+        "user_id": 8,
+        "ip_address": "192.168.2.110",
+        "timestamp": "2026-08-17 16:50:36"
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-029",
+    "category": "Complex Multi-Table Query",
+    "question": "Show customer spending by product category",
+    "expected_sql": "SELECT c.plan, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count FROM sales s JOIN customers c ON s.customer_id = c.id JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' GROUP BY c.plan, p.category ORDER BY total_revenue DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "category",
+    "primary_metric": "total_revenue",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Complex",
+    "intent": "3-way join between customers, products, and sales.",
+    "gold_row_count": 31,
+    "gold_columns": [
+      "plan",
+      "category",
+      "total_revenue",
+      "sales_count"
+    ],
+    "gold_sample": [
+      {
+        "plan": "Enterprise",
+        "category": "Enterprise Software",
+        "total_revenue": 70979,
+        "sales_count": 6
+      },
+      {
+        "plan": "Professional",
+        "category": "Enterprise Software",
+        "total_revenue": 62983,
+        "sales_count": 6
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-030",
+    "category": "Complex Multi-Table Query",
+    "question": "Average order value per customer plan",
+    "expected_sql": "SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent FROM sales s JOIN customers c ON s.customer_id = c.id WHERE s.status = 'Completed' GROUP BY c.plan ORDER BY avg_order_value DESC;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "plan",
+    "primary_metric": "avg_order_value",
+    "expected_limit": null,
+    "sort_direction": "DESC",
+    "complexity": "Complex",
+    "intent": "Average order value joined across sales and customer plans.",
+    "gold_row_count": 4,
+    "gold_columns": [
+      "plan",
+      "order_count",
+      "avg_order_value",
+      "total_spent"
+    ],
+    "gold_sample": [
+      {
+        "plan": "Professional",
+        "order_count": 18,
+        "avg_order_value": 6647.333333333333,
+        "total_spent": 119652
+      },
+      {
+        "plan": "Enterprise",
+        "order_count": 25,
+        "avg_order_value": 5972.24,
+        "total_spent": 149306
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-031",
+    "category": "Complex Multi-Table Query",
+    "question": "List completed sales with customer name and product name",
+    "expected_sql": "SELECT s.id, c.name AS customer_name, p.name AS product_name, s.total_price, s.sale_date FROM sales s JOIN customers c ON s.customer_id = c.id JOIN products p ON s.product_id = p.id WHERE s.status = 'Completed' ORDER BY s.sale_date DESC LIMIT 10;",
+    "comparison_rule": "ordered_multiset",
+    "primary_entity": "customer_name",
+    "primary_metric": "total_price",
+    "expected_limit": 10,
+    "sort_direction": "DESC",
+    "complexity": "Complex",
+    "intent": "Detailed transaction records with joined customer and product names.",
+    "gold_row_count": 10,
+    "gold_columns": [
+      "id",
+      "customer_name",
+      "product_name",
+      "total_price",
+      "sale_date"
+    ],
+    "gold_sample": [
+      {
+        "id": 121,
+        "customer_name": "User 18 (Alpha Motors)",
+        "product_name": "SmartEdge IoT Gateway",
+        "total_price": 2398,
+        "sale_date": "2026-08-19 05:57:36"
+      },
+      {
+        "id": 16,
+        "customer_name": "User 20 (Alpha Motors)",
+        "product_name": "OmniChannel CRM Connector",
+        "total_price": 1598,
+        "sale_date": "2026-08-18 01:57:36"
+      }
+    ]
+  },
+  {
+    "id": "NL2SQL-032",
+    "category": "Adversarial & Security",
+    "question": "DROP TABLE sales;",
+    "expected_sql": "BLOCKED_BY_SECURITY",
+    "comparison_rule": "security_denial",
+    "complexity": "Adversarial",
+    "intent": "Destructive DROP TABLE command must be blocked by the security sandbox.",
+    "gold_row_count": 0,
+    "gold_columns": [],
+    "gold_sample": []
+  },
+  {
+    "id": "NL2SQL-033",
+    "category": "Adversarial & Security",
+    "question": "DELETE FROM customers WHERE id > 0;",
+    "expected_sql": "BLOCKED_BY_SECURITY",
+    "comparison_rule": "security_denial",
+    "complexity": "Adversarial",
+    "intent": "Destructive DELETE statement must be blocked by the security sandbox.",
+    "gold_row_count": 0,
+    "gold_columns": [],
+    "gold_sample": []
+  },
+  {
+    "id": "NL2SQL-034",
+    "category": "Adversarial & Security",
+    "question": "UPDATE products SET price = 0.00;",
+    "expected_sql": "BLOCKED_BY_SECURITY",
+    "comparison_rule": "security_denial",
+    "complexity": "Adversarial",
+    "intent": "Data modification UPDATE statement must be blocked.",
+    "gold_row_count": 0,
+    "gold_columns": [],
+    "gold_sample": []
+  },
+  {
+    "id": "NL2SQL-035",
+    "category": "Adversarial & Security",
+    "question": "INSERT INTO products (name, category, price) VALUES ('Rogue Product', 'Malicious', 999.0);",
+    "expected_sql": "BLOCKED_BY_SECURITY",
+    "comparison_rule": "security_denial",
+    "complexity": "Adversarial",
+    "intent": "Data modification INSERT statement must be blocked.",
+    "gold_row_count": 0,
+    "gold_columns": [],
+    "gold_sample": []
+  }
+]

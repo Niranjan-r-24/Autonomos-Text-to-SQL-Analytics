@@ -33,6 +33,8 @@ if PROJECT_ROOT not in sys.path:
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+from sqlalchemy import text
+
 try:
     from backend.app.db.database import DB_PATH, DATA_DIR, engine
     from backend.app.db.seed import seed_database
@@ -40,6 +42,7 @@ try:
     from backend.app.services.sql_executor import execute_safe_query
     from backend.app.services.pipeline import TextToSqlPipeline
     from backend.app.services.insights_service import BusinessInsightsInterpreter
+    from backend.app.services.rag_service import rag_service
 except ImportError:
     from app.db.database import DB_PATH, DATA_DIR, engine
     from app.db.seed import seed_database
@@ -47,6 +50,7 @@ except ImportError:
     from app.services.sql_executor import execute_safe_query
     from app.services.pipeline import TextToSqlPipeline
     from app.services.insights_service import BusinessInsightsInterpreter
+    from app.services.rag_service import rag_service
 
 from contextlib import asynccontextmanager
 
@@ -113,6 +117,12 @@ class KeyVerifyRequest(BaseModel):
     provider: Optional[str] = Field("gemini", description="LLM provider: gemini or openai")
 
 
+class RagQueryRequest(BaseModel):
+    query: str = Field(..., description="Document or knowledge question")
+    api_key: Optional[str] = Field(None, description="Optional LLM API Key")
+    provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
+
+
 @app.get("/api/health")
 def health_check():
     """Health check endpoint returning connection status and active configuration."""
@@ -122,10 +132,16 @@ def health_check():
         "status": "healthy",
         "database_connected": True,
         "database_path": DB_PATH,
+        "dialect": engine.dialect.name,
         "providers": {
             "gemini": gemini_key_set,
             "openai": openai_key_set,
             "deterministic_engine": True
+        },
+        "rag_store": {
+            "indexed_documents": len(rag_service.list_documents()),
+            "total_chunks": len(rag_service.records),
+            "status": "ready" if rag_service.has_documents else "empty"
         }
     }
 
@@ -300,8 +316,6 @@ async def upload_dataset(file: UploadFile = File(...)):
                 f.write(contents)
 
             src_conn = sqlite3.connect(temp_db_path)
-            dest_conn = sqlite3.connect(DB_PATH)
-
             cursor = src_conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
             tables = cursor.fetchall()
@@ -312,11 +326,11 @@ async def upload_dataset(file: UploadFile = File(...)):
                 temp_df = pd.read_sql_query(f'SELECT * FROM "{t_name}"', src_conn)
                 temp_df.columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(c).strip().lower()) for c in temp_df.columns]
                 clean_t = re.sub(r"[^a-zA-Z0-9_]", "_", t_name).lower()
-                temp_df.to_sql(clean_t, dest_conn, if_exists="replace", index=False)
+                with engine.begin() as conn:
+                    temp_df.to_sql(clean_t, conn, if_exists="replace", index=False)
                 imported_tables.append(clean_t)
 
             src_conn.close()
-            dest_conn.close()
             if os.path.exists(temp_db_path):
                 os.remove(temp_db_path)
 
@@ -324,7 +338,7 @@ async def upload_dataset(file: UploadFile = File(...)):
             primary_table = imported_tables[0] if imported_tables else clean_table_name
             return {
                 "success": True,
-                "message": f"Successfully imported SQLite database with table(s): {', '.join(imported_tables)}.",
+                "message": f"Successfully imported database with table(s): {', '.join(imported_tables)}.",
                 "table_name": primary_table,
                 "tables_imported": imported_tables,
                 "schema": updated_schema
@@ -333,10 +347,16 @@ async def upload_dataset(file: UploadFile = File(...)):
         # 2. SQL Dump Script (.sql)
         elif ext == ".sql":
             sql_text = contents.decode("utf-8", errors="ignore")
-            dest_conn = sqlite3.connect(DB_PATH)
-            dest_conn.executescript(sql_text)
-            dest_conn.commit()
-            dest_conn.close()
+            if engine.dialect.name == "sqlite":
+                dest_conn = sqlite3.connect(DB_PATH)
+                dest_conn.executescript(sql_text)
+                dest_conn.commit()
+                dest_conn.close()
+            else:
+                with engine.begin() as conn:
+                    for stmt in sql_text.split(";"):
+                        if stmt.strip():
+                            conn.execute(text(stmt.strip()))
 
             updated_schema = get_db_schema_info()
             return {
@@ -384,16 +404,27 @@ async def upload_dataset(file: UploadFile = File(...)):
         elif ext == ".parquet":
             df = pd.read_parquet(io.BytesIO(contents))
 
+        # 8. Document Knowledge Base (.pdf, .md) for RAG
+        elif ext in [".pdf", ".md"]:
+            rag_info = rag_service.ingest(filename, contents)
+            return {
+                "success": True,
+                "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
+                "table_name": "knowledge_base",
+                "rag_info": rag_info,
+                "schema": get_db_schema_info()
+            }
+
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported format '{ext}'. Supported formats: .csv, .xlsx, .xls, .json, .db, .sqlite, .sql, .txt, .tsv, .parquet"
+                detail=f"Unsupported format '{ext}'. Supported formats: .csv, .xlsx, .xls, .json, .db, .sqlite, .sql, .txt, .tsv, .parquet, .pdf, .md"
             )
 
         # Standardize column names
         df.columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(c).strip().lower()) for c in df.columns]
 
-        # Save to SQLite via SQLAlchemy engine
+        # Save to database engine via SQLAlchemy engine
         with engine.begin() as conn:
             df.to_sql(clean_table_name, conn, if_exists="replace", index=False)
 
@@ -416,13 +447,49 @@ async def upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to process and import file: {str(e)}")
 
 
+@app.post("/api/rag/upload")
+async def upload_rag_document(file: UploadFile = File(...)):
+    """Uploads document (.pdf, .txt, .md, .csv) and chunks/indexes it into the RAG knowledge store."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file uploaded.")
+    contents = await file.read()
+    try:
+        res = rag_service.ingest(file.filename, contents)
+        return {"success": True, **res}
+    except Exception as e:
+        logger.error("RAG document upload failed: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=f"RAG upload failed: {str(e)}")
+
+
+@app.post("/api/rag/query")
+def query_rag_knowledge(req: RagQueryRequest):
+    """Queries the document knowledge base using hybrid retrieval and returns answer with citations."""
+    if not req.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty.")
+    try:
+        res = rag_service.answer(req.query.strip(), api_key=req.api_key, provider=req.provider or "gemini")
+        return {"success": True, "query": req.query, **res}
+    except Exception as e:
+        logger.error("RAG query failed: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=f"RAG query failed: {str(e)}")
+
+
+@app.get("/api/rag/documents")
+def list_rag_documents():
+    """Lists indexed documents and chunk statistics."""
+    try:
+        docs = rag_service.list_documents()
+        return {
+            "success": True,
+            "document_count": len(docs),
+            "total_chunks": len(rag_service.records),
+            "documents": docs
+        }
+    except Exception as e:
+        logger.error("Failed to list RAG documents: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
-
-@app.get("/")
-def root():
-    return {
-        "status": "running",
-        "message": "Autonomous Text-to-SQL Analytics API is live"
-    }

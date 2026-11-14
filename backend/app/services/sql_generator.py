@@ -11,8 +11,13 @@ import httpx
 from typing import Dict, Any, Tuple, Optional
 try:
     from backend.app.services.schema_service import format_schema_for_llm
+    from backend.app.db.database import engine
 except ImportError:
     from app.services.schema_service import format_schema_for_llm
+    try:
+        from app.db.database import engine
+    except Exception:
+        engine = None
 
 logger = logging.getLogger("text2sql.generator")
 
@@ -173,6 +178,55 @@ JSON Response Format:
             explanation = "Calculates overall total revenue and completed sales count across all transactions."
             return sql, explanation
 
+        # Pattern: Completed Sales Detailed Transactions with Customer and Product Names (Multi-Table 3-Way Join)
+        if ("sale" in q or "transaction" in q or "order" in q) and ("customer" in q or "user" in q) and ("product" in q or "item" in q):
+            sql = (
+                "SELECT s.id, c.name AS customer_name, p.name AS product_name, s.total_price, s.sale_date "
+                "FROM sales s "
+                "JOIN customers c ON s.customer_id = c.id "
+                "JOIN products p ON s.product_id = p.id "
+                "WHERE s.status = 'Completed' "
+                f"ORDER BY s.sale_date DESC{limit_clause or ' LIMIT 10'};"
+            )
+            explanation = (
+                "Performs a three-table join across sales, customers, and products to list completed "
+                "transaction records with customer and product names."
+            )
+            return sql, explanation
+
+        # Pattern: Customer Spending by Product Category (Multi-Table 3-Way Join)
+        if ("customer" in q or "plan" in q) and ("category" in q or "product category" in q) and ("spent" in q or "spending" in q or "revenue" in q or "sales" in q):
+            sql = (
+                "SELECT c.plan, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count "
+                "FROM sales s "
+                "JOIN customers c ON s.customer_id = c.id "
+                "JOIN products p ON s.product_id = p.id "
+                "WHERE s.status = 'Completed' "
+                "GROUP BY c.plan, p.category "
+                "ORDER BY total_revenue DESC;"
+            )
+            explanation = (
+                "Performs a three-table join between sales, customers, and products to aggregate "
+                "total revenue and transaction count by customer plan and product category."
+            )
+            return sql, explanation
+
+        # Pattern: Average Order Value per Customer Plan (Multi-Table Join)
+        if "plan" in q and ("order value" in q or "average order" in q or "avg order" in q or ("order" in q and ("average" in q or "avg" in q)) or "aov" in q):
+            sql = (
+                "SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
+                "FROM sales s "
+                "JOIN customers c ON s.customer_id = c.id "
+                "WHERE s.status = 'Completed' "
+                "GROUP BY c.plan "
+                "ORDER BY avg_order_value DESC;"
+            )
+            explanation = (
+                "Joins sales and customers by plan to calculate order count, average order value, "
+                "and total spending per subscription tier."
+            )
+            return sql, explanation
+
         # Pattern: Products by Units Sold / Quantity
         if ("unit" in q or "quantity" in q or "volume" in q or "sold" in q) and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q or "highest" in q):
             sql = (
@@ -210,6 +264,8 @@ JSON Response Format:
                 )
             return sql, explanation
 
+
+
         # Pattern: Customers by Spending / Value
         if ("customer" in q or "user" in q or "client" in q) and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q):
             sql = (
@@ -238,8 +294,10 @@ JSON Response Format:
 
         # Pattern: Monthly Sales Trend / Revenue Over Time
         if ("month" in q or "monthly" in q or "trend" in q or "time" in q) and ("sale" in q or "revenue" in q):
+            is_postgres = (engine is not None and getattr(engine, "dialect", None) is not None and engine.dialect.name == "postgresql")
+            month_expr = "TO_CHAR(sale_date, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', sale_date)"
             sql = (
-                "SELECT strftime('%Y-%m', sale_date) AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
+                f"SELECT {month_expr} AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
                 "FROM sales "
                 "WHERE status = 'Completed' "
                 "GROUP BY sales_month, region "
@@ -282,7 +340,20 @@ JSON Response Format:
 
         # Pattern: Security & Audit logs (Strictly require security or audit or log keywords)
         if any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and ("event" in q or "log" in q)):
-            if any(k in q for k in ["record", "recent", "detail", "row", "show"]):
+            if "action" in q and ("ip" in q or "address" in q):
+                sql = (
+                    "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
+                    "FROM audit_logs "
+                    "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    "GROUP BY action, status, ip_address "
+                    "ORDER BY event_count DESC LIMIT 10;"
+                )
+                explanation = (
+                    "Queries the 'audit_logs' table for security events with failure status, "
+                    "grouping by action and IP address to highlight recurring issues."
+                )
+                return sql, explanation
+            elif any(k in q for k in ["record", "recent", "detail", "row"]) or ("show" in q and "audit" in q and not "action" in q and not "ip" in q):
                 sql = (
                     "SELECT id, action, status, user_id, ip_address, timestamp "
                     "FROM audit_logs "

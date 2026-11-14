@@ -22,32 +22,37 @@ def seed_database():
     """
     print("[SEED] Seeding Enterprise Analytics Database...")
 
+    is_postgres = (engine.dialect.name == "postgresql")
+    pk_col = "id SERIAL PRIMARY KEY" if is_postgres else "id INTEGER PRIMARY KEY AUTOINCREMENT"
+    dt_type = "TIMESTAMP" if is_postgres else "DATETIME"
+    cascade = " CASCADE" if is_postgres else ""
+
     with engine.connect() as conn:
         # Drop existing tables if re-seeding
-        conn.execute(text("DROP TABLE IF EXISTS sales;"))
-        conn.execute(text("DROP TABLE IF EXISTS audit_logs;"))
-        conn.execute(text("DROP TABLE IF EXISTS customers;"))
-        conn.execute(text("DROP TABLE IF EXISTS products;"))
+        conn.execute(text(f"DROP TABLE IF EXISTS sales{cascade};"))
+        conn.execute(text(f"DROP TABLE IF EXISTS audit_logs{cascade};"))
+        conn.execute(text(f"DROP TABLE IF EXISTS customers{cascade};"))
+        conn.execute(text(f"DROP TABLE IF EXISTS products{cascade};"))
         conn.commit()
 
         # 1. Create customers table
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE customers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                {pk_col},
                 name VARCHAR(100) NOT NULL,
                 email VARCHAR(100) UNIQUE NOT NULL,
                 company VARCHAR(100),
                 country VARCHAR(50) NOT NULL,
                 plan VARCHAR(20) DEFAULT 'Standard',
                 total_spent DECIMAL(10, 2) DEFAULT 0.00,
-                created_at DATETIME NOT NULL
+                created_at {dt_type} NOT NULL
             );
         """))
 
         # 2. Create products table
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                {pk_col},
                 name VARCHAR(100) NOT NULL,
                 category VARCHAR(50) NOT NULL,
                 price DECIMAL(10, 2) NOT NULL,
@@ -57,14 +62,14 @@ def seed_database():
         """))
 
         # 3. Create sales table
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE sales (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                {pk_col},
                 customer_id INTEGER NOT NULL,
                 product_id INTEGER NOT NULL,
                 quantity INTEGER NOT NULL,
                 total_price DECIMAL(10, 2) NOT NULL,
-                sale_date DATETIME NOT NULL,
+                sale_date {dt_type} NOT NULL,
                 status VARCHAR(20) DEFAULT 'Completed',
                 region VARCHAR(50) NOT NULL,
                 FOREIGN KEY (customer_id) REFERENCES customers(id),
@@ -73,14 +78,14 @@ def seed_database():
         """))
 
         # 4. Create audit_logs table
-        conn.execute(text("""
+        conn.execute(text(f"""
             CREATE TABLE audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                {pk_col},
                 user_id INTEGER,
                 action VARCHAR(100) NOT NULL,
                 status VARCHAR(20) NOT NULL,
                 ip_address VARCHAR(45) NOT NULL,
-                timestamp DATETIME NOT NULL
+                timestamp {dt_type} NOT NULL
             );
         """))
 

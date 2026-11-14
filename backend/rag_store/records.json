@@ -1,1 +1,2486 @@
-[{"id": "14afc000560b-0", "text": "AI Portfolio Builder \u2014 Process Documentation A repeatable, four-step workflow for turning a raw resume into a deployed, recruiter-ready portfolio website using AI tools. Each step feeds its output into the next, so treat the prompts as a pipeline rather than one-off requests. Overview Step Goal Input Output 1 Extract & structure resume content Resume (PDF/DOCX/text) Clean Markdown portfolio content 2 Capture a hero-section design direction Reference site screenshot/URL A reusable style spec (not copied design) 3 Merge everything into one build prompt Outputs of Step 1 + 2, GitHub, LinkedIn, theme, animation prefs Single \"master prompt\" 4 Generate, customize, deploy Master prompt Live portfolio URL Tools used: an AI chat model (Claude/ChatGPT) for Steps 1\u20133, an AI website builder (Bolt.new, Claude Artifacts, v0.dev) for Step 4, StackBlitz for edits, Vercel/Netlify for hosting.", "source": "AI_Portfolio_Guide.pdf", "chunk": 1}, {"id": "14afc000560b-1", "text": "model (Claude/ChatGPT) for Steps 1\u20133, an AI website builder (Bolt.new, Claude Artifacts, v0.dev) for Step 4, StackBlitz for edits, Vercel/Netlify for hosting. Before you start, have ready: \u2022 Resume file (PDF or DOCX) \u2022 GitHub profile URL + 2\u20133 pinned repo links \u2022 LinkedIn profile URL \u2022 A rough color/theme preference (e.g., \"dark, monochrome, one accent color\") \u2022 A rough animation preference (e.g., \"subtle scroll reveals, no heavy 3D\") Step 1 \u2014 Extract & Structure Your Information Why the original prompt falls short: it asks for sections but doesn't tell the model how to prioritize content, how concise \"concise\" means, or what to do when a resume is missing a section (e.g., no certifications). Without that, output quality varies a lot between runs. Improved Prompt You are a portfolio content strategist. I will give you my resume as input.", "source": "AI_Portfolio_Guide.pdf", "chunk": 2}, {"id": "14afc000560b-2", "text": "fications). Without that, output quality varies a lot between runs. Improved Prompt You are a portfolio content strategist. I will give you my resume as input. TASK Analyze the resume completely and restructure it into portfolio-ready content. Do not simply copy resume phrasing \u2014 rewrite every section in a confident, professional, human tone suitable for a personal website (not a resume). OUTPUT SECTIONS (in this order) 1. Hero Introduction \u2014 a 1-sentence role/positioning line + a 2-sentence supporting statement. Provide 2 alternative versions of the hero line so I can choose a tone (bold vs. understated). 2. About Me \u2014 80\u2013120 words, first-person, story-driven (not a bullet list of facts). Mention what I build/work on and what I'm currently focused on. 3. Skills \u2014 grouped into categories (e.g., Languages, Frameworks, Tools, Domains) rather than one flat list.", "source": "AI_Portfolio_Guide.pdf", "chunk": 3}, {"id": "14afc000560b-3", "text": "I build/work on and what I'm currently focused on. 3. Skills \u2014 grouped into categories (e.g., Languages, Frameworks, Tools, Domains) rather than one flat list. Order each group by proficiency/relevance. 4. Projects \u2014 for each project include: name, 1-line value proposition, 3 bullet highlights (impact/metrics if available, tech stack used), and a placeholder for a live link and repo link. 5. Experience \u2014 reverse-chronological. For each role: title, org, dates, and 2\u20134 achievement-focused bullets (start with action verbs, quantify impact wherever the resume gives numbers; do not invent numbers). 6. Education \u2014 degree, institution, dates, relevant coursework or honors only if notable. 7. Certifications \u2014 name, issuer, date. Omit this section entirely (don't output an empty header) if none exist in the resume. 8.", "source": "AI_Portfolio_Guide.pdf", "chunk": 4}, {"id": "14afc000560b-4", "text": "rk or honors only if notable. 7. Certifications \u2014 name, issuer, date. Omit this section entirely (don't output an empty header) if none exist in the resume. 8. Achievements \u2014 awards, competition results, publications, notable recognitions. Omit if none exist. 9. Contact Information \u2014 email, phone (optional), location (city/state only). 10. Social Links \u2014 GitHub, LinkedIn, portfolio, and any other professional links present in the resume. RULES - Keep total output scannable: no paragraph longer than 3 sentences. - Preserve every factual detail (dates, tools, numbers) exactly as given \u2014 never fabricate metrics, employers, or dates. - Flag any section where the resume has insufficient information instead of inventing content, using: \" Needs input: [what's missing]\". - Return everything in clean Markdown with H2 headers per section.", "source": "AI_Portfolio_Guide.pdf", "chunk": 5}, {"id": "14afc000560b-5", "text": "ufficient information instead of inventing content, using: \" Needs input: [what's missing]\". - Return everything in clean Markdown with H2 headers per section. Here is my resume: [PASTE RESUME TEXT HERE] Step 2 \u2014 Find Hero-Section Design Inspiration Why the original prompt falls short: \"analyze this design\" run once on a single link produces a shallow, generic description. A stronger version forces the model to separate system-level patterns (layout, spacing, motion) from anything that's identifiably a copy of the source, and outputs a spec structured enough to actually paste into a builder.", "source": "AI_Portfolio_Guide.pdf", "chunk": 6}, {"id": "14afc000560b-6", "text": "tterns (layout, spacing, motion) from anything that's identifiably a copy of the source, and outputs a spec structured enough to actually paste into a builder. Reference sites to browse first: \u2022 https://motionsites.ai/ \u2022 https://dribbble.com/tags/landbook \u2022 https://www.awwwards.com/rubensanchez/collections/creative-portfolios/ \u2022 https://land-book.com/ Pick 2\u20133 hero sections you like (not just one) \u2014 this gives the model enough signal to extract a pattern, not a copy. Improved Prompt You are a UI/UX design analyst. I will describe or link 2\u20133 hero sections I like the style of. TASK Analyze the shared design references and extract the underlying design SYSTEM \u2014 not the specific content, copy, imagery, or branding. I do not want a clone; I want a reusable style specification.", "source": "AI_Portfolio_Guide.pdf", "chunk": 7}, {"id": "14afc000560b-7", "text": "and extract the underlying design SYSTEM \u2014 not the specific content, copy, imagery, or branding. I do not want a clone; I want a reusable style specification. ANALYZE THESE DIMENSIONS - Layout: grid structure, alignment, whitespace ratio, content hierarchy - Typography: heading scale, font pairing style (serif/sans, weight contrast), line-height feel - Color approach: palette logic (monochrome / duotone / accent-on-neutral), contrast level, dark vs. light bias - Motion: what animates on load vs. on scroll, easing feel (snappy vs. fluid), whether motion is subtle or dominant - CTA treatment: button style, placement, primary vs.", "source": "AI_Portfolio_Guide.pdf", "chunk": 8}, {"id": "14afc000560b-8", "text": "what animates on load vs. on scroll, easing feel (snappy vs. fluid), whether motion is subtle or dominant - CTA treatment: button style, placement, primary vs. secondary hierarchy - Spacing rhythm: how sections breathe, density level - Overall mood: 3 adjectives that summarize the vibe (e.g., \"minimal, confident, technical\") OUTPUT FORMAT Return a structured style spec, not prose, using this shape: ### Hero Design Spec - Layout: - Typography: - Color System: - Motion Behavior: - CTA Style: - Spacing: - Mood (3 adjectives): Then convert that spec into a single paragraph written as an instruction an AI website builder could follow to GENERATE A NEW, ORIGINAL hero section in this style \u2014 describing the pattern only, with no references to the source sites' names, brands, or exact copy.", "source": "AI_Portfolio_Guide.pdf", "chunk": 9}, {"id": "14afc000560b-9", "text": "low to GENERATE A NEW, ORIGINAL hero section in this style \u2014 describing the pattern only, with no references to the source sites' names, brands, or exact copy. Step 3 \u2014 Generate the Master Prompt Why the original prompt falls short: \"combine the following\" with no tech-stack, SEO, or structural constraints leaves the AI builder to guess \u2014 which is where most AI-generated portfolios end up looking generic. The improved version pins down stack, structure, and non-negotiables so the builder has one clear target. Improved Prompt You are a senior frontend architect. Combine the inputs below into ONE complete, unambiguous build prompt for an AI website builder (Bolt.new / Claude Artifacts / v0). The builder will only get this prompt \u2014 so it must be fully self-contained. INPUTS TO MERGE 1. Portfolio content: [PASTE STEP 1 OUTPUT] 2. Hero design spec: [PASTE STEP 2 OUTPUT] 3. GitHub: [URL] 4.", "source": "AI_Portfolio_Guide.pdf", "chunk": 10}, {"id": "14afc000560b-10", "text": "so it must be fully self-contained. INPUTS TO MERGE 1. Portfolio content: [PASTE STEP 1 OUTPUT] 2. Hero design spec: [PASTE STEP 2 OUTPUT] 3. GitHub: [URL] 4. LinkedIn: [URL] 5. Resume-derived focus area / target role: [e.g., \"Cybersecurity + Full- Stack Development\"] 6. Color theme: [e.g., \"black & white monochrome, one accent color\"] 7. Animation preference: [e.g., \"GSAP scroll reveals, smooth-scroll via Lenis, no heavy 3D unless specified\"] REQUIREMENTS THE FINAL PROMPT MUST SPECIFY - Tech stack: Next.js + Tailwind CSS + GSAP (or Framer Motion) as default, unless the animation preference above says otherwise. - Section order: Hero \u2192 About \u2192 Skills \u2192 Projects \u2192 Experience \u2192 Education \u2192 Certifications/Achievements \u2192 Contact \u2192 Footer (with social links). - Responsiveness: mobile-first, explicit breakpoints (mobile / tablet / desktop), no horizontal scroll or overflow on small screens.", "source": "AI_Portfolio_Guide.pdf", "chunk": 11}, {"id": "14afc000560b-11", "text": "ooter (with social links). - Responsiveness: mobile-first, explicit breakpoints (mobile / tablet / desktop), no horizontal scroll or overflow on small screens. - SEO: page title, meta description, Open Graph tags, semantic HTML (proper heading hierarchy, alt text placeholders for images). - Performance: lazy-loaded images, no render-blocking animation on first paint, Lighthouse-friendly. - Accessibility: sufficient color contrast, keyboard-navigable nav and buttons, aria-labels on icon-only links. - Placeholder handling: use clearly marked placeholders for any missing images/links rather than broken elements. - A dedicated, working Contact section (form or mailto \u2014 specify which). - Include the GitHub and LinkedIn URLs as functional links, not placeholder text.", "source": "AI_Portfolio_Guide.pdf", "chunk": 12}, {"id": "14afc000560b-12", "text": "nts. - A dedicated, working Contact section (form or mailto \u2014 specify which). - Include the GitHub and LinkedIn URLs as functional links, not placeholder text. OUTPUT Return ONLY the final master prompt, written as a single instruction block ready to paste into an AI website builder \u2014 no explanation, no preamble, no commentary before or after it. Step 4 \u2014 Build, Customize, Deploy 1. Generate Paste the Step 3 master prompt into Bolt.new, Claude Artifacts, or v0.dev. Generate the full site in one pass first \u2014 resist editing the prompt after every small issue; note fixes and batch them. 2. Review before editing Check: does every section from Step 1 appear? Does the hero match the Step 2 mood? Is it responsive at 375px, 768px, and 1440px widths? 3.", "source": "AI_Portfolio_Guide.pdf", "chunk": 13}, {"id": "14afc000560b-13", "text": "eview before editing Check: does every section from Step 1 appear? Does the hero match the Step 2 mood? Is it responsive at 375px, 768px, and 1440px widths? 3. Refine in StackBlitz Import the generated project and adjust: \u2022 Colors \u2014 confirm contrast still passes on both light/dark elements \u2022 Fonts \u2014 check loading (no flash of unstyled text) \u2022 Images \u2014 replace placeholders with real project screenshots/photos \u2022 Text \u2014 proofread against your actual resume for accuracy \u2022 Animations \u2014 trim anything that feels slow on scroll (aim for GSAP durations under ~0.6s for UI reveals) \u2022 Responsiveness \u2014 recheck after every visual change 4.", "source": "AI_Portfolio_Guide.pdf", "chunk": 14}, {"id": "14afc000560b-14", "text": "nimations \u2014 trim anything that feels slow on scroll (aim for GSAP durations under ~0.6s for UI reveals) \u2022 Responsiveness \u2014 recheck after every visual change 4. Pre-deploy checklist \u2022 \u2610 All links (GitHub, LinkedIn, project repos/live demos) work \u2022 \u2610 Contact method actually reaches you (test the form/mailto) \u2022 \u2610 Meta title + description are set (not the builder's default) \u2022 \u2610 Favicon added \u2022 \u2610 No console errors in browser dev tools \u2022 \u2610 Lighthouse score checked (Performance, Accessibility, SEO) 5. Deploy Push to Vercel or Netlify, connect a custom domain if you have one, and confirm HTTPS is active. 6. Share Once live, add the link to your LinkedIn, GitHub profile README, resume header, and outreach messages to recruiters/clients. Common Pitfalls \u2022 Skipping Step 2 and jumping to Step 3 \u2014 the master prompt ends up with a generic hero because there's no style spec to anchor it.", "source": "AI_Portfolio_Guide.pdf", "chunk": 15}, {"id": "14afc000560b-15", "text": "rs/clients. Common Pitfalls \u2022 Skipping Step 2 and jumping to Step 3 \u2014 the master prompt ends up with a generic hero because there's no style spec to anchor it. \u2022 Pasting the raw resume text into Step 3 \u2014 always run it through Step 1 first; raw resume phrasing reads badly on a website. \u2022 One-shotting endless small edits through the AI builder \u2014 batch visual tweaks and do them directly in StackBlitz once the structure is right; it's faster and gives more control. \u2022 Forgetting to remove placeholder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 16}, {"id": "14afc000560b-16", "text": "ceholder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 17}, {"id": "14afc000560b-17", "text": "eholder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 18}, {"id": "14afc000560b-18", "text": "holder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 19}, {"id": "14afc000560b-19", "text": "older content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 20}, {"id": "14afc000560b-20", "text": "lder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 21}, {"id": "14afc000560b-21", "text": "der content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 22}, {"id": "14afc000560b-22", "text": "er content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 23}, {"id": "14afc000560b-23", "text": "r content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 24}, {"id": "14afc000560b-24", "text": "content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 25}, {"id": "14afc000560b-25", "text": "content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 26}, {"id": "14afc000560b-26", "text": "ontent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 27}, {"id": "14afc000560b-27", "text": "ntent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 28}, {"id": "14afc000560b-28", "text": "tent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 29}, {"id": "14afc000560b-29", "text": "ent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 30}, {"id": "14afc000560b-30", "text": "nt \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 31}, {"id": "14afc000560b-31", "text": "t \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 32}, {"id": "14afc000560b-32", "text": "\u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 33}, {"id": "14afc000560b-33", "text": "\u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 34}, {"id": "14afc000560b-34", "text": "AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 35}, {"id": "14afc000560b-35", "text": "AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 36}, {"id": "14afc000560b-36", "text": "I builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 37}, {"id": "14afc000560b-37", "text": "builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 38}, {"id": "14afc000560b-38", "text": "builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 39}, {"id": "14afc000560b-39", "text": "uilders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 40}, {"id": "14afc000560b-40", "text": "ilders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 41}, {"id": "14afc000560b-41", "text": "lders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 42}, {"id": "14afc000560b-42", "text": "ders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 43}, {"id": "14afc000560b-43", "text": "ers often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 44}, {"id": "14afc000560b-44", "text": "rs often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 45}, {"id": "14afc000560b-45", "text": "s often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 46}, {"id": "14afc000560b-46", "text": "often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 47}, {"id": "14afc000560b-47", "text": "often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 48}, {"id": "14afc000560b-48", "text": "ften leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 49}, {"id": "14afc000560b-49", "text": "ten leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 50}, {"id": "14afc000560b-50", "text": "en leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 51}, {"id": "14afc000560b-51", "text": "n leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 52}, {"id": "14afc000560b-52", "text": "leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 53}, {"id": "14afc000560b-53", "text": "leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 54}, {"id": "14afc000560b-54", "text": "eave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 55}, {"id": "14afc000560b-55", "text": "ave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 56}, {"id": "14afc000560b-56", "text": "ve \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 57}, {"id": "14afc000560b-57", "text": "e \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 58}, {"id": "14afc000560b-58", "text": "\"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 59}, {"id": "14afc000560b-59", "text": "\"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 60}, {"id": "14afc000560b-60", "text": "Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 61}, {"id": "14afc000560b-61", "text": "orem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 62}, {"id": "14afc000560b-62", "text": "rem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 63}, {"id": "14afc000560b-63", "text": "em ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 64}, {"id": "14afc000560b-64", "text": "m ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 65}, {"id": "14afc000560b-65", "text": "ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 66}, {"id": "14afc000560b-66", "text": "ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 67}, {"id": "14afc000560b-67", "text": "psum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 68}, {"id": "14afc000560b-68", "text": "sum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 69}, {"id": "14afc000560b-69", "text": "um\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 70}, {"id": "14afc000560b-70", "text": "m\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 71}, {"id": "14afc000560b-71", "text": "\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 72}, {"id": "14afc000560b-72", "text": "or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 73}, {"id": "14afc000560b-73", "text": "or placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 74}, {"id": "14afc000560b-74", "text": "r placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 75}, {"id": "14afc000560b-75", "text": "placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 76}, {"id": "14afc000560b-76", "text": "placeholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 77}, {"id": "14afc000560b-77", "text": "laceholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 78}, {"id": "14afc000560b-78", "text": "aceholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 79}, {"id": "14afc000560b-79", "text": "ceholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 80}, {"id": "14afc000560b-80", "text": "eholder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 81}, {"id": "14afc000560b-81", "text": "holder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 82}, {"id": "14afc000560b-82", "text": "older project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 83}, {"id": "14afc000560b-83", "text": "lder project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 84}, {"id": "14afc000560b-84", "text": "der project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 85}, {"id": "14afc000560b-85", "text": "er project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 86}, {"id": "14afc000560b-86", "text": "r project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 87}, {"id": "14afc000560b-87", "text": "project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 88}, {"id": "14afc000560b-88", "text": "project names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 89}, {"id": "14afc000560b-89", "text": "roject names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 90}, {"id": "14afc000560b-90", "text": "oject names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 91}, {"id": "14afc000560b-91", "text": "ject names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 92}, {"id": "14afc000560b-92", "text": "ect names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 93}, {"id": "14afc000560b-93", "text": "ct names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 94}, {"id": "14afc000560b-94", "text": "t names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 95}, {"id": "14afc000560b-95", "text": "names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 96}, {"id": "14afc000560b-96", "text": "names if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 97}, {"id": "14afc000560b-97", "text": "ames if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 98}, {"id": "14afc000560b-98", "text": "mes if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 99}, {"id": "14afc000560b-99", "text": "es if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 100}, {"id": "14afc000560b-100", "text": "s if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 101}, {"id": "14afc000560b-101", "text": "if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 102}, {"id": "14afc000560b-102", "text": "if inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 103}, {"id": "14afc000560b-103", "text": "f inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 104}, {"id": "14afc000560b-104", "text": "inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 105}, {"id": "14afc000560b-105", "text": "inputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 106}, {"id": "14afc000560b-106", "text": "nputs were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 107}, {"id": "14afc000560b-107", "text": "puts were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 108}, {"id": "14afc000560b-108", "text": "uts were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 109}, {"id": "14afc000560b-109", "text": "ts were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 110}, {"id": "14afc000560b-110", "text": "s were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 111}, {"id": "14afc000560b-111", "text": "were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 112}, {"id": "14afc000560b-112", "text": "were incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 113}, {"id": "14afc000560b-113", "text": "ere incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 114}, {"id": "14afc000560b-114", "text": "re incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 115}, {"id": "14afc000560b-115", "text": "e incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 116}, {"id": "14afc000560b-116", "text": "incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 117}, {"id": "14afc000560b-117", "text": "incomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 118}, {"id": "14afc000560b-118", "text": "ncomplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 119}, {"id": "14afc000560b-119", "text": "complete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 120}, {"id": "14afc000560b-120", "text": "omplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 121}, {"id": "14afc000560b-121", "text": "mplete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 122}, {"id": "14afc000560b-122", "text": "plete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 123}, {"id": "14afc000560b-123", "text": "lete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 124}, {"id": "14afc000560b-124", "text": "ete; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 125}, {"id": "14afc000560b-125", "text": "te; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 126}, {"id": "14afc000560b-126", "text": "e; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 127}, {"id": "14afc000560b-127", "text": "; always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 128}, {"id": "14afc000560b-128", "text": "always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 129}, {"id": "14afc000560b-129", "text": "always do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 130}, {"id": "14afc000560b-130", "text": "lways do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 131}, {"id": "14afc000560b-131", "text": "ways do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 132}, {"id": "14afc000560b-132", "text": "ays do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 133}, {"id": "14afc000560b-133", "text": "ys do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 134}, {"id": "14afc000560b-134", "text": "s do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 135}, {"id": "14afc000560b-135", "text": "do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 136}, {"id": "14afc000560b-136", "text": "do a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 137}, {"id": "14afc000560b-137", "text": "o a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 138}, {"id": "14afc000560b-138", "text": "a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 139}, {"id": "14afc000560b-139", "text": "a full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 140}, {"id": "14afc000560b-140", "text": "full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 141}, {"id": "14afc000560b-141", "text": "full read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 142}, {"id": "14afc000560b-142", "text": "ull read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 143}, {"id": "14afc000560b-143", "text": "ll read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 144}, {"id": "14afc000560b-144", "text": "l read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 145}, {"id": "14afc000560b-145", "text": "read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 146}, {"id": "14afc000560b-146", "text": "read-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 147}, {"id": "14afc000560b-147", "text": "ead-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 148}, {"id": "14afc000560b-148", "text": "ad-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 149}, {"id": "14afc000560b-149", "text": "d-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 150}, {"id": "14afc000560b-150", "text": "-through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 151}, {"id": "14afc000560b-151", "text": "through before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 152}, {"id": "14afc000560b-152", "text": "hrough before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 153}, {"id": "14afc000560b-153", "text": "rough before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 154}, {"id": "14afc000560b-154", "text": "ough before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 155}, {"id": "14afc000560b-155", "text": "ugh before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 156}, {"id": "14afc000560b-156", "text": "gh before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 157}, {"id": "14afc000560b-157", "text": "h before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 158}, {"id": "14afc000560b-158", "text": "before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 159}, {"id": "14afc000560b-159", "text": "before deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 160}, {"id": "14afc000560b-160", "text": "efore deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 161}, {"id": "14afc000560b-161", "text": "fore deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 162}, {"id": "14afc000560b-162", "text": "ore deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 163}, {"id": "14afc000560b-163", "text": "re deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 164}, {"id": "14afc000560b-164", "text": "e deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 165}, {"id": "14afc000560b-165", "text": "deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 166}, {"id": "14afc000560b-166", "text": "deploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 167}, {"id": "14afc000560b-167", "text": "eploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 168}, {"id": "14afc000560b-168", "text": "ploying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 169}, {"id": "14afc000560b-169", "text": "loying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 170}, {"id": "14afc000560b-170", "text": "oying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 171}, {"id": "14afc000560b-171", "text": "ying.", "source": "AI_Portfolio_Guide.pdf", "chunk": 172}, {"id": "14afc000560b-172", "text": "ing.", "source": "AI_Portfolio_Guide.pdf", "chunk": 173}, {"id": "14afc000560b-173", "text": "ng.", "source": "AI_Portfolio_Guide.pdf", "chunk": 174}, {"id": "14afc000560b-174", "text": "g.", "source": "AI_Portfolio_Guide.pdf", "chunk": 175}, {"id": "14afc000560b-175", "text": ".", "source": "AI_Portfolio_Guide.pdf", "chunk": 176}]
+[
+  {
+    "id": "14afc000560b-0",
+    "text": "AI Portfolio Builder \u2014 Process Documentation A repeatable, four-step workflow for turning a raw resume into a deployed, recruiter-ready portfolio website using AI tools. Each step feeds its output into the next, so treat the prompts as a pipeline rather than one-off requests. Overview Step Goal Input Output 1 Extract & structure resume content Resume (PDF/DOCX/text) Clean Markdown portfolio content 2 Capture a hero-section design direction Reference site screenshot/URL A reusable style spec (not copied design) 3 Merge everything into one build prompt Outputs of Step 1 + 2, GitHub, LinkedIn, theme, animation prefs Single \"master prompt\" 4 Generate, customize, deploy Master prompt Live portfolio URL Tools used: an AI chat model (Claude/ChatGPT) for Steps 1\u20133, an AI website builder (Bolt.new, Claude Artifacts, v0.dev) for Step 4, StackBlitz for edits, Vercel/Netlify for hosting.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 1
+  },
+  {
+    "id": "14afc000560b-1",
+    "text": "model (Claude/ChatGPT) for Steps 1\u20133, an AI website builder (Bolt.new, Claude Artifacts, v0.dev) for Step 4, StackBlitz for edits, Vercel/Netlify for hosting. Before you start, have ready: \u2022 Resume file (PDF or DOCX) \u2022 GitHub profile URL + 2\u20133 pinned repo links \u2022 LinkedIn profile URL \u2022 A rough color/theme preference (e.g., \"dark, monochrome, one accent color\") \u2022 A rough animation preference (e.g., \"subtle scroll reveals, no heavy 3D\") Step 1 \u2014 Extract & Structure Your Information Why the original prompt falls short: it asks for sections but doesn't tell the model how to prioritize content, how concise \"concise\" means, or what to do when a resume is missing a section (e.g., no certifications). Without that, output quality varies a lot between runs. Improved Prompt You are a portfolio content strategist. I will give you my resume as input.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 2
+  },
+  {
+    "id": "14afc000560b-2",
+    "text": "fications). Without that, output quality varies a lot between runs. Improved Prompt You are a portfolio content strategist. I will give you my resume as input. TASK Analyze the resume completely and restructure it into portfolio-ready content. Do not simply copy resume phrasing \u2014 rewrite every section in a confident, professional, human tone suitable for a personal website (not a resume). OUTPUT SECTIONS (in this order) 1. Hero Introduction \u2014 a 1-sentence role/positioning line + a 2-sentence supporting statement. Provide 2 alternative versions of the hero line so I can choose a tone (bold vs. understated). 2. About Me \u2014 80\u2013120 words, first-person, story-driven (not a bullet list of facts). Mention what I build/work on and what I'm currently focused on. 3. Skills \u2014 grouped into categories (e.g., Languages, Frameworks, Tools, Domains) rather than one flat list.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 3
+  },
+  {
+    "id": "14afc000560b-3",
+    "text": "I build/work on and what I'm currently focused on. 3. Skills \u2014 grouped into categories (e.g., Languages, Frameworks, Tools, Domains) rather than one flat list. Order each group by proficiency/relevance. 4. Projects \u2014 for each project include: name, 1-line value proposition, 3 bullet highlights (impact/metrics if available, tech stack used), and a placeholder for a live link and repo link. 5. Experience \u2014 reverse-chronological. For each role: title, org, dates, and 2\u20134 achievement-focused bullets (start with action verbs, quantify impact wherever the resume gives numbers; do not invent numbers). 6. Education \u2014 degree, institution, dates, relevant coursework or honors only if notable. 7. Certifications \u2014 name, issuer, date. Omit this section entirely (don't output an empty header) if none exist in the resume. 8.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 4
+  },
+  {
+    "id": "14afc000560b-4",
+    "text": "rk or honors only if notable. 7. Certifications \u2014 name, issuer, date. Omit this section entirely (don't output an empty header) if none exist in the resume. 8. Achievements \u2014 awards, competition results, publications, notable recognitions. Omit if none exist. 9. Contact Information \u2014 email, phone (optional), location (city/state only). 10. Social Links \u2014 GitHub, LinkedIn, portfolio, and any other professional links present in the resume. RULES - Keep total output scannable: no paragraph longer than 3 sentences. - Preserve every factual detail (dates, tools, numbers) exactly as given \u2014 never fabricate metrics, employers, or dates. - Flag any section where the resume has insufficient information instead of inventing content, using: \" Needs input: [what's missing]\". - Return everything in clean Markdown with H2 headers per section.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 5
+  },
+  {
+    "id": "14afc000560b-5",
+    "text": "ufficient information instead of inventing content, using: \" Needs input: [what's missing]\". - Return everything in clean Markdown with H2 headers per section. Here is my resume: [PASTE RESUME TEXT HERE] Step 2 \u2014 Find Hero-Section Design Inspiration Why the original prompt falls short: \"analyze this design\" run once on a single link produces a shallow, generic description. A stronger version forces the model to separate system-level patterns (layout, spacing, motion) from anything that's identifiably a copy of the source, and outputs a spec structured enough to actually paste into a builder.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 6
+  },
+  {
+    "id": "14afc000560b-6",
+    "text": "tterns (layout, spacing, motion) from anything that's identifiably a copy of the source, and outputs a spec structured enough to actually paste into a builder. Reference sites to browse first: \u2022 https://motionsites.ai/ \u2022 https://dribbble.com/tags/landbook \u2022 https://www.awwwards.com/rubensanchez/collections/creative-portfolios/ \u2022 https://land-book.com/ Pick 2\u20133 hero sections you like (not just one) \u2014 this gives the model enough signal to extract a pattern, not a copy. Improved Prompt You are a UI/UX design analyst. I will describe or link 2\u20133 hero sections I like the style of. TASK Analyze the shared design references and extract the underlying design SYSTEM \u2014 not the specific content, copy, imagery, or branding. I do not want a clone; I want a reusable style specification.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 7
+  },
+  {
+    "id": "14afc000560b-7",
+    "text": "and extract the underlying design SYSTEM \u2014 not the specific content, copy, imagery, or branding. I do not want a clone; I want a reusable style specification. ANALYZE THESE DIMENSIONS - Layout: grid structure, alignment, whitespace ratio, content hierarchy - Typography: heading scale, font pairing style (serif/sans, weight contrast), line-height feel - Color approach: palette logic (monochrome / duotone / accent-on-neutral), contrast level, dark vs. light bias - Motion: what animates on load vs. on scroll, easing feel (snappy vs. fluid), whether motion is subtle or dominant - CTA treatment: button style, placement, primary vs.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 8
+  },
+  {
+    "id": "14afc000560b-8",
+    "text": "what animates on load vs. on scroll, easing feel (snappy vs. fluid), whether motion is subtle or dominant - CTA treatment: button style, placement, primary vs. secondary hierarchy - Spacing rhythm: how sections breathe, density level - Overall mood: 3 adjectives that summarize the vibe (e.g., \"minimal, confident, technical\") OUTPUT FORMAT Return a structured style spec, not prose, using this shape: ### Hero Design Spec - Layout: - Typography: - Color System: - Motion Behavior: - CTA Style: - Spacing: - Mood (3 adjectives): Then convert that spec into a single paragraph written as an instruction an AI website builder could follow to GENERATE A NEW, ORIGINAL hero section in this style \u2014 describing the pattern only, with no references to the source sites' names, brands, or exact copy.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 9
+  },
+  {
+    "id": "14afc000560b-9",
+    "text": "low to GENERATE A NEW, ORIGINAL hero section in this style \u2014 describing the pattern only, with no references to the source sites' names, brands, or exact copy. Step 3 \u2014 Generate the Master Prompt Why the original prompt falls short: \"combine the following\" with no tech-stack, SEO, or structural constraints leaves the AI builder to guess \u2014 which is where most AI-generated portfolios end up looking generic. The improved version pins down stack, structure, and non-negotiables so the builder has one clear target. Improved Prompt You are a senior frontend architect. Combine the inputs below into ONE complete, unambiguous build prompt for an AI website builder (Bolt.new / Claude Artifacts / v0). The builder will only get this prompt \u2014 so it must be fully self-contained. INPUTS TO MERGE 1. Portfolio content: [PASTE STEP 1 OUTPUT] 2. Hero design spec: [PASTE STEP 2 OUTPUT] 3. GitHub: [URL] 4.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 10
+  },
+  {
+    "id": "14afc000560b-10",
+    "text": "so it must be fully self-contained. INPUTS TO MERGE 1. Portfolio content: [PASTE STEP 1 OUTPUT] 2. Hero design spec: [PASTE STEP 2 OUTPUT] 3. GitHub: [URL] 4. LinkedIn: [URL] 5. Resume-derived focus area / target role: [e.g., \"Cybersecurity + Full- Stack Development\"] 6. Color theme: [e.g., \"black & white monochrome, one accent color\"] 7. Animation preference: [e.g., \"GSAP scroll reveals, smooth-scroll via Lenis, no heavy 3D unless specified\"] REQUIREMENTS THE FINAL PROMPT MUST SPECIFY - Tech stack: Next.js + Tailwind CSS + GSAP (or Framer Motion) as default, unless the animation preference above says otherwise. - Section order: Hero \u2192 About \u2192 Skills \u2192 Projects \u2192 Experience \u2192 Education \u2192 Certifications/Achievements \u2192 Contact \u2192 Footer (with social links). - Responsiveness: mobile-first, explicit breakpoints (mobile / tablet / desktop), no horizontal scroll or overflow on small screens.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 11
+  },
+  {
+    "id": "14afc000560b-11",
+    "text": "ooter (with social links). - Responsiveness: mobile-first, explicit breakpoints (mobile / tablet / desktop), no horizontal scroll or overflow on small screens. - SEO: page title, meta description, Open Graph tags, semantic HTML (proper heading hierarchy, alt text placeholders for images). - Performance: lazy-loaded images, no render-blocking animation on first paint, Lighthouse-friendly. - Accessibility: sufficient color contrast, keyboard-navigable nav and buttons, aria-labels on icon-only links. - Placeholder handling: use clearly marked placeholders for any missing images/links rather than broken elements. - A dedicated, working Contact section (form or mailto \u2014 specify which). - Include the GitHub and LinkedIn URLs as functional links, not placeholder text.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 12
+  },
+  {
+    "id": "14afc000560b-12",
+    "text": "nts. - A dedicated, working Contact section (form or mailto \u2014 specify which). - Include the GitHub and LinkedIn URLs as functional links, not placeholder text. OUTPUT Return ONLY the final master prompt, written as a single instruction block ready to paste into an AI website builder \u2014 no explanation, no preamble, no commentary before or after it. Step 4 \u2014 Build, Customize, Deploy 1. Generate Paste the Step 3 master prompt into Bolt.new, Claude Artifacts, or v0.dev. Generate the full site in one pass first \u2014 resist editing the prompt after every small issue; note fixes and batch them. 2. Review before editing Check: does every section from Step 1 appear? Does the hero match the Step 2 mood? Is it responsive at 375px, 768px, and 1440px widths? 3.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 13
+  },
+  {
+    "id": "14afc000560b-13",
+    "text": "eview before editing Check: does every section from Step 1 appear? Does the hero match the Step 2 mood? Is it responsive at 375px, 768px, and 1440px widths? 3. Refine in StackBlitz Import the generated project and adjust: \u2022 Colors \u2014 confirm contrast still passes on both light/dark elements \u2022 Fonts \u2014 check loading (no flash of unstyled text) \u2022 Images \u2014 replace placeholders with real project screenshots/photos \u2022 Text \u2014 proofread against your actual resume for accuracy \u2022 Animations \u2014 trim anything that feels slow on scroll (aim for GSAP durations under ~0.6s for UI reveals) \u2022 Responsiveness \u2014 recheck after every visual change 4.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 14
+  },
+  {
+    "id": "14afc000560b-14",
+    "text": "nimations \u2014 trim anything that feels slow on scroll (aim for GSAP durations under ~0.6s for UI reveals) \u2022 Responsiveness \u2014 recheck after every visual change 4. Pre-deploy checklist \u2022 \u2610 All links (GitHub, LinkedIn, project repos/live demos) work \u2022 \u2610 Contact method actually reaches you (test the form/mailto) \u2022 \u2610 Meta title + description are set (not the builder's default) \u2022 \u2610 Favicon added \u2022 \u2610 No console errors in browser dev tools \u2022 \u2610 Lighthouse score checked (Performance, Accessibility, SEO) 5. Deploy Push to Vercel or Netlify, connect a custom domain if you have one, and confirm HTTPS is active. 6. Share Once live, add the link to your LinkedIn, GitHub profile README, resume header, and outreach messages to recruiters/clients. Common Pitfalls \u2022 Skipping Step 2 and jumping to Step 3 \u2014 the master prompt ends up with a generic hero because there's no style spec to anchor it.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 15
+  },
+  {
+    "id": "14afc000560b-15",
+    "text": "rs/clients. Common Pitfalls \u2022 Skipping Step 2 and jumping to Step 3 \u2014 the master prompt ends up with a generic hero because there's no style spec to anchor it. \u2022 Pasting the raw resume text into Step 3 \u2014 always run it through Step 1 first; raw resume phrasing reads badly on a website. \u2022 One-shotting endless small edits through the AI builder \u2014 batch visual tweaks and do them directly in StackBlitz once the structure is right; it's faster and gives more control. \u2022 Forgetting to remove placeholder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 16
+  },
+  {
+    "id": "14afc000560b-16",
+    "text": "ceholder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 17
+  },
+  {
+    "id": "14afc000560b-17",
+    "text": "eholder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 18
+  },
+  {
+    "id": "14afc000560b-18",
+    "text": "holder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 19
+  },
+  {
+    "id": "14afc000560b-19",
+    "text": "older content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 20
+  },
+  {
+    "id": "14afc000560b-20",
+    "text": "lder content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 21
+  },
+  {
+    "id": "14afc000560b-21",
+    "text": "der content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 22
+  },
+  {
+    "id": "14afc000560b-22",
+    "text": "er content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 23
+  },
+  {
+    "id": "14afc000560b-23",
+    "text": "r content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 24
+  },
+  {
+    "id": "14afc000560b-24",
+    "text": "content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 25
+  },
+  {
+    "id": "14afc000560b-25",
+    "text": "content \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 26
+  },
+  {
+    "id": "14afc000560b-26",
+    "text": "ontent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 27
+  },
+  {
+    "id": "14afc000560b-27",
+    "text": "ntent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 28
+  },
+  {
+    "id": "14afc000560b-28",
+    "text": "tent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 29
+  },
+  {
+    "id": "14afc000560b-29",
+    "text": "ent \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 30
+  },
+  {
+    "id": "14afc000560b-30",
+    "text": "nt \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 31
+  },
+  {
+    "id": "14afc000560b-31",
+    "text": "t \u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 32
+  },
+  {
+    "id": "14afc000560b-32",
+    "text": "\u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 33
+  },
+  {
+    "id": "14afc000560b-33",
+    "text": "\u2014 AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 34
+  },
+  {
+    "id": "14afc000560b-34",
+    "text": "AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 35
+  },
+  {
+    "id": "14afc000560b-35",
+    "text": "AI builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 36
+  },
+  {
+    "id": "14afc000560b-36",
+    "text": "I builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 37
+  },
+  {
+    "id": "14afc000560b-37",
+    "text": "builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 38
+  },
+  {
+    "id": "14afc000560b-38",
+    "text": "builders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 39
+  },
+  {
+    "id": "14afc000560b-39",
+    "text": "uilders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 40
+  },
+  {
+    "id": "14afc000560b-40",
+    "text": "ilders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 41
+  },
+  {
+    "id": "14afc000560b-41",
+    "text": "lders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 42
+  },
+  {
+    "id": "14afc000560b-42",
+    "text": "ders often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 43
+  },
+  {
+    "id": "14afc000560b-43",
+    "text": "ers often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 44
+  },
+  {
+    "id": "14afc000560b-44",
+    "text": "rs often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 45
+  },
+  {
+    "id": "14afc000560b-45",
+    "text": "s often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 46
+  },
+  {
+    "id": "14afc000560b-46",
+    "text": "often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 47
+  },
+  {
+    "id": "14afc000560b-47",
+    "text": "often leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 48
+  },
+  {
+    "id": "14afc000560b-48",
+    "text": "ften leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 49
+  },
+  {
+    "id": "14afc000560b-49",
+    "text": "ten leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 50
+  },
+  {
+    "id": "14afc000560b-50",
+    "text": "en leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 51
+  },
+  {
+    "id": "14afc000560b-51",
+    "text": "n leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 52
+  },
+  {
+    "id": "14afc000560b-52",
+    "text": "leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 53
+  },
+  {
+    "id": "14afc000560b-53",
+    "text": "leave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 54
+  },
+  {
+    "id": "14afc000560b-54",
+    "text": "eave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 55
+  },
+  {
+    "id": "14afc000560b-55",
+    "text": "ave \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 56
+  },
+  {
+    "id": "14afc000560b-56",
+    "text": "ve \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 57
+  },
+  {
+    "id": "14afc000560b-57",
+    "text": "e \"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 58
+  },
+  {
+    "id": "14afc000560b-58",
+    "text": "\"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 59
+  },
+  {
+    "id": "14afc000560b-59",
+    "text": "\"Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 60
+  },
+  {
+    "id": "14afc000560b-60",
+    "text": "Lorem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 61
+  },
+  {
+    "id": "14afc000560b-61",
+    "text": "orem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 62
+  },
+  {
+    "id": "14afc000560b-62",
+    "text": "rem ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 63
+  },
+  {
+    "id": "14afc000560b-63",
+    "text": "em ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 64
+  },
+  {
+    "id": "14afc000560b-64",
+    "text": "m ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 65
+  },
+  {
+    "id": "14afc000560b-65",
+    "text": "ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 66
+  },
+  {
+    "id": "14afc000560b-66",
+    "text": "ipsum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 67
+  },
+  {
+    "id": "14afc000560b-67",
+    "text": "psum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 68
+  },
+  {
+    "id": "14afc000560b-68",
+    "text": "sum\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 69
+  },
+  {
+    "id": "14afc000560b-69",
+    "text": "um\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 70
+  },
+  {
+    "id": "14afc000560b-70",
+    "text": "m\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 71
+  },
+  {
+    "id": "14afc000560b-71",
+    "text": "\" or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 72
+  },
+  {
+    "id": "14afc000560b-72",
+    "text": "or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 73
+  },
+  {
+    "id": "14afc000560b-73",
+    "text": "or placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 74
+  },
+  {
+    "id": "14afc000560b-74",
+    "text": "r placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 75
+  },
+  {
+    "id": "14afc000560b-75",
+    "text": "placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 76
+  },
+  {
+    "id": "14afc000560b-76",
+    "text": "placeholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 77
+  },
+  {
+    "id": "14afc000560b-77",
+    "text": "laceholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 78
+  },
+  {
+    "id": "14afc000560b-78",
+    "text": "aceholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 79
+  },
+  {
+    "id": "14afc000560b-79",
+    "text": "ceholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 80
+  },
+  {
+    "id": "14afc000560b-80",
+    "text": "eholder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 81
+  },
+  {
+    "id": "14afc000560b-81",
+    "text": "holder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 82
+  },
+  {
+    "id": "14afc000560b-82",
+    "text": "older project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 83
+  },
+  {
+    "id": "14afc000560b-83",
+    "text": "lder project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 84
+  },
+  {
+    "id": "14afc000560b-84",
+    "text": "der project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 85
+  },
+  {
+    "id": "14afc000560b-85",
+    "text": "er project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 86
+  },
+  {
+    "id": "14afc000560b-86",
+    "text": "r project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 87
+  },
+  {
+    "id": "14afc000560b-87",
+    "text": "project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 88
+  },
+  {
+    "id": "14afc000560b-88",
+    "text": "project names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 89
+  },
+  {
+    "id": "14afc000560b-89",
+    "text": "roject names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 90
+  },
+  {
+    "id": "14afc000560b-90",
+    "text": "oject names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 91
+  },
+  {
+    "id": "14afc000560b-91",
+    "text": "ject names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 92
+  },
+  {
+    "id": "14afc000560b-92",
+    "text": "ect names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 93
+  },
+  {
+    "id": "14afc000560b-93",
+    "text": "ct names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 94
+  },
+  {
+    "id": "14afc000560b-94",
+    "text": "t names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 95
+  },
+  {
+    "id": "14afc000560b-95",
+    "text": "names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 96
+  },
+  {
+    "id": "14afc000560b-96",
+    "text": "names if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 97
+  },
+  {
+    "id": "14afc000560b-97",
+    "text": "ames if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 98
+  },
+  {
+    "id": "14afc000560b-98",
+    "text": "mes if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 99
+  },
+  {
+    "id": "14afc000560b-99",
+    "text": "es if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 100
+  },
+  {
+    "id": "14afc000560b-100",
+    "text": "s if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 101
+  },
+  {
+    "id": "14afc000560b-101",
+    "text": "if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 102
+  },
+  {
+    "id": "14afc000560b-102",
+    "text": "if inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 103
+  },
+  {
+    "id": "14afc000560b-103",
+    "text": "f inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 104
+  },
+  {
+    "id": "14afc000560b-104",
+    "text": "inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 105
+  },
+  {
+    "id": "14afc000560b-105",
+    "text": "inputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 106
+  },
+  {
+    "id": "14afc000560b-106",
+    "text": "nputs were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 107
+  },
+  {
+    "id": "14afc000560b-107",
+    "text": "puts were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 108
+  },
+  {
+    "id": "14afc000560b-108",
+    "text": "uts were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 109
+  },
+  {
+    "id": "14afc000560b-109",
+    "text": "ts were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 110
+  },
+  {
+    "id": "14afc000560b-110",
+    "text": "s were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 111
+  },
+  {
+    "id": "14afc000560b-111",
+    "text": "were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 112
+  },
+  {
+    "id": "14afc000560b-112",
+    "text": "were incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 113
+  },
+  {
+    "id": "14afc000560b-113",
+    "text": "ere incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 114
+  },
+  {
+    "id": "14afc000560b-114",
+    "text": "re incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 115
+  },
+  {
+    "id": "14afc000560b-115",
+    "text": "e incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 116
+  },
+  {
+    "id": "14afc000560b-116",
+    "text": "incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 117
+  },
+  {
+    "id": "14afc000560b-117",
+    "text": "incomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 118
+  },
+  {
+    "id": "14afc000560b-118",
+    "text": "ncomplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 119
+  },
+  {
+    "id": "14afc000560b-119",
+    "text": "complete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 120
+  },
+  {
+    "id": "14afc000560b-120",
+    "text": "omplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 121
+  },
+  {
+    "id": "14afc000560b-121",
+    "text": "mplete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 122
+  },
+  {
+    "id": "14afc000560b-122",
+    "text": "plete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 123
+  },
+  {
+    "id": "14afc000560b-123",
+    "text": "lete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 124
+  },
+  {
+    "id": "14afc000560b-124",
+    "text": "ete; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 125
+  },
+  {
+    "id": "14afc000560b-125",
+    "text": "te; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 126
+  },
+  {
+    "id": "14afc000560b-126",
+    "text": "e; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 127
+  },
+  {
+    "id": "14afc000560b-127",
+    "text": "; always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 128
+  },
+  {
+    "id": "14afc000560b-128",
+    "text": "always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 129
+  },
+  {
+    "id": "14afc000560b-129",
+    "text": "always do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 130
+  },
+  {
+    "id": "14afc000560b-130",
+    "text": "lways do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 131
+  },
+  {
+    "id": "14afc000560b-131",
+    "text": "ways do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 132
+  },
+  {
+    "id": "14afc000560b-132",
+    "text": "ays do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 133
+  },
+  {
+    "id": "14afc000560b-133",
+    "text": "ys do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 134
+  },
+  {
+    "id": "14afc000560b-134",
+    "text": "s do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 135
+  },
+  {
+    "id": "14afc000560b-135",
+    "text": "do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 136
+  },
+  {
+    "id": "14afc000560b-136",
+    "text": "do a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 137
+  },
+  {
+    "id": "14afc000560b-137",
+    "text": "o a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 138
+  },
+  {
+    "id": "14afc000560b-138",
+    "text": "a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 139
+  },
+  {
+    "id": "14afc000560b-139",
+    "text": "a full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 140
+  },
+  {
+    "id": "14afc000560b-140",
+    "text": "full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 141
+  },
+  {
+    "id": "14afc000560b-141",
+    "text": "full read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 142
+  },
+  {
+    "id": "14afc000560b-142",
+    "text": "ull read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 143
+  },
+  {
+    "id": "14afc000560b-143",
+    "text": "ll read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 144
+  },
+  {
+    "id": "14afc000560b-144",
+    "text": "l read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 145
+  },
+  {
+    "id": "14afc000560b-145",
+    "text": "read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 146
+  },
+  {
+    "id": "14afc000560b-146",
+    "text": "read-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 147
+  },
+  {
+    "id": "14afc000560b-147",
+    "text": "ead-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 148
+  },
+  {
+    "id": "14afc000560b-148",
+    "text": "ad-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 149
+  },
+  {
+    "id": "14afc000560b-149",
+    "text": "d-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 150
+  },
+  {
+    "id": "14afc000560b-150",
+    "text": "-through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 151
+  },
+  {
+    "id": "14afc000560b-151",
+    "text": "through before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 152
+  },
+  {
+    "id": "14afc000560b-152",
+    "text": "hrough before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 153
+  },
+  {
+    "id": "14afc000560b-153",
+    "text": "rough before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 154
+  },
+  {
+    "id": "14afc000560b-154",
+    "text": "ough before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 155
+  },
+  {
+    "id": "14afc000560b-155",
+    "text": "ugh before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 156
+  },
+  {
+    "id": "14afc000560b-156",
+    "text": "gh before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 157
+  },
+  {
+    "id": "14afc000560b-157",
+    "text": "h before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 158
+  },
+  {
+    "id": "14afc000560b-158",
+    "text": "before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 159
+  },
+  {
+    "id": "14afc000560b-159",
+    "text": "before deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 160
+  },
+  {
+    "id": "14afc000560b-160",
+    "text": "efore deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 161
+  },
+  {
+    "id": "14afc000560b-161",
+    "text": "fore deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 162
+  },
+  {
+    "id": "14afc000560b-162",
+    "text": "ore deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 163
+  },
+  {
+    "id": "14afc000560b-163",
+    "text": "re deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 164
+  },
+  {
+    "id": "14afc000560b-164",
+    "text": "e deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 165
+  },
+  {
+    "id": "14afc000560b-165",
+    "text": "deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 166
+  },
+  {
+    "id": "14afc000560b-166",
+    "text": "deploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 167
+  },
+  {
+    "id": "14afc000560b-167",
+    "text": "eploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 168
+  },
+  {
+    "id": "14afc000560b-168",
+    "text": "ploying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 169
+  },
+  {
+    "id": "14afc000560b-169",
+    "text": "loying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 170
+  },
+  {
+    "id": "14afc000560b-170",
+    "text": "oying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 171
+  },
+  {
+    "id": "14afc000560b-171",
+    "text": "ying.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 172
+  },
+  {
+    "id": "14afc000560b-172",
+    "text": "ing.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 173
+  },
+  {
+    "id": "14afc000560b-173",
+    "text": "ng.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 174
+  },
+  {
+    "id": "14afc000560b-174",
+    "text": "g.",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 175
+  },
+  {
+    "id": "14afc000560b-175",
+    "text": ".",
+    "source": "AI_Portfolio_Guide.pdf",
+    "chunk": 176
+  },
+  {
+    "id": "f11ce8fae632-0",
+    "text": "Enterprise Data Architecture Guide. Section 1: Data Modeling. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 1
+  },
+  {
+    "id": "f11ce8fae632-1",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 2
+  },
+  {
+    "id": "f11ce8fae632-2",
+    "text": "e crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 3
+  },
+  {
+    "id": "f11ce8fae632-3",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 4
+  },
+  {
+    "id": "f11ce8fae632-4",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 5
+  },
+  {
+    "id": "f11ce8fae632-5",
+    "text": "rucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 6
+  },
+  {
+    "id": "f11ce8fae632-6",
+    "text": "ucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 7
+  },
+  {
+    "id": "f11ce8fae632-7",
+    "text": "cial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 8
+  },
+  {
+    "id": "f11ce8fae632-8",
+    "text": "ial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 9
+  },
+  {
+    "id": "f11ce8fae632-9",
+    "text": "al. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 10
+  },
+  {
+    "id": "f11ce8fae632-10",
+    "text": "l. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 11
+  },
+  {
+    "id": "f11ce8fae632-11",
+    "text": ". Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 12
+  },
+  {
+    "id": "f11ce8fae632-12",
+    "text": "Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 13
+  },
+  {
+    "id": "f11ce8fae632-13",
+    "text": "Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 14
+  },
+  {
+    "id": "f11ce8fae632-14",
+    "text": "ata pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 15
+  },
+  {
+    "id": "f11ce8fae632-15",
+    "text": "ta pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 16
+  },
+  {
+    "id": "f11ce8fae632-16",
+    "text": "a pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 17
+  },
+  {
+    "id": "f11ce8fae632-17",
+    "text": "pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 18
+  },
+  {
+    "id": "f11ce8fae632-18",
+    "text": "pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 19
+  },
+  {
+    "id": "f11ce8fae632-19",
+    "text": "ipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 20
+  },
+  {
+    "id": "f11ce8fae632-20",
+    "text": "pelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 21
+  },
+  {
+    "id": "f11ce8fae632-21",
+    "text": "elines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 22
+  },
+  {
+    "id": "f11ce8fae632-22",
+    "text": "lines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 23
+  },
+  {
+    "id": "f11ce8fae632-23",
+    "text": "ines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 24
+  },
+  {
+    "id": "f11ce8fae632-24",
+    "text": "nes are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 25
+  },
+  {
+    "id": "f11ce8fae632-25",
+    "text": "es are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 26
+  },
+  {
+    "id": "f11ce8fae632-26",
+    "text": "s are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 27
+  },
+  {
+    "id": "f11ce8fae632-27",
+    "text": "are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 28
+  },
+  {
+    "id": "f11ce8fae632-28",
+    "text": "are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 29
+  },
+  {
+    "id": "f11ce8fae632-29",
+    "text": "re crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 30
+  },
+  {
+    "id": "f11ce8fae632-30",
+    "text": "e crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 31
+  },
+  {
+    "id": "f11ce8fae632-31",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 32
+  },
+  {
+    "id": "f11ce8fae632-32",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 33
+  },
+  {
+    "id": "f11ce8fae632-33",
+    "text": "rucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 34
+  },
+  {
+    "id": "f11ce8fae632-34",
+    "text": "ucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 35
+  },
+  {
+    "id": "f11ce8fae632-35",
+    "text": "cial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 36
+  },
+  {
+    "id": "f11ce8fae632-36",
+    "text": "ial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 37
+  },
+  {
+    "id": "f11ce8fae632-37",
+    "text": "al. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 38
+  },
+  {
+    "id": "f11ce8fae632-38",
+    "text": "l. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 39
+  },
+  {
+    "id": "f11ce8fae632-39",
+    "text": ". Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 40
+  },
+  {
+    "id": "f11ce8fae632-40",
+    "text": "Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 41
+  },
+  {
+    "id": "f11ce8fae632-41",
+    "text": "Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 42
+  },
+  {
+    "id": "f11ce8fae632-42",
+    "text": "ata pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 43
+  },
+  {
+    "id": "f11ce8fae632-43",
+    "text": "ta pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 44
+  },
+  {
+    "id": "f11ce8fae632-44",
+    "text": "a pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 45
+  },
+  {
+    "id": "f11ce8fae632-45",
+    "text": "pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 46
+  },
+  {
+    "id": "f11ce8fae632-46",
+    "text": "pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 47
+  },
+  {
+    "id": "f11ce8fae632-47",
+    "text": "ipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 48
+  },
+  {
+    "id": "f11ce8fae632-48",
+    "text": "pelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 49
+  },
+  {
+    "id": "f11ce8fae632-49",
+    "text": "elines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 50
+  },
+  {
+    "id": "f11ce8fae632-50",
+    "text": "lines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 51
+  },
+  {
+    "id": "f11ce8fae632-51",
+    "text": "ines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 52
+  },
+  {
+    "id": "f11ce8fae632-52",
+    "text": "nes are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 53
+  },
+  {
+    "id": "f11ce8fae632-53",
+    "text": "es are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 54
+  },
+  {
+    "id": "f11ce8fae632-54",
+    "text": "s are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 55
+  },
+  {
+    "id": "f11ce8fae632-55",
+    "text": "are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 56
+  },
+  {
+    "id": "f11ce8fae632-56",
+    "text": "are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 57
+  },
+  {
+    "id": "f11ce8fae632-57",
+    "text": "re crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 58
+  },
+  {
+    "id": "f11ce8fae632-58",
+    "text": "e crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 59
+  },
+  {
+    "id": "f11ce8fae632-59",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 60
+  },
+  {
+    "id": "f11ce8fae632-60",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 61
+  },
+  {
+    "id": "f11ce8fae632-61",
+    "text": "rucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 62
+  },
+  {
+    "id": "f11ce8fae632-62",
+    "text": "ucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 63
+  },
+  {
+    "id": "f11ce8fae632-63",
+    "text": "cial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 64
+  },
+  {
+    "id": "f11ce8fae632-64",
+    "text": "ial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 65
+  },
+  {
+    "id": "f11ce8fae632-65",
+    "text": "al. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 66
+  },
+  {
+    "id": "f11ce8fae632-66",
+    "text": "l. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 67
+  },
+  {
+    "id": "f11ce8fae632-67",
+    "text": ". Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 68
+  },
+  {
+    "id": "f11ce8fae632-68",
+    "text": "Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 69
+  },
+  {
+    "id": "f11ce8fae632-69",
+    "text": "Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 70
+  },
+  {
+    "id": "f11ce8fae632-70",
+    "text": "ata pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 71
+  },
+  {
+    "id": "f11ce8fae632-71",
+    "text": "ta pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 72
+  },
+  {
+    "id": "f11ce8fae632-72",
+    "text": "a pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 73
+  },
+  {
+    "id": "f11ce8fae632-73",
+    "text": "pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 74
+  },
+  {
+    "id": "f11ce8fae632-74",
+    "text": "pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 75
+  },
+  {
+    "id": "f11ce8fae632-75",
+    "text": "ipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 76
+  },
+  {
+    "id": "f11ce8fae632-76",
+    "text": "pelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 77
+  },
+  {
+    "id": "f11ce8fae632-77",
+    "text": "elines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 78
+  },
+  {
+    "id": "f11ce8fae632-78",
+    "text": "lines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 79
+  },
+  {
+    "id": "f11ce8fae632-79",
+    "text": "ines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 80
+  },
+  {
+    "id": "f11ce8fae632-80",
+    "text": "nes are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 81
+  },
+  {
+    "id": "f11ce8fae632-81",
+    "text": "es are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 82
+  },
+  {
+    "id": "f11ce8fae632-82",
+    "text": "s are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 83
+  },
+  {
+    "id": "f11ce8fae632-83",
+    "text": "are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 84
+  },
+  {
+    "id": "f11ce8fae632-84",
+    "text": "are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 85
+  },
+  {
+    "id": "f11ce8fae632-85",
+    "text": "re crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 86
+  },
+  {
+    "id": "f11ce8fae632-86",
+    "text": "e crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 87
+  },
+  {
+    "id": "f11ce8fae632-87",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 88
+  },
+  {
+    "id": "f11ce8fae632-88",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 89
+  },
+  {
+    "id": "f11ce8fae632-89",
+    "text": "rucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 90
+  },
+  {
+    "id": "f11ce8fae632-90",
+    "text": "ucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 91
+  },
+  {
+    "id": "f11ce8fae632-91",
+    "text": "cial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 92
+  },
+  {
+    "id": "f11ce8fae632-92",
+    "text": "ial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 93
+  },
+  {
+    "id": "f11ce8fae632-93",
+    "text": "al. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 94
+  },
+  {
+    "id": "f11ce8fae632-94",
+    "text": "l. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 95
+  },
+  {
+    "id": "f11ce8fae632-95",
+    "text": ". Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 96
+  },
+  {
+    "id": "f11ce8fae632-96",
+    "text": "Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 97
+  },
+  {
+    "id": "f11ce8fae632-97",
+    "text": "Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 98
+  },
+  {
+    "id": "f11ce8fae632-98",
+    "text": "ata pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 99
+  },
+  {
+    "id": "f11ce8fae632-99",
+    "text": "ta pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 100
+  },
+  {
+    "id": "f11ce8fae632-100",
+    "text": "a pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 101
+  },
+  {
+    "id": "f11ce8fae632-101",
+    "text": "pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 102
+  },
+  {
+    "id": "f11ce8fae632-102",
+    "text": "pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 103
+  },
+  {
+    "id": "f11ce8fae632-103",
+    "text": "ipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 104
+  },
+  {
+    "id": "f11ce8fae632-104",
+    "text": "pelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 105
+  },
+  {
+    "id": "f11ce8fae632-105",
+    "text": "elines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 106
+  },
+  {
+    "id": "f11ce8fae632-106",
+    "text": "lines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 107
+  },
+  {
+    "id": "f11ce8fae632-107",
+    "text": "ines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 108
+  },
+  {
+    "id": "f11ce8fae632-108",
+    "text": "nes are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 109
+  },
+  {
+    "id": "f11ce8fae632-109",
+    "text": "es are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 110
+  },
+  {
+    "id": "f11ce8fae632-110",
+    "text": "s are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 111
+  },
+  {
+    "id": "f11ce8fae632-111",
+    "text": "are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 112
+  },
+  {
+    "id": "f11ce8fae632-112",
+    "text": "are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 113
+  },
+  {
+    "id": "f11ce8fae632-113",
+    "text": "re crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 114
+  },
+  {
+    "id": "f11ce8fae632-114",
+    "text": "e crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 115
+  },
+  {
+    "id": "f11ce8fae632-115",
+    "text": "crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 116
+  },
+  {
+    "id": "f11ce8fae632-116",
+    "text": "crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 117
+  },
+  {
+    "id": "f11ce8fae632-117",
+    "text": "rucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 118
+  },
+  {
+    "id": "f11ce8fae632-118",
+    "text": "ucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 119
+  },
+  {
+    "id": "f11ce8fae632-119",
+    "text": "cial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 120
+  },
+  {
+    "id": "f11ce8fae632-120",
+    "text": "ial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 121
+  },
+  {
+    "id": "f11ce8fae632-121",
+    "text": "al. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 122
+  },
+  {
+    "id": "f11ce8fae632-122",
+    "text": "l. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 123
+  },
+  {
+    "id": "f11ce8fae632-123",
+    "text": ". Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 124
+  },
+  {
+    "id": "f11ce8fae632-124",
+    "text": "Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 125
+  },
+  {
+    "id": "f11ce8fae632-125",
+    "text": "Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 126
+  },
+  {
+    "id": "f11ce8fae632-126",
+    "text": "ata pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 127
+  },
+  {
+    "id": "f11ce8fae632-127",
+    "text": "ta pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 128
+  },
+  {
+    "id": "f11ce8fae632-128",
+    "text": "a pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 129
+  },
+  {
+    "id": "f11ce8fae632-129",
+    "text": "pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 130
+  },
+  {
+    "id": "f11ce8fae632-130",
+    "text": "pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 131
+  },
+  {
+    "id": "f11ce8fae632-131",
+    "text": "ipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 132
+  },
+  {
+    "id": "f11ce8fae632-132",
+    "text": "pelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 133
+  },
+  {
+    "id": "f11ce8fae632-133",
+    "text": "elines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 134
+  },
+  {
+    "id": "f11ce8fae632-134",
+    "text": "lines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 135
+  },
+  {
+    "id": "f11ce8fae632-135",
+    "text": "ines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 136
+  },
+  {
+    "id": "f11ce8fae632-136",
+    "text": "nes are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 137
+  },
+  {
+    "id": "f11ce8fae632-137",
+    "text": "es are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 138
+  },
+  {
+    "id": "f11ce8fae632-138",
+    "text": "s are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 139
+  },
+  {
+    "id": "f11ce8fae632-139",
+    "text": "are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 140
+  },
+  {
+    "id": "f11ce8fae632-140",
+    "text": "are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 141
+  },
+  {
+    "id": "f11ce8fae632-141",
+    "text": "re crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 142
+  },
+  {
+    "id": "f11ce8fae632-142",
+    "text": "e crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 143
+  },
+  {
+    "id": "f11ce8fae632-143",
+    "text": "crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 144
+  },
+  {
+    "id": "f11ce8fae632-144",
+    "text": "crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 145
+  },
+  {
+    "id": "f11ce8fae632-145",
+    "text": "rucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 146
+  },
+  {
+    "id": "f11ce8fae632-146",
+    "text": "ucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 147
+  },
+  {
+    "id": "f11ce8fae632-147",
+    "text": "cial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 148
+  },
+  {
+    "id": "f11ce8fae632-148",
+    "text": "ial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 149
+  },
+  {
+    "id": "f11ce8fae632-149",
+    "text": "al.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 150
+  },
+  {
+    "id": "f11ce8fae632-150",
+    "text": "l.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 151
+  },
+  {
+    "id": "f11ce8fae632-151",
+    "text": ".",
+    "source": "test_architecture_guide.txt",
+    "chunk": 152
+  },
+  {
+    "id": "fbf8855b0ddf-0",
+    "text": "Antigravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 1
+  },
+  {
+    "id": "fbf8855b0ddf-1",
+    "text": "ntigravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 2
+  },
+  {
+    "id": "fbf8855b0ddf-2",
+    "text": "tigravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 3
+  },
+  {
+    "id": "fbf8855b0ddf-3",
+    "text": "igravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 4
+  },
+  {
+    "id": "fbf8855b0ddf-4",
+    "text": "gravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 5
+  },
+  {
+    "id": "fbf8855b0ddf-5",
+    "text": "ravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 6
+  },
+  {
+    "id": "fbf8855b0ddf-6",
+    "text": "avity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 7
+  },
+  {
+    "id": "fbf8855b0ddf-7",
+    "text": "vity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 8
+  },
+  {
+    "id": "fbf8855b0ddf-8",
+    "text": "ity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 9
+  },
+  {
+    "id": "fbf8855b0ddf-9",
+    "text": "ty Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 10
+  },
+  {
+    "id": "fbf8855b0ddf-10",
+    "text": "y Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 11
+  },
+  {
+    "id": "fbf8855b0ddf-11",
+    "text": "Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 12
+  },
+  {
+    "id": "fbf8855b0ddf-12",
+    "text": "Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 13
+  },
+  {
+    "id": "fbf8855b0ddf-13",
+    "text": "perations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 14
+  },
+  {
+    "id": "fbf8855b0ddf-14",
+    "text": "erations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 15
+  },
+  {
+    "id": "fbf8855b0ddf-15",
+    "text": "rations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 16
+  },
+  {
+    "id": "fbf8855b0ddf-16",
+    "text": "ations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 17
+  },
+  {
+    "id": "fbf8855b0ddf-17",
+    "text": "tions Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 18
+  },
+  {
+    "id": "fbf8855b0ddf-18",
+    "text": "ions Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 19
+  },
+  {
+    "id": "fbf8855b0ddf-19",
+    "text": "ons Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 20
+  },
+  {
+    "id": "fbf8855b0ddf-20",
+    "text": "ns Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 21
+  },
+  {
+    "id": "fbf8855b0ddf-21",
+    "text": "s Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 22
+  },
+  {
+    "id": "fbf8855b0ddf-22",
+    "text": "Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 23
+  },
+  {
+    "id": "fbf8855b0ddf-23",
+    "text": "Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 24
+  },
+  {
+    "id": "fbf8855b0ddf-24",
+    "text": "anual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 25
+  },
+  {
+    "id": "fbf8855b0ddf-25",
+    "text": "nual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 26
+  },
+  {
+    "id": "fbf8855b0ddf-26",
+    "text": "ual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 27
+  },
+  {
+    "id": "fbf8855b0ddf-27",
+    "text": "al. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 28
+  },
+  {
+    "id": "fbf8855b0ddf-28",
+    "text": "l. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 29
+  },
+  {
+    "id": "fbf8855b0ddf-29",
+    "text": ". Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 30
+  },
+  {
+    "id": "fbf8855b0ddf-30",
+    "text": "Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 31
+  },
+  {
+    "id": "fbf8855b0ddf-31",
+    "text": "Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 32
+  },
+  {
+    "id": "fbf8855b0ddf-32",
+    "text": "tep 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 33
+  },
+  {
+    "id": "fbf8855b0ddf-33",
+    "text": "ep 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 34
+  },
+  {
+    "id": "fbf8855b0ddf-34",
+    "text": "p 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 35
+  },
+  {
+    "id": "fbf8855b0ddf-35",
+    "text": "1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 36
+  },
+  {
+    "id": "fbf8855b0ddf-36",
+    "text": "1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 37
+  },
+  {
+    "id": "fbf8855b0ddf-37",
+    "text": ": Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 38
+  },
+  {
+    "id": "fbf8855b0ddf-38",
+    "text": "Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 39
+  },
+  {
+    "id": "fbf8855b0ddf-39",
+    "text": "Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 40
+  },
+  {
+    "id": "fbf8855b0ddf-40",
+    "text": "nitialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 41
+  },
+  {
+    "id": "fbf8855b0ddf-41",
+    "text": "itialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 42
+  },
+  {
+    "id": "fbf8855b0ddf-42",
+    "text": "tialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 43
+  },
+  {
+    "id": "fbf8855b0ddf-43",
+    "text": "ialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 44
+  },
+  {
+    "id": "fbf8855b0ddf-44",
+    "text": "alize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 45
+  },
+  {
+    "id": "fbf8855b0ddf-45",
+    "text": "lize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 46
+  },
+  {
+    "id": "fbf8855b0ddf-46",
+    "text": "ize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 47
+  },
+  {
+    "id": "fbf8855b0ddf-47",
+    "text": "ze server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 48
+  },
+  {
+    "id": "fbf8855b0ddf-48",
+    "text": "e server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 49
+  },
+  {
+    "id": "fbf8855b0ddf-49",
+    "text": "server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 50
+  },
+  {
+    "id": "fbf8855b0ddf-50",
+    "text": "server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 51
+  },
+  {
+    "id": "fbf8855b0ddf-51",
+    "text": "erver. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 52
+  },
+  {
+    "id": "fbf8855b0ddf-52",
+    "text": "rver. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 53
+  },
+  {
+    "id": "fbf8855b0ddf-53",
+    "text": "ver. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 54
+  },
+  {
+    "id": "fbf8855b0ddf-54",
+    "text": "er. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 55
+  },
+  {
+    "id": "fbf8855b0ddf-55",
+    "text": "r. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 56
+  },
+  {
+    "id": "fbf8855b0ddf-56",
+    "text": ". Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 57
+  },
+  {
+    "id": "fbf8855b0ddf-57",
+    "text": "Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 58
+  },
+  {
+    "id": "fbf8855b0ddf-58",
+    "text": "Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 59
+  },
+  {
+    "id": "fbf8855b0ddf-59",
+    "text": "tep 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 60
+  },
+  {
+    "id": "fbf8855b0ddf-60",
+    "text": "ep 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 61
+  },
+  {
+    "id": "fbf8855b0ddf-61",
+    "text": "p 2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 62
+  },
+  {
+    "id": "fbf8855b0ddf-62",
+    "text": "2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 63
+  },
+  {
+    "id": "fbf8855b0ddf-63",
+    "text": "2: Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 64
+  },
+  {
+    "id": "fbf8855b0ddf-64",
+    "text": ": Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 65
+  },
+  {
+    "id": "fbf8855b0ddf-65",
+    "text": "Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 66
+  },
+  {
+    "id": "fbf8855b0ddf-66",
+    "text": "Configure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 67
+  },
+  {
+    "id": "fbf8855b0ddf-67",
+    "text": "onfigure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 68
+  },
+  {
+    "id": "fbf8855b0ddf-68",
+    "text": "nfigure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 69
+  },
+  {
+    "id": "fbf8855b0ddf-69",
+    "text": "figure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 70
+  },
+  {
+    "id": "fbf8855b0ddf-70",
+    "text": "igure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 71
+  },
+  {
+    "id": "fbf8855b0ddf-71",
+    "text": "gure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 72
+  },
+  {
+    "id": "fbf8855b0ddf-72",
+    "text": "ure analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 73
+  },
+  {
+    "id": "fbf8855b0ddf-73",
+    "text": "re analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 74
+  },
+  {
+    "id": "fbf8855b0ddf-74",
+    "text": "e analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 75
+  },
+  {
+    "id": "fbf8855b0ddf-75",
+    "text": "analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 76
+  },
+  {
+    "id": "fbf8855b0ddf-76",
+    "text": "analytics.",
+    "source": "operations_manual.txt",
+    "chunk": 77
+  },
+  {
+    "id": "fbf8855b0ddf-77",
+    "text": "nalytics.",
+    "source": "operations_manual.txt",
+    "chunk": 78
+  },
+  {
+    "id": "fbf8855b0ddf-78",
+    "text": "alytics.",
+    "source": "operations_manual.txt",
+    "chunk": 79
+  },
+  {
+    "id": "fbf8855b0ddf-79",
+    "text": "lytics.",
+    "source": "operations_manual.txt",
+    "chunk": 80
+  },
+  {
+    "id": "fbf8855b0ddf-80",
+    "text": "ytics.",
+    "source": "operations_manual.txt",
+    "chunk": 81
+  },
+  {
+    "id": "fbf8855b0ddf-81",
+    "text": "tics.",
+    "source": "operations_manual.txt",
+    "chunk": 82
+  },
+  {
+    "id": "fbf8855b0ddf-82",
+    "text": "ics.",
+    "source": "operations_manual.txt",
+    "chunk": 83
+  },
+  {
+    "id": "fbf8855b0ddf-83",
+    "text": "cs.",
+    "source": "operations_manual.txt",
+    "chunk": 84
+  },
+  {
+    "id": "fbf8855b0ddf-84",
+    "text": "s.",
+    "source": "operations_manual.txt",
+    "chunk": 85
+  },
+  {
+    "id": "fbf8855b0ddf-85",
+    "text": ".",
+    "source": "operations_manual.txt",
+    "chunk": 86
+  }
+]
