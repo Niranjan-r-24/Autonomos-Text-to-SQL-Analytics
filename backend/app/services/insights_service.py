@@ -427,8 +427,19 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
                             descriptive_parts.append(val_str)
                 desc_label = f" ({', '.join(descriptive_parts)})" if descriptive_parts else ""
 
-                if is_ranking or any(k in q for k in ["highest", "lowest", "max", "min", "top", "bottom"]):
-                    rank_word = "lowest" if any(k in q for k in ["lowest", "min", "cheapest", "least"]) else "top"
+                # Check ranking from SQL direction or explicit question words
+                has_desc = " desc" in sql_lower
+                has_asc = " asc" in sql_lower
+                is_low_q = any(k in q for k in ["lowest", "bottom", "least", "cheapest", "minimum", "worst"]) or bool(re.search(r"\bmin\b", q))
+                is_high_q = any(k in q for k in ["highest", "top", "most", "best", "greatest", "maximum", "largest"]) or bool(re.search(r"\bmax\b", q))
+
+                if is_ranking or has_desc or has_asc or is_low_q or is_high_q:
+                    if has_asc:
+                        rank_word = "lowest"
+                    elif has_desc:
+                        rank_word = "top"
+                    else:
+                        rank_word = "lowest" if is_low_q else "top"
                     entity_str = descriptive_parts[0] if descriptive_parts else "record"
                     extra_desc = f" ({descriptive_parts[1]})" if len(descriptive_parts) > 1 else ""
                     direct_answer = f"{entity_str} is the {rank_word}-performing record during the selected period with {primary_val} in {primary_metric.replace('_', ' ')}{extra_desc}."
@@ -562,8 +573,8 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
 
             # Determine ranking direction
             is_lowest_q = any(k in q for k in [
-                "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "min", "minimum", "fewest"
-            ])
+                "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "minimum", "fewest"
+            ]) or bool(re.search(r"\bmin\b", q))
             first_val = float(rows[0].get(primary_val_col, 0) or 0)
             last_val = float(rows[-1].get(primary_val_col, 0) or 0)
             if len(rows) > 1 and first_val < last_val:

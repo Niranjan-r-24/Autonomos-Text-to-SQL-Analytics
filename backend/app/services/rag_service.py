@@ -1,6 +1,6 @@
 """
 Production RAG (Retrieval-Augmented Generation) Service.
-Provides enterprise document upload, text extraction (PDF, TXT, MD, JSON, CSV),
+Provides enterprise document upload, text extraction (PDF, DOCX, TXT, MD, JSON, CSV),
 recursive chunking, hybrid vector/lexical BM25 retrieval, and cited grounded answers.
 """
 from __future__ import annotations
@@ -9,6 +9,7 @@ import os
 import re
 import json
 import hashlib
+import datetime
 import logging
 from io import BytesIO
 from collections import Counter, deque
@@ -20,6 +21,9 @@ logger = logging.getLogger("text2sql.rag")
 BASE_DIR = Path(__file__).resolve().parents[2]
 RAG_DIR = Path(os.getenv("RAG_STORAGE_DIR", BASE_DIR / "rag_store"))
 RAG_DIR.mkdir(parents=True, exist_ok=True)
+
+DOCS_DIR = RAG_DIR / "documents"
+DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class ProductionRAGService:
@@ -66,13 +70,82 @@ class ProductionRAGService:
     def has_documents(self) -> bool:
         return len(self.records) > 0
 
+    def _load_doc_metadata(self) -> Dict[str, Any]:
+        """Loads document metadata cache from documents.json."""
+        meta_path = RAG_DIR / "documents.json"
+        if meta_path.exists():
+            try:
+                return json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning("Failed to load documents.json: %s", e)
+        return {}
+
+    def _save_doc_metadata(self, metadata: Dict[str, Any]) -> None:
+        """Persists document metadata cache to documents.json."""
+        try:
+            meta_path = RAG_DIR / "documents.json"
+            meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Failed to save documents.json: %s", e)
+
     def list_documents(self) -> List[Dict[str, Any]]:
-        """Returns metadata for all indexed documents."""
-        doc_map: Dict[str, int] = {}
+        """Returns metadata for all indexed documents and their availability."""
+        docs_meta = self._load_doc_metadata()
+        doc_chunk_map: Dict[str, int] = {}
         for r in self.records:
             src = r.get("source", "unknown")
-            doc_map[src] = doc_map.get(src, 0) + 1
-        return [{"filename": src, "chunks": count} for src, count in doc_map.items()]
+            doc_chunk_map[src] = doc_chunk_map.get(src, 0) + 1
+
+        result = []
+        for filename, count in doc_chunk_map.items():
+            meta = docs_meta.get(filename, {})
+            file_path = DOCS_DIR / filename
+            size = meta.get("size_bytes")
+            if size is None and file_path.exists():
+                size = file_path.stat().st_size
+
+            result.append({
+                "filename": filename,
+                "chunks": count,
+                "file_type": meta.get("file_type") or os.path.splitext(filename)[1].lower(),
+                "size_bytes": size or 0,
+                "indexed_at": meta.get("indexed_at") or "Persisted",
+                "status": "ready" if count > 0 else "empty"
+            })
+        return result
+
+    def delete_document(self, filename: str) -> bool:
+        """Removes a document and its chunks from records, storage, and Chroma collection."""
+        initial_len = len(self.records)
+        self.records = [r for r in self.records if r.get("source") != filename]
+
+        # Save updated records.json
+        records_file = RAG_DIR / "records.json"
+        records_file.write_text(json.dumps(self.records, indent=2), encoding="utf-8")
+
+        # Update metadata
+        docs_meta = self._load_doc_metadata()
+        if filename in docs_meta:
+            del docs_meta[filename]
+            self._save_doc_metadata(docs_meta)
+
+        # Delete stored document file
+        doc_path = DOCS_DIR / filename
+        if doc_path.exists():
+            try:
+                doc_path.unlink()
+            except Exception as e:
+                logger.warning("Could not delete stored file %s: %s", filename, e)
+
+        # Remove from Chroma
+        chroma = self.chroma_collection
+        if chroma is not None:
+            try:
+                chroma.delete(where={"source": filename})
+            except Exception as e:
+                logger.warning("Chroma deletion note: %s", e)
+
+        return len(self.records) < initial_len
 
     @staticmethod
     def recursive_chunks(text: str, size: int = 800, overlap: int = 150) -> List[str]:
@@ -91,50 +164,80 @@ class ProductionRAGService:
             chunk = clean_text[cursor:end].strip()
             if chunk:
                 chunks.append(chunk)
+            if end >= len(clean_text):
+                break
             cursor = max(end - overlap, cursor + 1)
         return chunks
 
     def ingest(self, filename: str, content: bytes) -> Dict[str, Any]:
         """
-        Extracts, chunks, indexes, and persists a document into the RAG knowledge store.
+        Extracts, chunks, embeds, indexes, and stores a document (.pdf, .docx, .txt, .md).
+        Raises ValueError if text extraction fails, ensuring no false success is reported.
         """
+        if not content or len(content) == 0:
+            raise ValueError(f"Uploaded file '{filename}' is empty (0 bytes).")
+
         text = self._extract_text(filename, content)
-        if not text.strip():
+        if not text or not text.strip():
             raise ValueError(f"No readable text could be extracted from '{filename}'.")
+
+        # Store physical document file in DOCS_DIR
+        doc_path = DOCS_DIR / filename
+        try:
+            doc_path.write_bytes(content)
+        except Exception as e:
+            logger.warning("Could not persist file to disk %s: %s", filename, e)
 
         doc_hash = hashlib.sha1((filename + str(len(content))).encode()).hexdigest()[:12]
         chunks = self.recursive_chunks(text)
+        if not chunks:
+            raise ValueError(f"Document '{filename}' could not be split into meaningful text chunks.")
+
         new_records = [
             {"id": f"{doc_hash}-{i}", "text": chunk, "source": filename, "chunk": i + 1}
             for i, chunk in enumerate(chunks)
         ]
 
-        # Avoid duplicate ingestion of identical files
-        existing_ids = {r["id"] for r in self.records}
-        unique_records = [r for r in new_records if r["id"] not in existing_ids]
+        # Purge any previous chunks for the same filename to handle updates cleanly
+        self.records = [r for r in self.records if r.get("source") != filename]
+        self.records.extend(new_records)
 
-        if unique_records:
-            self.records.extend(unique_records)
-            records_file = RAG_DIR / "records.json"
-            records_file.write_text(json.dumps(self.records, indent=2), encoding="utf-8")
+        # Persist updated records
+        records_file = RAG_DIR / "records.json"
+        records_file.write_text(json.dumps(self.records, indent=2), encoding="utf-8")
 
-            chroma = self.chroma_collection
-            if chroma is not None:
-                try:
-                    chroma.upsert(
-                        ids=[r["id"] for r in unique_records],
-                        documents=[r["text"] for r in unique_records],
-                        metadatas=[{"source": r["source"], "chunk": r["chunk"]} for r in unique_records]
-                    )
-                except Exception as e:
-                    logger.warning("Chroma upsert notice: %s", e)
+        # Update Chroma vector index
+        chroma = self.chroma_collection
+        if chroma is not None:
+            try:
+                chroma.upsert(
+                    ids=[r["id"] for r in new_records],
+                    documents=[r["text"] for r in new_records],
+                    metadatas=[{"source": r["source"], "chunk": r["chunk"]} for r in new_records]
+                )
+            except Exception as e:
+                logger.warning("Chroma upsert notice: %s", e)
 
-        logger.info("Ingested '%s': created %d chunks (%d new)", filename, len(chunks), len(unique_records))
+        # Update metadata catalog
+        docs_meta = self._load_doc_metadata()
+        docs_meta[filename] = {
+            "filename": filename,
+            "file_type": os.path.splitext(filename)[1].lower(),
+            "size_bytes": len(content),
+            "chunks_count": len(chunks),
+            "indexed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "status": "ready"
+        }
+        self._save_doc_metadata(docs_meta)
+
+        logger.info("Successfully ingested '%s': created %d chunks", filename, len(chunks))
         return {
             "document_id": doc_hash,
             "filename": filename,
             "chunks_created": len(chunks),
-            "total_knowledge_chunks": len(self.records)
+            "total_knowledge_chunks": len(self.records),
+            "status": "indexed",
+            "message": f"Successfully indexed '{filename}' into document knowledge base ({len(chunks)} chunks created)."
         }
 
     def answer(self, query: str, api_key: Optional[str] = None, provider: str = "gemini") -> Dict[str, Any]:
@@ -143,7 +246,7 @@ class ProductionRAGService:
         """
         if not self.records:
             return {
-                "answer": "The knowledge base is currently empty. Please upload documents (.pdf, .txt, .md) to enable RAG retrieval.",
+                "answer": "The knowledge base is currently empty. Please upload documents (.pdf, .docx, .txt, .md) to enable RAG retrieval.",
                 "citations": [],
                 "retrieved_count": 0,
                 "rewritten_query": query
@@ -301,7 +404,7 @@ EXECUTIVE ANSWER:"""
                 logger.warning("LLM RAG synthesis failed, using deterministic extractor: %s", e)
 
         # Deterministic extraction fallback:
-        # Extract leading sentences from the top 2 chunks
+        # Extract leading sentences from the top chunk and cite source
         primary = ranked_chunks[0]
         sentences = re.split(r"(?<=[.!?])\s+", primary["text"])
         summary = " ".join(sentences[:3]).strip()
@@ -310,20 +413,61 @@ EXECUTIVE ANSWER:"""
 
     @staticmethod
     def _extract_text(filename: str, content: bytes) -> str:
-        """Extracts text from PDF, TXT, MD, JSON, or CSV formats."""
+        """Extracts text from PDF, DOCX, TXT, MD, JSON, or CSV formats."""
+        if not content:
+            raise ValueError(f"Uploaded file '{filename}' is empty (0 bytes).")
+
         ext = os.path.splitext(filename)[1].lower()
         if ext == ".pdf":
             try:
                 from pypdf import PdfReader
                 reader = PdfReader(BytesIO(content))
+                if len(reader.pages) == 0:
+                    raise ValueError(f"PDF '{filename}' contains 0 pages.")
                 pages_text = [page.extract_text() or "" for page in reader.pages]
-                return "\n\n".join(pages_text).strip()
+                full_text = "\n\n".join(pages_text).strip()
+                if not full_text:
+                    raise ValueError(f"No extractable text found in PDF '{filename}'.")
+                return full_text
             except Exception as e:
                 raise ValueError(f"Could not parse PDF '{filename}': {str(e)}")
+
+        elif ext in [".docx", ".doc"]:
+            try:
+                import docx
+                doc = docx.Document(BytesIO(content))
+                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                for table in doc.tables:
+                    for row in table.rows:
+                        row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                        if row_text:
+                            paragraphs.append(row_text)
+                full_text = "\n\n".join(paragraphs).strip()
+                if not full_text:
+                    raise ValueError(f"No extractable text found in Word document '{filename}'.")
+                return full_text
+            except Exception as e:
+                raise ValueError(f"Could not parse DOCX '{filename}': {str(e)}")
+
         elif ext in [".txt", ".md", ".json", ".csv", ".tsv"]:
-            return content.decode("utf-8", errors="ignore")
+            # Try utf-8 first, fallback to utf-8-sig or latin-1
+            for enc in ["utf-8", "utf-8-sig", "latin-1"]:
+                try:
+                    decoded = content.decode(enc).strip()
+                    if decoded:
+                        return decoded
+                except UnicodeDecodeError:
+                    continue
+            raise ValueError(f"Could not decode text file '{filename}' with UTF-8 or Latin-1.")
+
         else:
-            return content.decode("utf-8", errors="ignore")
+            try:
+                decoded = content.decode("utf-8", errors="ignore").strip()
+                if decoded:
+                    return decoded
+                raise ValueError(f"Unsupported format '{ext}' for document parsing.")
+            except Exception as e:
+                raise ValueError(f"Unsupported document format '{ext}': {str(e)}")
 
 
 # Global singleton instance

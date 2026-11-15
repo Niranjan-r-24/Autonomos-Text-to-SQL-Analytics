@@ -1,0 +1,1 @@
+Security Protocol: All production database access requires multi-factor authentication and VP approval.

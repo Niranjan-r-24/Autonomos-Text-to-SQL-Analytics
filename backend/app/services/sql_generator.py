@@ -208,11 +208,22 @@ JSON Response Format:
         }
 
         target_table_name = None
+
+        # Prioritize uploaded active_table unless the query explicitly specifies a canonical table (e.g. 'from customers')
+        if active_table and active_table in schema_info and active_table.lower() not in canonical_tables:
+            explicit_other = any(
+                f"from {tbl}" in q or f"table {tbl}" in q or f"in {tbl}" in q
+                for tbl in canonical_tables if tbl in schema_info
+            )
+            if not explicit_other:
+                target_table_name = active_table
+
         # 1. Match semantic table synonyms
-        for tbl, syns in table_synonyms.items():
-            if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
-                target_table_name = tbl
-                break
+        if not target_table_name:
+            for tbl, syns in table_synonyms.items():
+                if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
+                    target_table_name = tbl
+                    break
 
         # 2. Match exact schema table names
         if not target_table_name:
@@ -298,11 +309,11 @@ JSON Response Format:
 
         # 1. Parse ranking direction
         is_lowest = any(k in q for k in [
-            "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "min", "minimum", "fewest"
-        ])
+            "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "minimum", "fewest"
+        ]) or bool(re.search(r"\bmin\b", q))
         is_highest = any(k in q for k in [
-            "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "max", "maximum"
-        ])
+            "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "maximum"
+        ]) or bool(re.search(r"\bmax\b", q))
         direction = "ASC" if is_lowest and not is_highest else ("DESC" if is_highest else ("ASC" if "ascending" in q or " asc" in q else "DESC"))
         direction_word = "ascending" if direction == "ASC" else "descending"
         rank_label = "lowest" if direction == "ASC" else "top"
@@ -682,11 +693,11 @@ JSON Response Format:
 
         # 1. Ranking Direction & Limits
         is_lowest = any(k in q for k in [
-            "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "min", "minimum", "fewest"
-        ])
+            "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "minimum", "fewest"
+        ]) or bool(re.search(r"\bmin\b", q))
         is_highest = any(k in q for k in [
-            "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "max", "maximum"
-        ])
+            "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "maximum"
+        ]) or bool(re.search(r"\bmax\b", q))
         direction = "ASC" if is_lowest and not is_highest else "DESC"
         direction_word = "ascending" if direction == "ASC" else "descending"
         rank_label = "lowest" if direction == "ASC" else "top"
@@ -751,15 +762,18 @@ JSON Response Format:
 
             if not scores or max(scores.values()) <= 0:
                 # Do NOT default to audit_logs! Default to the table matching question domain keywords, or sales
+                business_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+                safe_fallback = business_tables[0] if business_tables else list(schema_info.keys())[0]
+
                 if any(k in q for k in ["customer", "client", "user", "buyer", "people", "account", "subscriber"]):
-                    target_table = "customers" if "customers" in schema_info else list(schema_info.keys())[0]
+                    target_table = "customers" if "customers" in schema_info else safe_fallback
                 elif any(k in q for k in ["employee", "staff", "salary", "department", "hire"]):
-                    target_table = "employees" if "employees" in schema_info else list(schema_info.keys())[0]
+                    target_table = "employees" if "employees" in schema_info else safe_fallback
                 elif any(k in q for k in ["product", "item", "stock", "price", "category", "rating"]):
-                    target_table = "products" if "products" in schema_info else list(schema_info.keys())[0]
+                    target_table = "products" if "products" in schema_info else safe_fallback
                 else:
                     uploaded = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
-                    target_table = uploaded[0] if uploaded else ("sales" if "sales" in schema_info else list(schema_info.keys())[0])
+                    target_table = uploaded[0] if uploaded else ("sales" if "sales" in schema_info else safe_fallback)
             else:
                 target_table = max(scores, key=scores.get)
 
@@ -830,12 +844,31 @@ JSON Response Format:
         if not entity_col:
             entity_col = next((c for c in text_cols if "name" in c.lower()), (text_cols[0] if text_cols else None))
 
+        # Check explicit ordering column (e.g. "ordered by price descending", "sorted by mileage")
+        order_by_col = None
+        order_match = re.search(r"\b(?:order(?:ed)?\s+by|sort(?:ed)?\s+by|ranked\s+by)\s+([a-zA-Z0-9_]+)", q)
+        if order_match:
+            candidate_ord = order_match.group(1).lower().replace(" ", "_")
+            for c in all_cols:
+                if c.lower() == candidate_ord or c.lower().rstrip("s") == candidate_ord.rstrip("s"):
+                    order_by_col = c
+                    metric_col = c
+                    break
+
         # Explicit Group By parsing (e.g. "by brand", "per department", "by category", "for each fuel type")
+        # Ensure we do NOT treat "ordered by", "sorted by", "ranked by" as a group by!
         group_col = None
-        by_match = re.search(r"\b(?:by|per|for each|in each|across|grouped by)\s+([a-zA-Z0-9_ ]+)", q)
-        if by_match:
-            candidate = by_match.group(1).strip().lower().replace(" ", "_")
-            candidate_raw = by_match.group(1).strip().lower()
+        by_matches = list(re.finditer(r"\b(?:by|per|for each|in each|across|grouped by)\s+([a-zA-Z0-9_ ]+)", q))
+        valid_by_match = None
+        for bm in by_matches:
+            prefix = q[:bm.start()].strip().lower()
+            if not any(prefix.endswith(k) for k in ["order", "ordered", "sort", "sorted", "rank", "ranked"]):
+                valid_by_match = bm
+                break
+
+        if valid_by_match:
+            candidate = valid_by_match.group(1).strip().lower().replace(" ", "_")
+            candidate_raw = valid_by_match.group(1).strip().lower()
             for c in all_cols:
                 c_l = c.lower()
                 if c_l == candidate or c_l.rstrip("s") == candidate.rstrip("s") or c_l == candidate_raw:
@@ -848,7 +881,7 @@ JSON Response Format:
         if not group_col and entity_col and (
             any(k in q for k in ["distribution", "breakdown"])
             or (any(k in q for k in ["top", "bottom", "highest", "lowest", "rank", "best", "worst"]) and any(k in q for k in ["product", "customer", "department", "user", "item", "category", "brand", "role"]))
-        ):
+        ) and not order_by_col:
             group_col = entity_col
 
         # 6. Filter (WHERE Clause) Detection
@@ -921,11 +954,11 @@ JSON Response Format:
         is_avg = any(k in q for k in ["average", "avg", "mean"])
         is_sum = any(k in q for k in ["total", "sum", "overall", "how much", "revenue", "spending", "spent", "budget"])
         is_count = any(k in q for k in ["count", "how many", "number of", "for each", "by"])
-        is_max = any(k in q for k in ["highest", "max", "maximum", "greatest"]) and not has_explicit_limit
-        is_min = any(k in q for k in ["lowest", "min", "minimum", "least", "cheapest"]) and not has_explicit_limit
+        is_max = (any(k in q for k in ["highest", "maximum", "greatest"]) or bool(re.search(r"\bmax\b", q))) and not has_explicit_limit
+        is_min = (any(k in q for k in ["lowest", "minimum", "least", "cheapest"]) or bool(re.search(r"\bmin\b", q))) and not has_explicit_limit
 
         needs_group_by = bool(group_col and (
-            by_match
+            valid_by_match
             or any(k in q for k in ["average", "avg", "mean", "total", "sum", "distribution", "breakdown", "count", "how many"])
         ))
 
@@ -968,10 +1001,10 @@ JSON Response Format:
             explanation = f"Calculates overall {agg_alias.replace('_', ' ')} across records in the '{target_table}' table."
             return sql, explanation
 
-        # Branch 3: Ranked Ordering (Highest / Lowest / Top N)
-        if (is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q) and metric_col:
+        # Branch 3: Ranked Ordering (Highest / Lowest / Top N / Order By)
+        if (is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q or "order" in q or "desc" in q or "asc" in q or order_by_col) and metric_col:
             sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
-            explanation = f"Retrieves the {rank_label} {limit_val} records from '{target_table}' ordered by '{metric_col}' in {direction_word} order."
+            explanation = f"Retrieves records from '{target_table}' ordered by '{metric_col}' in {direction_word} order."
             return sql, explanation
 
         # Branch 4: Chronological / Recent Query

@@ -1,0 +1,58 @@
+{
+  "security_protocol.txt": {
+    "filename": "security_protocol.txt",
+    "file_type": ".txt",
+    "size_bytes": 103,
+    "chunks_count": 1,
+    "indexed_at": "2026-11-15T07:38:18.042892+00:00",
+    "status": "ready"
+  },
+  "remote_policy.docx": {
+    "filename": "remote_policy.docx",
+    "file_type": ".docx",
+    "size_bytes": 35360,
+    "chunks_count": 1,
+    "indexed_at": "2026-11-15T07:38:18.964868+00:00",
+    "status": "ready"
+  },
+  "cyber_directive.txt": {
+    "filename": "cyber_directive.txt",
+    "file_type": ".txt",
+    "size_bytes": 97,
+    "chunks_count": 1,
+    "indexed_at": "2026-11-15T07:43:57.028559+00:00",
+    "status": "ready"
+  },
+  "travel_policy.docx": {
+    "filename": "travel_policy.docx",
+    "file_type": ".docx",
+    "size_bytes": 35375,
+    "chunks_count": 1,
+    "indexed_at": "2026-11-15T07:43:58.096678+00:00",
+    "status": "ready"
+  },
+  "retention_policy.pdf": {
+    "filename": "retention_policy.pdf",
+    "file_type": ".pdf",
+    "size_bytes": 647,
+    "chunks_count": 1,
+    "indexed_at": "2026-11-15T07:43:59.647519+00:00",
+    "status": "ready"
+  },
+  "test_architecture_guide.txt": {
+    "filename": "test_architecture_guide.txt",
+    "file_type": ".txt",
+    "size_bytes": 902,
+    "chunks_count": 2,
+    "indexed_at": "2026-11-15T07:43:51.580996+00:00",
+    "status": "ready"
+  },
+  "operations_manual.txt": {
+    "filename": "operations_manual.txt",
+    "file_type": ".txt",
+    "size_bytes": 86,
+    "chunks_count": 1,
+    "indexed_at": "2026-11-15T07:43:55.249844+00:00",
+    "status": "ready"
+  }
+}

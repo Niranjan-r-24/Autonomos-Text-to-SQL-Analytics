@@ -397,32 +397,60 @@ async def upload_dataset(file: UploadFile = File(...)):
 
         # 6. Tab-Separated / Text (.tsv, .txt)
         elif ext in [".tsv", ".txt"]:
+            # Differentiate between structured tabular data (TSV/CSV) and prose text documents
+            is_tabular = False
             try:
-                df = pd.read_csv(io.BytesIO(contents), sep="\t")
-                if len(df.columns) <= 1:
-                    df = pd.read_csv(io.BytesIO(contents), sep=None, engine="python")
+                sample_text = contents[:4096].decode("utf-8", errors="ignore")
+                lines = [l for l in sample_text.splitlines() if l.strip()]
+                if len(lines) >= 2:
+                    for delim in ["\t", ",", "|", ";"]:
+                        c1 = len(lines[0].split(delim))
+                        c2 = len(lines[1].split(delim))
+                        if c1 > 1 and c1 == c2:
+                            is_tabular = True
+                            break
             except Exception:
-                df = pd.read_csv(io.BytesIO(contents))
+                is_tabular = False
+
+            if is_tabular or ext == ".tsv":
+                try:
+                    df = pd.read_csv(io.BytesIO(contents), sep="\t" if ext == ".tsv" else None, engine="python")
+                except Exception:
+                    df = pd.read_csv(io.BytesIO(contents))
+            else:
+                # Ingest unstructured text document into RAG knowledge store
+                rag_info = rag_service.ingest(filename, contents)
+                return {
+                    "success": True,
+                    "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
+                    "table_name": "knowledge_base",
+                    "type": "document",
+                    "rag_info": rag_info,
+                    "documents": rag_service.list_documents(),
+                    "schema": get_db_schema_info()
+                }
 
         # 7. Apache Parquet (.parquet)
         elif ext == ".parquet":
             df = pd.read_parquet(io.BytesIO(contents))
 
-        # 8. Document Knowledge Base (.pdf, .md) for RAG
-        elif ext in [".pdf", ".md"]:
+        # 8. Document Knowledge Base (.pdf, .docx, .doc, .md) for RAG
+        elif ext in [".pdf", ".docx", ".doc", ".md"]:
             rag_info = rag_service.ingest(filename, contents)
             return {
                 "success": True,
                 "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
                 "table_name": "knowledge_base",
+                "type": "document",
                 "rag_info": rag_info,
+                "documents": rag_service.list_documents(),
                 "schema": get_db_schema_info()
             }
 
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported format '{ext}'. Supported formats: .csv, .xlsx, .xls, .json, .db, .sqlite, .sql, .txt, .tsv, .parquet, .pdf, .md"
+                detail=f"Unsupported format '{ext}'. Supported formats: .csv, .xlsx, .xls, .json, .db, .sqlite, .sql, .txt, .tsv, .parquet, .pdf, .docx, .md"
             )
 
         # Standardize column names
@@ -454,16 +482,35 @@ async def upload_dataset(file: UploadFile = File(...)):
 
 @app.post("/api/rag/upload")
 async def upload_rag_document(file: UploadFile = File(...)):
-    """Uploads document (.pdf, .txt, .md, .csv) and chunks/indexes it into the RAG knowledge store."""
+    """Uploads document (.pdf, .docx, .doc, .txt, .md) and chunks/indexes it into the RAG knowledge store."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded.")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    allowed_exts = [".pdf", ".docx", ".doc", ".txt", ".md", ".json", ".csv", ".tsv"]
+    if ext not in allowed_exts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported document format '{ext}'. Supported formats: .pdf, .docx, .txt, .md"
+        )
+
     contents = await file.read()
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail=f"File '{file.filename}' is empty (0 bytes).")
+
     try:
         res = rag_service.ingest(file.filename, contents)
-        return {"success": True, **res}
+        return {
+            "success": True,
+            **res,
+            "documents": rag_service.list_documents()
+        }
+    except ValueError as ve:
+        logger.error("RAG document processing error for '%s': %s", file.filename, str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error("RAG document upload failed: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"RAG upload failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to process and index document: {str(e)}")
 
 
 @app.post("/api/rag/query")
@@ -490,6 +537,24 @@ def list_rag_documents():
             "total_chunks": len(rag_service.records),
             "documents": docs
         }
+    except Exception as e:
+        logger.error("Failed to list RAG documents: %s", str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/rag/documents/{filename:path}")
+def delete_rag_document(filename: str):
+    """Deletes an indexed document from RAG knowledge store."""
+    try:
+        deleted = rag_service.delete_document(filename)
+        return {
+            "success": deleted,
+            "message": f"Document '{filename}' {'deleted' if deleted else 'not found'}.",
+            "documents": rag_service.list_documents()
+        }
+    except Exception as e:
+        logger.error("Failed to delete document '%s': %s", filename, str(e), exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error("Failed to list RAG documents: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

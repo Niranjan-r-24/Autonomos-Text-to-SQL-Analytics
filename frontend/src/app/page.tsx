@@ -61,12 +61,18 @@ export default function Home() {
   };
 
   const handleUploadSuccess = (tableName: string, updatedSchema: Record<string, any>) => {
-    setActiveTable(tableName);
-    setSchemaData(updatedSchema);
-    const targetQuery = `Show first 10 rows from ${tableName}`;
+    if (tableName !== 'knowledge_base') {
+      setActiveTable(tableName);
+    }
+    if (updatedSchema && Object.keys(updatedSchema).length > 0) {
+      setSchemaData(updatedSchema);
+    }
+    const targetQuery = tableName === 'knowledge_base'
+      ? 'What information is contained in the uploaded document?'
+      : `Show first 10 rows from ${tableName}`;
     setQuery(targetQuery);
     setIsUploadModalOpen(false);
-    handleRunQuery(targetQuery, tableName);
+    handleRunQuery(targetQuery, tableName === 'knowledge_base' ? undefined : tableName);
   };
 
   const handleSelectTable = (tableName: string | null) => {
@@ -243,6 +249,8 @@ export default function Home() {
               executionTimeSec={pipelineResult.execution_time_sec}
               sqlExecutionTimeMs={pipelineResult.sql_execution_time_ms}
               visualization={pipelineResult.visualization}
+              route={pipelineResult.route}
+              citations={pipelineResult.citations}
               onRunCustomSql={handleRunCustomSql}
               isExecuting={isExecuting}
             />

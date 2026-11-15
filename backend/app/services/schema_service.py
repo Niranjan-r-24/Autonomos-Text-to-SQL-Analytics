@@ -94,11 +94,21 @@ def format_schema_for_llm(schema_info: Dict[str, Any], active_table: Optional[st
     """
     ddl_lines: List[str] = []
     
-    # Sort tables so active_table appears first
-    sorted_tables = list(schema_info.keys())
-    if active_table and active_table in sorted_tables:
-        sorted_tables.remove(active_table)
-        sorted_tables.insert(0, active_table)
+    # Sort tables so active_table appears first, then uploaded tables, then core business tables, and audit_logs is strictly last
+    canonical_priority = ["sales", "customers", "products", "employees"]
+    def table_sort_key(t: str):
+        t_l = t.lower()
+        if active_table and t_l == active_table.lower():
+            return (0, 0)
+        if t_l not in canonical_priority and t_l != "audit_logs":
+            return (1, 0)
+        if t_l in canonical_priority:
+            return (2, canonical_priority.index(t_l))
+        if t_l == "audit_logs":
+            return (3, 0)
+        return (4, t_l)
+
+    sorted_tables = sorted(schema_info.keys(), key=table_sort_key)
 
     for table_name in sorted_tables:
         meta = schema_info[table_name]

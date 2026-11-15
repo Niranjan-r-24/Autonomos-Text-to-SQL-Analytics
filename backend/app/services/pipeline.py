@@ -51,10 +51,27 @@ class TextToSqlPipeline:
 
         # 0. Intent Routing: Route document/knowledge queries to RAG
         q_lower = user_question.lower()
-        doc_cues = ("document", "policy", "pdf", "guide", "portfolio", "resume", "according to", "knowledge base", "what is the step", "steps to", "master prompt", "checklist", "handbook", "procedure")
+        doc_cues = (
+            "document", "policy", "pdf", "docx", "guide", "portfolio", "resume",
+            "according to", "knowledge base", "what is the step", "steps to",
+            "master prompt", "checklist", "handbook", "procedure", "contract",
+            "manual", "instructions", "faq", "terms", "notes"
+        )
 
-        is_doc_query = any(c in q_lower for c in doc_cues) or (
-            rag_service.has_documents and any(c in q_lower for c in ["in the document", "in the pdf", "in the policy", "in the guide", "from the document", "from the manual", "knowledge base"])
+        doc_names = [d["filename"].lower() for d in rag_service.list_documents()]
+        mentions_doc_name = any(
+            (dn in q_lower or (len(dn.split(".")[0]) >= 3 and dn.split(".")[0] in q_lower))
+            for dn in doc_names
+        )
+
+        is_doc_query = mentions_doc_name or any(c in q_lower for c in doc_cues) or (
+            rag_service.has_documents and any(
+                c in q_lower for c in [
+                    "in the document", "in the pdf", "in the docx", "in the policy",
+                    "in the guide", "from the document", "from the manual", "knowledge base",
+                    "from document", "uploaded file", "uploaded document"
+                ]
+            )
         )
 
         if is_doc_query and rag_service.has_documents:

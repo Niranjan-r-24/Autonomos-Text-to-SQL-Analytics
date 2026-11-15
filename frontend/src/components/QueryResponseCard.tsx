@@ -12,6 +12,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 import { BusinessInsightsPanel, BusinessInsightsData } from './BusinessInsightsPanel';
+import { NaturalLanguageAnswer, CitationItem } from './NaturalLanguageAnswer';
 
 interface QueryResponseCardProps {
   question: string;
@@ -24,6 +25,8 @@ interface QueryResponseCardProps {
   rowCount?: number;
   executionTimeSec?: number;
   sqlExecutionTimeMs?: number;
+  route?: 'sql' | 'rag' | string;
+  citations?: CitationItem[];
   visualization?: {
     chart_type?: string;
     x_axis?: string;
@@ -54,6 +57,8 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
   rowCount,
   executionTimeSec,
   sqlExecutionTimeMs,
+  route = 'sql',
+  citations = [],
   visualization,
   onRunCustomSql,
   isExecuting = false,
@@ -387,26 +392,18 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
           ORDER 0: NATURAL LANGUAGE ANSWER
           Display this dynamic human-readable business answer above result table, charts, and analytics
           ========================================================================= */}
-      {insights?.direct_answer && (
+      {(insights?.direct_answer || insights?.summary || route === 'rag') && (
         <section className="w-full">
-          <div className={`w-full ${insights.status === 'empty' ? 'bg-amber-50/70 border-amber-300/80' : 'bg-linear-to-r from-[#ECFDF5] via-[#F0FDF4] to-[#FFFFFF] border-[#10B981]/50'} border-2 rounded-2xl p-4 sm:p-5 shadow-xs space-y-2 transition-all`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className={`w-6 h-6 rounded-lg ${insights.status === 'empty' ? 'bg-amber-500 text-white' : 'bg-[#10B981] text-white'} flex items-center justify-center shadow-2xs`}>
-                  <Sparkles className="w-3.5 h-3.5" />
-                </div>
-                <span className={`text-xs font-bold uppercase tracking-wider ${insights.status === 'empty' ? 'text-amber-800' : 'text-[#047857]'}`}>
-                  Natural Language Answer
-                </span>
-              </div>
-              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${insights.status === 'empty' ? 'text-amber-800 bg-amber-100/70 border-amber-300' : 'text-[#047857] bg-[#ECFDF5] border-[#10B981]/30'}`}>
-                {insights.status === 'empty' ? 'Zero Matches' : 'Live Business Answer'}
-              </span>
-            </div>
-            <p className={`text-base sm:text-lg font-bold ${insights.status === 'empty' ? 'text-amber-900' : 'text-[#064E3B]'} leading-snug`}>
-              {insights.direct_answer}
-            </p>
-          </div>
+          <NaturalLanguageAnswer
+            answer={insights?.direct_answer}
+            summary={insights?.summary}
+            status={insights?.status || (rows.length === 0 ? 'empty' : 'success')}
+            question={question}
+            generatedBy={insights?.generated_by || generatedBy}
+            isLoading={isExecuting}
+            route={route}
+            citations={citations}
+          />
         </section>
       )}
 
