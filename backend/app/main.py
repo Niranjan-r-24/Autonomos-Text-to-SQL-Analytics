@@ -555,9 +555,6 @@ def delete_rag_document(filename: str):
     except Exception as e:
         logger.error("Failed to delete document '%s': %s", filename, str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error("Failed to list RAG documents: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

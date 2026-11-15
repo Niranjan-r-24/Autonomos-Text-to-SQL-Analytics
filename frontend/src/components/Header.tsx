@@ -12,6 +12,7 @@ interface HeaderProps {
   onOpenUploadModal: () => void;
   onReSeed?: () => void;
   tableCount?: number;
+  docCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,6 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenUploadModal,
   onReSeed,
   tableCount = 4,
+  docCount = 0,
 }) => {
   const [isActionsOpen, setIsActionsOpen] = useState(false);
 
@@ -69,14 +71,19 @@ export const Header: React.FC<HeaderProps> = ({
               <span>Schema</span>
             </button>
 
-            {/* Upload Dataset */}
+            {/* Upload Dataset & Documents */}
             <button
               onClick={onOpenUploadModal}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#F8FAFC] hover:bg-[#F1F5F9] text-[#334155] hover:text-[#0F172A] text-xs font-semibold border border-[#E2E8F0] transition-colors cursor-pointer"
-              title="Upload dataset (.csv, .xlsx, .json, .sqlite, etc.)"
+              title="Upload datasets or knowledge documents (.pdf, .docx, .txt, .csv)"
             >
               <UploadCloud className="w-3.5 h-3.5 text-[#10B981]" />
-              <span>Upload Dataset</span>
+              <span>Upload & Docs</span>
+              {docCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-[#ECFDF5] text-[#047857] text-[10px] font-bold border border-[#10B981]/30">
+                  {docCount}
+                </span>
+              )}
             </button>
 
             {/* Provider & API Key Settings */}

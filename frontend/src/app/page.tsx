@@ -26,15 +26,17 @@ export default function Home() {
   // Data & Execution states
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
   const [activeTable, setActiveTable] = useState<string | null>(null);
+  const [availableDocuments, setAvailableDocuments] = useState<any[]>([]);
   const [pipelineResult, setPipelineResult] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Request ID guard against out-of-order race conditions
   const activeRequestIdRef = useRef<number>(0);
 
-  // Fetch DB Schema on initial load
+  // Fetch DB Schema & Document Availability on initial load
   useEffect(() => {
     fetchSchema();
+    fetchDocuments();
   }, []);
 
   const fetchSchema = async () => {
@@ -46,6 +48,24 @@ export default function Home() {
     } catch (err) {
       console.error('Failed to load schema:', err);
     }
+  };
+
+  const fetchDocuments = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/api/rag/documents`);
+      if (res.data && res.data.documents) {
+        setAvailableDocuments(res.data.documents);
+      }
+    } catch (err) {
+      console.error('Failed to load available documents:', err);
+    }
+  };
+
+  const handleQueryDocument = (docName: string) => {
+    const targetQuery = `According to the document ${docName}, what are the key requirements and details?`;
+    setQuery(targetQuery);
+    setIsUploadModalOpen(false);
+    handleRunQuery(targetQuery);
   };
 
   const handleReSeed = async () => {
@@ -61,6 +81,7 @@ export default function Home() {
   };
 
   const handleUploadSuccess = (tableName: string, updatedSchema: Record<string, any>) => {
+    fetchDocuments();
     if (tableName !== 'knowledge_base') {
       setActiveTable(tableName);
     }
@@ -180,6 +201,7 @@ export default function Home() {
         onOpenUploadModal={() => setIsUploadModalOpen(true)}
         onReSeed={handleReSeed}
         tableCount={tableList.length || 4}
+        docCount={availableDocuments.length}
       />
 
       {/* Main Container */}
@@ -277,11 +299,12 @@ export default function Home() {
         setProvider={setProvider}
       />
 
-      {/* Custom Dataset Upload Modal */}
+      {/* Custom Dataset & Document Upload Modal */}
       <FileUploadModal
         isOpen={isUploadModalOpen}
         onClose={() => setIsUploadModalOpen(false)}
         onUploadSuccess={handleUploadSuccess}
+        onQueryDocument={handleQueryDocument}
       />
     </div>
   );
