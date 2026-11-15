@@ -282,6 +282,42 @@ def execute_custom_sql(req: ExecuteSqlRequest):
 
 
 
+def resolve_clean_table_name(filename: str) -> str:
+    """
+    Normalizes dataset filenames into clean, standard SQL table names.
+    Automatically handles browser duplicate suffixes like (1), _1, copy, etc.,
+    and maps common entity datasets to standard relational tables.
+    """
+    base_name = os.path.splitext(filename)[0]
+    raw = re.sub(r"[\s_\-\(\)]+\d+[\)\_]?$", "", base_name, flags=re.IGNORECASE).strip()
+    raw = re.sub(r"[\s_\-]+copy\b", "", raw, flags=re.IGNORECASE).strip()
+    raw_lower = raw.lower().replace("-", "_").replace(" ", "_")
+
+    if "customer" in raw_lower and "order" not in raw_lower:
+        return "customers"
+    if "product" in raw_lower or ("item" in raw_lower and "order" not in raw_lower):
+        return "products"
+    if "order_item" in raw_lower or "orderitem" in raw_lower or ("order" in raw_lower and "item" in raw_lower):
+        return "order_items"
+    if "order" in raw_lower:
+        return "orders"
+    if "payment" in raw_lower:
+        return "payments"
+    if "ticket" in raw_lower or "support" in raw_lower or "complaint" in raw_lower:
+        return "support_tickets"
+    if "employee" in raw_lower or "staff" in raw_lower:
+        return "employees"
+    if "sale" in raw_lower and "order" not in raw_lower:
+        return "sales"
+    if "audit" in raw_lower or ("log" in raw_lower and "catalog" not in raw_lower):
+        return "audit_logs"
+
+    clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw).strip("_").lower()
+    if not clean or clean[0].isdigit():
+        clean = f"dataset_{clean}"
+    return clean
+
+
 @app.post("/api/upload")
 async def upload_dataset(file: UploadFile = File(...)):
     """
@@ -301,12 +337,7 @@ async def upload_dataset(file: UploadFile = File(...)):
 
     filename = file.filename
     ext = os.path.splitext(filename)[1].lower()
-    base_name = os.path.splitext(filename)[0]
-    
-    # Generate clean SQL-compliant table name
-    clean_table_name = re.sub(r"[^a-zA-Z0-9_]", "_", base_name).strip("_").lower()
-    if not clean_table_name or clean_table_name[0].isdigit():
-        clean_table_name = f"dataset_{clean_table_name}"
+    clean_table_name = resolve_clean_table_name(filename)
 
     contents = await file.read()
 

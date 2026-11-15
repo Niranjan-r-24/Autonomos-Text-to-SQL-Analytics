@@ -115,3 +115,37 @@ class TestUploadedEcommerceCSVs:
             assert tbl in res["sql"].lower()
             assert "audit_logs" not in res["sql"].lower()
             assert tbl in res["insights"]["direct_answer"].lower()
+
+    def test_resolve_clean_table_name_browser_duplicates(self):
+        """Browser copy numbers like (1), _1, -copy must resolve to canonical entity tables."""
+        from backend.app.main import resolve_clean_table_name
+        assert resolve_clean_table_name("customers (1).csv") == "customers"
+        assert resolve_clean_table_name("customers_1.csv") == "customers"
+        assert resolve_clean_table_name("my_customers.csv") == "customers"
+        assert resolve_clean_table_name("products (2).csv") == "products"
+        assert resolve_clean_table_name("orders (1).csv") == "orders"
+        assert resolve_clean_table_name("order_items (1).csv") == "order_items"
+        assert resolve_clean_table_name("payments (1).csv") == "payments"
+        assert resolve_clean_table_name("support_tickets (1).csv") == "support_tickets"
+        assert resolve_clean_table_name("fleet_inventory (1).csv") == "fleet_inventory"
+
+    def test_entity_count_queries_never_return_audit_logs(self, schema):
+        """All entity count questions must query their respective tables and never audit_logs."""
+        pipeline = TextToSqlPipeline(provider="fallback")
+        queries = [
+            ("how many orders in database", "orders"),
+            ("how many customers are in the database", "customers"),
+            ("how many products in database", "products"),
+            ("how many payments in database", "payments"),
+            ("how many support tickets in database", "support_tickets"),
+        ]
+        for q, expected_tbl in queries:
+            res = pipeline.run(q)
+            assert res["success"] is True, f"Query '{q}' failed: {res.get('error')}"
+            assert expected_tbl in res["sql"].lower(), f"Query '{q}' generated SQL '{res['sql']}', expected '{expected_tbl}'"
+            assert "audit_logs" not in res["sql"].lower()
+            assert res["row_count"] == 1
+            assert res["insights"]["direct_answer"] is not None
+            assert expected_tbl in res["insights"]["direct_answer"].lower() or any(
+                w in res["insights"]["direct_answer"].lower() for w in ["order", "customer", "product", "payment", "ticket"]
+            )

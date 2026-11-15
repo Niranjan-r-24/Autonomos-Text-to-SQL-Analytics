@@ -128,7 +128,7 @@ export default function Home() {
       if (currentRequestId !== activeRequestIdRef.current) return;
 
       if (res.data) {
-        setPipelineResult(res.data);
+        setPipelineResult({ ...res.data, _reqId: currentRequestId });
         if (!res.data.success && res.data.error) {
           setErrorMessage(res.data.error);
         }
@@ -166,6 +166,7 @@ export default function Home() {
         if (res.data.success) {
           setPipelineResult((prev: any) => ({
             ...prev,
+            _reqId: currentRequestId,
             sql: customSql,
             rows: res.data.rows,
             columns: res.data.columns,
@@ -263,7 +264,7 @@ export default function Home() {
         {pipelineResult && !isExecuting && (
           <section className="w-full">
             <QueryResponseCard
-              key={`${pipelineResult.question || query}-${pipelineResult.sql}-${pipelineResult.rows?.length}-${pipelineResult.columns?.join(',')}`}
+              key={`query-card-${pipelineResult._reqId || 0}-${pipelineResult.sql}-${pipelineResult.rows?.length}-${pipelineResult.columns?.join(',')}`}
               question={pipelineResult.question || query}
               sql={pipelineResult.sql || ''}
               explanation={pipelineResult.explanation || ''}

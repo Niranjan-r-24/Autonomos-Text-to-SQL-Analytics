@@ -30,7 +30,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   onQueryDocument,
 }) => {
   const [activeTab, setActiveTab] = useState<'upload' | 'documents'>('upload');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatusText, setUploadStatusText] = useState('Uploading & Processing...');
   const [uploadResult, setUploadResult] = useState<any>(null);
@@ -44,7 +44,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   // Fetch document availability and reset state when modal opens
   useEffect(() => {
     if (isOpen) {
-      setSelectedFile(null);
+      setSelectedFiles([]);
       setUploadResult(null);
       setErrorMessage(null);
       if (fileInputRef.current) {
@@ -106,8 +106,8 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedFiles(Array.from(e.target.files));
       setErrorMessage(null);
       setUploadResult(null);
     }
@@ -116,48 +116,76 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setSelectedFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      setSelectedFiles(Array.from(e.dataTransfer.files));
       setErrorMessage(null);
       setUploadResult(null);
     }
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
 
     setIsUploading(true);
     setErrorMessage(null);
     setUploadResult(null);
 
-    const isDoc = getFileCategory(selectedFile.name) === 'document';
-    setUploadStatusText(
-      isDoc
-        ? 'Extracting text, chunking & indexing into RAG vector store...'
-        : 'Importing dataset & building database schema...'
-    );
-
-    const formData = new FormData();
-    formData.append('file', selectedFile);
+    const importedTables: string[] = [];
+    let latestSchema: Record<string, any> = {};
+    let lastUploadData: any = null;
 
     try {
-      const res = await axios.post(`${API_BASE}/api/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        const isDoc = getFileCategory(file.name) === 'document';
+        setUploadStatusText(
+          selectedFiles.length > 1
+            ? `[${i + 1}/${selectedFiles.length}] Processing ${file.name}...`
+            : isDoc
+            ? 'Extracting text, chunking & indexing into RAG vector store...'
+            : 'Importing dataset & building database schema...'
+        );
 
-      if (res.data && res.data.success) {
-        setUploadResult(res.data);
-        await fetchDocuments();
-        setSelectedFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await axios.post(`${API_BASE}/api/upload`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+
+        if (res.data && res.data.success) {
+          lastUploadData = res.data;
+          if (res.data.table_name && res.data.table_name !== 'knowledge_base') {
+            importedTables.push(res.data.table_name);
+          }
+          if (res.data.schema) {
+            latestSchema = res.data.schema;
+          }
+        } else {
+          throw new Error(res.data?.message || `Failed to process ${file.name}`);
         }
-        if (onUploadSuccess) {
-          onUploadSuccess(res.data.table_name || 'knowledge_base', res.data.schema || {});
-        }
-      } else {
-        setErrorMessage(res.data?.message || 'File processing failed.');
-        setUploadResult(null);
+      }
+
+      await fetchDocuments();
+      setSelectedFiles([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+
+      const summaryResult = {
+        ...lastUploadData,
+        message:
+          importedTables.length > 1
+            ? `Successfully imported ${importedTables.length} datasets: ${importedTables.join(', ')}.`
+            : lastUploadData?.message || 'File uploaded successfully.',
+        imported_tables: importedTables,
+        schema: latestSchema,
+      };
+      setUploadResult(summaryResult);
+
+      const primaryTable = importedTables[0] || lastUploadData?.table_name || 'knowledge_base';
+      if (onUploadSuccess) {
+        onUploadSuccess(primaryTable, latestSchema);
       }
     } catch (err: any) {
       const msg = err.response?.data?.detail || err.message || 'File upload failed.';
@@ -279,7 +307,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
               className={`p-7 rounded-2xl border-2 border-dashed transition-all cursor-pointer text-center flex flex-col items-center justify-center space-y-2.5 ${
                 isDragOver
                   ? 'border-[#10B981] bg-[#ECFDF5]/50'
-                  : selectedFile
+                  : selectedFiles.length > 0
                   ? 'border-[#10B981]/50 bg-[#F8FAFC]'
                   : 'border-[#CBD5E1] bg-[#F8FAFC] hover:border-[#10B981]/60'
               }`}
@@ -287,6 +315,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 onChange={handleFileChange}
                 accept=".csv,.xlsx,.xls,.json,.db,.sqlite,.sqlite3,.sql,.tsv,.txt,.parquet,.pdf,.docx,.doc,.md"
                 className="hidden"
@@ -296,25 +325,27 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
                 <FileText className="w-5 h-5" />
               </div>
 
-              {selectedFile ? (
+              {selectedFiles.length > 0 ? (
                 <div className="space-y-1">
                   <span className="text-xs font-bold text-[#0F172A] block truncate max-w-md">
-                    {selectedFile.name}
+                    {selectedFiles.length === 1
+                      ? selectedFiles[0].name
+                      : `${selectedFiles.length} files selected: ${selectedFiles.map((f) => f.name).join(', ')}`}
                   </span>
                   <div className="flex items-center justify-center gap-2">
                     <span className="text-[10px] text-[#64748B] font-mono">
-                      {(selectedFile.size / 1024).toFixed(1)} KB
+                      {(selectedFiles.reduce((acc, f) => acc + f.size, 0) / 1024).toFixed(1)} KB total
                     </span>
                     <span
                       className={`text-[10px] font-bold px-2 py-0.2 rounded-full border ${
-                        getFileCategory(selectedFile.name) === 'document'
+                        selectedFiles.some((f) => getFileCategory(f.name) === 'document')
                           ? 'bg-[#ECFDF5] text-[#047857] border-[#10B981]/30'
                           : 'bg-blue-50 text-blue-700 border-blue-200'
                       }`}
                     >
-                      {getFileCategory(selectedFile.name) === 'document'
-                        ? 'Knowledge Document (RAG)'
-                        : 'Structured Dataset (SQL)'}
+                      {selectedFiles.length === 1
+                        ? (getFileCategory(selectedFiles[0].name) === 'document' ? 'Knowledge Document (RAG)' : 'Structured Dataset (SQL)')
+                        : `${selectedFiles.length} Datasets & Files`}
                     </span>
                   </div>
                 </div>
@@ -406,8 +437,8 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
               {uploadResult ? (
                 <button
                   onClick={() => {
-                    if (isDocumentResult && onQueryDocument && selectedFile) {
-                      onQueryDocument(selectedFile.name);
+                    if (isDocumentResult && onQueryDocument && selectedFiles.length > 0) {
+                      onQueryDocument(selectedFiles[0].name);
                     }
                     onClose();
                   }}
@@ -419,7 +450,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
               ) : (
                 <button
                   onClick={handleUpload}
-                  disabled={!selectedFile || isUploading}
+                  disabled={selectedFiles.length === 0 || isUploading}
                   className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] text-xs font-bold shadow-md shadow-[#10B981]/20 transition-all cursor-pointer disabled:shadow-none"
                 >
                   {isUploading ? (

@@ -239,13 +239,13 @@ JSON Response Format:
             matching_tbl = next((t for t in schema_info.keys() if t.lower() == candidate_tbl or t.lower().rstrip("s") == candidate_tbl.rstrip("s")), None)
             if matching_tbl and (
                 any(k in q for k in ["first", "sample", "all rows", "show rows", "show first", "browse", "records from", "rows from", "view", "display"])
-                or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom"])
+                or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "how many", "number of", "total number", "how much", "what is the total"])
             ):
                 candidate_browse_tbl = matching_tbl
         elif (
             any(k in q for k in ["give me all", "show all", "list all", "get all", "all ", "browse ", "display "])
             or q.startswith("show ") or q.startswith("list ") or q.startswith("all ") or q in [t.lower() for t in schema_info.keys()]
-        ) and not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "revenue", "sales", "spend", "sold"]):
+        ) and not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "revenue", "sales", "spend", "sold", "how many", "number of", "total number"]):
             for t in schema_info.keys():
                 tl = t.lower()
                 if tl in ("sqlite_sequence", "audit_logs"):
