@@ -227,7 +227,7 @@ JSON Response Format:
         table_synonyms = {
             "customers": ["customer", "customers", "client", "clients", "user", "users", "buyer", "buyers", "subscriber", "subscribers", "account", "accounts", "member", "members"],
             "products": ["product", "products", "item", "items", "catalog", "catalogue", "merchandise", "goods"],
-            "employees": ["employee", "employees", "staff", "worker", "workers", "headcount", "personnel", "engineer", "engineers"],
+            "employees": ["employee", "employees", "staff", "worker", "workers", "headcount", "personnel", "engineer", "engineers", "salary", "salaries"],
             "order_items": ["order item", "order items", "line item", "line items", "order_item", "order_items"],
             "orders": ["order", "orders", "shipment", "shipments"],
             "payments": ["payment", "payments", "paid", "upi", "card"],
@@ -238,31 +238,26 @@ JSON Response Format:
 
         target_table_name = None
 
-        # Prioritize uploaded active_table unless the query explicitly specifies a canonical table (e.g. 'from customers')
-        if active_table and active_table in schema_info and active_table.lower() not in canonical_tables:
-            explicit_other = any(
-                f"from {tbl}" in q or f"table {tbl}" in q or f"in {tbl}" in q
-                for tbl in canonical_tables if tbl in schema_info
-            )
-            if not explicit_other:
-                target_table_name = active_table
+        # 1. Match semantic table synonyms FIRST so explicit question intent always wins
+        for tbl, syns in table_synonyms.items():
+            if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
+                target_table_name = tbl
+                break
 
-        # 1. Match semantic table synonyms
-        if not target_table_name:
-            for tbl, syns in table_synonyms.items():
-                if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
-                    target_table_name = tbl
-                    break
-
-        # 2. Match exact schema table names
+        # 2. Match exact schema table names (e.g. uploaded custom tables like fleet_inventory)
         if not target_table_name:
             for tbl in schema_info.keys():
                 tbl_l = tbl.lower()
-                if tbl_l == "sqlite_sequence":
+                if tbl_l in ("sqlite_sequence", "audit_logs"):
                     continue
                 if tbl_l in q_tokens or tbl_l in q or tbl_l.replace("_", " ") in q or tbl_l.rstrip("s") in q_tokens:
                     target_table_name = tbl
                     break
+
+        # 3. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
+        if not target_table_name and active_table and active_table in schema_info and active_table.lower() != "sqlite_sequence":
+            if active_table.lower() != "audit_logs" or any(k in q for k in ["audit", "log", "security", "ip"]):
+                target_table_name = active_table
 
         # Step A.1: Direct Entity Count Pattern (e.g. "How many customers are in the database?", "How many products?", "Count of employees")
         is_count_intent = (
@@ -534,13 +529,33 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern: Products by Revenue / Units Sold via order_items (Multi-Table Relational Join for E-commerce Datasets)
-        if (
-            "order_items" in schema_info
-            and "products" in schema_info
-            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q or "revenue" in q or "sales" in q or "sold" in q or "quantity" in q)
-            and not ("inventory" in q or "stock" in q or "customer" in q or "ticket" in q)
+        # Pattern: Employees ranking by salary or department salary
+        if self._has_cols(schema_info, "employees", ["name", "department", "salary"]) and (
+            any(k in q for k in ["employee", "staff", "worker", "salary", "paid", "compensation", "earn", "earning"])
         ):
+            if any(k in q for k in ["department", "dept"]) and any(k in q for k in ["avg", "average", "mean"]):
+                sql = "SELECT department, AVG(salary) AS avg_salary, COUNT(id) AS employee_count FROM employees GROUP BY department ORDER BY avg_salary DESC;"
+                explanation = "Groups employees by department to compute average salary and headcount."
+                return sql, explanation
+            else:
+                sql = f"SELECT name, department, salary FROM employees ORDER BY salary {direction}{limit_clause};"
+                explanation = f"Retrieves employees ranked by salary in {direction_word} order."
+                return sql, explanation
+
+        # Pattern: Products by Revenue / Units Sold via order_items (Multi-Table Relational Join for E-commerce Datasets)
+        has_order_items = "order_items" in schema_info and "products" in schema_info
+        is_ecommerce_csv = (
+            has_order_items
+            and (
+                "sales" not in schema_info
+                or active_table in ("order_items", "orders")
+                or (self._resolve_col(schema_info, "products", ["product_name"]) is not None and "sales" not in schema_info)
+                or any(k in q for k in ["order item", "order items", "order_item", "order_items", "line_total", "line total"])
+            )
+            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q or "revenue" in q or "sales" in q or "sold" in q or "quantity" in q)
+            and not ("inventory" in q or "stock" in q or "customer" in q or "ticket" in q or "employee" in q or "salary" in q or "staff" in q or "worker" in q or "payment" in q or "audit" in q)
+        )
+        if is_ecommerce_csv:
             oi_p_id = self._resolve_col(schema_info, "order_items", ["product_id", "item_id", "id"])
             oi_rev = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount", "revenue"])
             oi_qty = self._resolve_col(schema_info, "order_items", ["quantity", "qty", "units"])
@@ -817,9 +832,13 @@ JSON Response Format:
             limit_val = 10
             has_explicit_limit = False
 
-        # 2. Multi-Factor Table Resolution (if target_table is not explicitly locked)
+        # 2. Multi-Factor Table Resolution (if target_table is not explicitly locked, or if audit_logs was passed for a business query)
         canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
-        if not target_table or target_table not in schema_info:
+        if (
+            not target_table
+            or target_table not in schema_info
+            or (target_table.lower() == "audit_logs" and not any(k in q for k in ["audit", "log", "security", "ip", "fail"]))
+        ):
             scores = {}
             for tbl_name, meta in schema_info.items():
                 tbl_clean = tbl_name.lower()

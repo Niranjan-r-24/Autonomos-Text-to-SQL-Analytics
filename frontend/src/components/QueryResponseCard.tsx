@@ -392,20 +392,20 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
           ORDER 0: NATURAL LANGUAGE ANSWER
           Display this dynamic human-readable business answer above result table, charts, and analytics
           ========================================================================= */}
-      {(insights?.direct_answer || insights?.summary || route === 'rag') && (
-        <section className="w-full">
-          <NaturalLanguageAnswer
-            answer={insights?.direct_answer}
-            summary={insights?.summary}
-            status={insights?.status || (rows.length === 0 ? 'empty' : 'success')}
-            question={question}
-            generatedBy={insights?.generated_by || generatedBy}
-            isLoading={isExecuting}
-            route={route}
-            citations={citations}
-          />
-        </section>
-      )}
+      <section className="w-full">
+        <NaturalLanguageAnswer
+          answer={insights?.direct_answer}
+          summary={insights?.summary}
+          status={insights?.status || (rows.length === 0 ? 'empty' : 'success')}
+          question={question}
+          generatedBy={insights?.generated_by || generatedBy}
+          isLoading={isExecuting}
+          route={route}
+          citations={citations}
+          rows={rows}
+          columns={effectiveColumns}
+        />
+      </section>
 
       {/* =========================================================================
           ORDER 1: BUSINESS ANSWER (EXECUTIVE INSIGHTS PANEL)

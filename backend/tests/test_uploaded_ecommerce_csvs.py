@@ -3,15 +3,41 @@ Test suite verifying end-to-end multi-table query generation, schema grounding,
 and execution on uploaded custom e-commerce CSV datasets (products, order_items, orders, customers, payments, support_tickets).
 Guarantees column resolution (e.g. product_name instead of p.name, product_id instead of p.id) and self-correction.
 """
+import os
 import pytest
+import pandas as pd
 from backend.app.services.pipeline import TextToSqlPipeline
 from backend.app.services.schema_service import get_db_schema_info
 from backend.app.services.self_corrector import SelfCorrectionService
 from backend.app.services.sql_executor import execute_safe_query
+from backend.app.db.database import engine
+
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_ecommerce_tables():
+    """Ensures uploaded e-commerce datasets are loaded into the database."""
+    base = r"C:\Users\sindhu\.gemini\antigravity\brain\c1278eb5-9de5-4c62-91c2-aa0787e4c390\.user_uploaded"
+    mapping = {
+        "customers": "media_1794740204311_c2dbe2da.csv",
+        "products": "media_1794740204333_28abc795.csv",
+        "order_items": "media_1794740204350_ace4f008.csv",
+        "payments": "media_1794740204352_3c5f2f78.csv",
+        "orders": "media_1794740204356_49b5def4.csv",
+    }
+    with engine.begin() as conn:
+        for tbl, fname in mapping.items():
+            fpath = os.path.join(base, fname)
+            if os.path.exists(fpath):
+                df = pd.read_csv(fpath)
+                df.to_sql(tbl, con=conn, if_exists="replace", index=False)
+    yield
+    from backend.app.db.seed import seed_database
+    seed_database()
+    get_db_schema_info(force_refresh=True)
 
 
 @pytest.fixture(scope="module")
-def schema():
+def schema(setup_ecommerce_tables):
     return get_db_schema_info(force_refresh=True)
 
 
@@ -19,7 +45,7 @@ class TestUploadedEcommerceCSVs:
     def test_top_revenue_products_multi_table_join(self, schema):
         """'top 5 revenue products' must join order_items and products using actual columns."""
         pipeline = TextToSqlPipeline(provider="fallback")
-        res = pipeline.run("top 5 revenue products", active_table="products")
+        res = pipeline.run("top 5 revenue products", active_table="order_items")
         
         assert res["success"] is True
         assert res["row_count"] >= 1

@@ -78,9 +78,22 @@ def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
                     "sample_rows": sample_rows
                 }
 
-        logger.info("Successfully retrieved schema for %d tables: %s", len(schema_info), list(schema_info.keys()))
-        _SCHEMA_CACHE = schema_info
-        return schema_info
+        # Sort schema_info so audit_logs is strictly last, uploaded tables first, canonical business tables next
+        canonical_order = ["orders", "order_items", "customers", "products", "sales", "employees", "payments", "support_tickets"]
+        def _table_priority(tbl: str):
+            tl = tbl.lower()
+            if tl == "audit_logs":
+                return (3, tl)
+            if tl in canonical_order:
+                return (1, canonical_order.index(tl))
+            return (0, tl)
+
+        sorted_keys = sorted(schema_info.keys(), key=_table_priority)
+        ordered_schema_info = {k: schema_info[k] for k in sorted_keys}
+
+        logger.info("Successfully retrieved schema for %d tables: %s", len(ordered_schema_info), list(ordered_schema_info.keys()))
+        _SCHEMA_CACHE = ordered_schema_info
+        return ordered_schema_info
 
     except Exception as e:
         logger.error("Error retrieving database schema: %s", str(e), exc_info=True)
