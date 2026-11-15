@@ -115,7 +115,20 @@ export default function Home() {
     setErrorMessage(null);
     setPipelineResult(null);
 
-    const effectiveTable = overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined);
+    let effectiveTable = overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined);
+    if (effectiveTable && !overrideTable) {
+      const qLower = targetQuery.toLowerCase();
+      // If activeTable is locked to a table, but user typed a question mentioning another table or count query, release lock
+      const otherTables = Object.keys(schemaData).filter(
+        (t) => t.toLowerCase() !== effectiveTable?.toLowerCase() && !['audit_logs', 'sqlite_sequence'].includes(t.toLowerCase())
+      );
+      const mentionsOther = otherTables.some(
+        (t) => qLower.includes(t.toLowerCase()) || qLower.includes(t.toLowerCase().replace(/s$/, ''))
+      );
+      if (mentionsOther || effectiveTable.toLowerCase() === 'audit_logs') {
+        effectiveTable = undefined;
+      }
+    }
 
     try {
       const res = await axios.post(`${API_BASE}/api/query`, {
@@ -131,6 +144,8 @@ export default function Home() {
         setPipelineResult({ ...res.data, _reqId: currentRequestId });
         if (!res.data.success && res.data.error) {
           setErrorMessage(res.data.error);
+        } else {
+          setErrorMessage(null);
         }
       }
     } catch (err: any) {

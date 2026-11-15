@@ -53,7 +53,7 @@ class SelfCorrectionService:
                 - correction_history (List[Dict[str, Any]])
                 - error (Optional[str])
         """
-        current_sql = initial_sql
+        current_sql = self._pre_heal_sql(initial_sql, schema_info)
         correction_history: List[Dict[str, Any]] = []
 
         for attempt in range(1, self.max_retries + 1):
@@ -115,6 +115,45 @@ class SelfCorrectionService:
             "error": exec_res.get("error") or "Maximum self-correction retries reached without successful execution."
         }
 
+    def _pre_heal_sql(self, sql: str, schema_info: Dict[str, Any]) -> str:
+        """Pre-normalizes SQL query against active database schema to prevent common column mismatches."""
+        if not schema_info or not sql:
+            return sql
+        fixed = sql
+
+        if "products" in schema_info:
+            p_cols = {c["name"].lower(): c["name"] for c in schema_info["products"].get("columns", [])}
+            actual_p_name = next((p_cols[k] for k in ["product_name", "name", "title", "item_name"] if k in p_cols), None)
+            if actual_p_name and "name" not in p_cols:
+                fixed = re.sub(r"\b(?:p|products)\.name\b", f"p.{actual_p_name}", fixed, flags=re.IGNORECASE)
+            actual_p_id = next((p_cols[k] for k in ["product_id", "id", "item_id"] if k in p_cols), None)
+            if actual_p_id and "id" not in p_cols:
+                fixed = re.sub(r"\b(?:p|products)\.id\b", f"p.{actual_p_id}", fixed, flags=re.IGNORECASE)
+
+        if "customers" in schema_info:
+            c_cols = {c["name"].lower(): c["name"] for c in schema_info["customers"].get("columns", [])}
+            actual_c_name = next((c_cols[k] for k in ["customer_name", "name", "full_name"] if k in c_cols), None)
+            if actual_c_name and "name" not in c_cols:
+                fixed = re.sub(r"\b(?:c|customers)\.name\b", f"c.{actual_c_name}", fixed, flags=re.IGNORECASE)
+            actual_c_id = next((c_cols[k] for k in ["customer_id", "id", "user_id"] if k in c_cols), None)
+            if actual_c_id and "id" not in c_cols:
+                fixed = re.sub(r"\b(?:c|customers)\.id\b", f"c.{actual_c_id}", fixed, flags=re.IGNORECASE)
+
+        if "orders" in schema_info:
+            o_cols = {c["name"].lower(): c["name"] for c in schema_info["orders"].get("columns", [])}
+            actual_o_id = next((o_cols[k] for k in ["order_id", "id"] if k in o_cols), None)
+            if actual_o_id and "id" not in o_cols:
+                fixed = re.sub(r"\b(?:o|orders)\.id\b", f"o.{actual_o_id}", fixed, flags=re.IGNORECASE)
+
+        if "order_items" in schema_info:
+            oi_cols = {c["name"].lower(): c["name"] for c in schema_info["order_items"].get("columns", [])}
+            actual_oi_id = next((oi_cols[k] for k in ["order_item_id", "id"] if k in oi_cols), None)
+            if actual_oi_id and "id" not in oi_cols:
+                fixed = re.sub(r"\b(?:oi|order_items)\.id\b", f"oi.{actual_oi_id}", fixed, flags=re.IGNORECASE)
+
+        fixed = re.sub(r"COUNT\s*\(\s*s\.id\s*\)", "COUNT(*)", fixed, flags=re.IGNORECASE)
+        return fixed
+
     def heal_sql(
         self,
         failed_sql: str,
@@ -123,22 +162,29 @@ class SelfCorrectionService:
         schema_info: Dict[str, Any]
     ) -> Tuple[str, str]:
         """
-        Repairs failing SQL query using LLM reasoning (if API key available) or heuristic rule-based logic.
+        Repairs failing SQL query using deterministic heuristic rules first,
+        falling back to LLM diagnostic repair if available.
         """
-        # 1. Try LLM repair if provider key is available
+        # 1. Deterministic Rule-Based Self-Healing Heuristics (instant and schema-grounded)
+        healed_sql, rule_name = self._heuristic_heal(failed_sql, error_msg, schema_info, user_question)
+        if healed_sql and healed_sql.strip() != failed_sql.strip():
+            healed_sql = self._pre_heal_sql(healed_sql, schema_info)
+            return healed_sql, rule_name
+
+        # 2. Try LLM repair if provider key is available
         if self.api_key and self.provider != "fallback":
             try:
                 llm_sql = self._heal_with_llm(failed_sql, error_msg, user_question, schema_info)
                 if llm_sql:
                     cleaned = self._clean_sql(llm_sql)
-                    if cleaned and cleaned != failed_sql:
-                        return cleaned, "LLM Diagnostic Repair"
+                    if cleaned:
+                        cleaned = self._pre_heal_sql(cleaned, schema_info)
+                        if cleaned != failed_sql:
+                            return cleaned, "LLM Diagnostic Repair"
             except Exception as e:
                 logger.warning("LLM self-correction call failed: %s", str(e))
 
-        # 2. Deterministic Rule-Based Self-Healing Heuristics
-        healed_sql, rule_name = self._heuristic_heal(failed_sql, error_msg, schema_info, user_question)
-        return healed_sql, rule_name
+        return failed_sql, "No applicable repair heuristic found"
 
     def _heuristic_heal(
         self,

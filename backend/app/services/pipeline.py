@@ -178,7 +178,7 @@ class TextToSqlPipeline:
 
         # Step 1: Schema Inspection & Linking Agent
         t_schema = time.time()
-        schema_info = get_db_schema_info()
+        schema_info = get_db_schema_info(force_refresh=True)
         schema_time = round(time.time() - t_schema, 3)
 
         detected_tables = list(schema_info.keys())
@@ -202,6 +202,13 @@ class TextToSqlPipeline:
             generated_by = "Direct User SQL"
         else:
             sql_query, explanation, generated_by = self.generator.generate(user_question, schema_info, active_table=active_table)
+
+        # Strict security guard: Block audit_logs from ever being queried for non-audit questions
+        if "audit_logs" in sql_query.lower() and not any(k in user_question.lower() for k in ["audit", "security log"]):
+            logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for business tables.", user_question)
+            sql_query, explanation = self.generator._generate_deterministic(user_question, schema_info, active_table=None)
+            generated_by = "Deterministic Analytics Engine"
+
         gen_time = round(time.time() - t_gen, 3)
 
         agent_steps.append({

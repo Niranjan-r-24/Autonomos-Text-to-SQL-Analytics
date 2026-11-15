@@ -100,10 +100,11 @@ class SQLGenerator:
             try:
                 llm_sql, llm_explanation = self._generate_with_llm(user_question, schema_info, active_table=active_table)
                 if llm_sql:
-                    cleaned_sql = self._clean_sql(llm_sql)
-                    provider_label = "Gemini 1.5 Flash" if "gemini" in self.provider else "OpenAI GPT-4o"
-                    logger.info("Successfully generated SQL via %s: %s", provider_label, cleaned_sql)
-                    return cleaned_sql, llm_explanation, provider_label
+                    cleaned_sql = self._clean_sql(llm_sql, schema_info, user_question)
+                    if cleaned_sql:
+                        provider_label = "Gemini 1.5 Flash" if "gemini" in self.provider else "OpenAI GPT-4o"
+                        logger.info("Successfully generated SQL via %s: %s", provider_label, cleaned_sql)
+                        return cleaned_sql, llm_explanation, provider_label
             except Exception as e:
                 logger.warning("LLM generation failed, falling back to deterministic engine: %s", str(e))
 
@@ -271,7 +272,7 @@ JSON Response Format:
             "payments": ["payment", "payments", "paid", "upi", "card"],
             "support_tickets": ["ticket", "tickets", "complaint", "complaints", "support", "support ticket"],
             "sales": ["sale", "sales", "transaction", "transactions", "purchase", "purchases"],
-            "audit_logs": ["audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs", "security event", "security events", "failed login", "login failure", "security log"]
+            "audit_logs": ["audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs"]
         }
 
         target_table_name = None
@@ -294,7 +295,9 @@ JSON Response Format:
 
         # 3. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
         if not target_table_name and active_table and active_table in schema_info and active_table.lower() != "sqlite_sequence":
-            if active_table.lower() != "audit_logs" or any(k in q for k in ["audit", "log", "security", "ip"]):
+            if active_table.lower() != "audit_logs":
+                target_table_name = active_table
+            elif "audit" in q:
                 target_table_name = active_table
 
         # Step A.1: Direct Entity Count Pattern (e.g. "How many customers are in the database?", "How many products?", "Count of employees")
@@ -316,12 +319,12 @@ JSON Response Format:
             elif any(k in q for k in ["payment"]):
                 count_table = "payments" if "payments" in schema_info else target_table_name
             elif any(k in q for k in ["order"]):
-                count_table = "orders" if "orders" in schema_info else ("sales" if "sales" in schema_info else target_table_name)
+                count_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else ("sales" if "sales" in schema_info else target_table_name))
             elif any(k in q for k in ["sale", "transaction", "purchase"]):
                 count_table = "sales" if "sales" in schema_info else ("orders" if "orders" in schema_info else target_table_name)
-            elif any(k in q for k in ["audit", "log", "security event"]):
+            elif "audit" in q:
                 count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
-            elif target_table_name and target_table_name != "audit_logs":
+            elif target_table_name and target_table_name.lower() != "audit_logs":
                 count_table = target_table_name
 
             if count_table and count_table in schema_info:
@@ -532,7 +535,7 @@ JSON Response Format:
         ):
             c_plan = self._resolve_col(schema_info, "customers", ["plan", "tier"]) or f"c.{c_name}"
             sql = (
-                f"SELECT {c_plan}, p.{p_cat}, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count "
+                f"SELECT {c_plan}, p.{p_cat}, SUM(s.total_price) AS total_revenue, COUNT(*) AS sales_count "
                 f"FROM sales s "
                 f"JOIN customers c ON s.customer_id = c.{c_id} "
                 f"JOIN products p ON s.product_id = p.{p_id} "
@@ -675,7 +678,7 @@ JSON Response Format:
             cat_select = f", p.{p_cat}" if p_cat else ""
             cat_group = f", p.{p_cat}" if p_cat else ""
             sql = (
-                f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_rev}) AS total_revenue, COUNT(s.id) AS total_orders "
+                f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_rev}) AS total_revenue, COUNT(*) AS total_orders "
                 f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
                 f"{s_where}"
                 f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
@@ -978,15 +981,15 @@ JSON Response Format:
                 if tbl_clean not in canonical_tables and score > 0:
                     score += 120
 
-                if tbl_clean == "audit_logs" and not any(k in q for k in ["audit", "log", "security", "ip", "fail"]):
-                    score -= 500
+                if tbl_clean == "audit_logs":
+                    score = -999999 if "audit" not in q else score
 
                 scores[tbl_name] = score
 
             if not scores or max(scores.values()) <= 0:
                 # Do NOT default to audit_logs! Default to the table matching question domain keywords, or sales
                 business_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
-                safe_fallback = business_tables[0] if business_tables else list(schema_info.keys())[0]
+                safe_fallback = business_tables[0] if business_tables else "products"
 
                 if any(k in q for k in ["customer", "client", "user", "buyer", "people", "account", "subscriber"]):
                     target_table = "customers" if "customers" in schema_info else safe_fallback
@@ -994,11 +997,17 @@ JSON Response Format:
                     target_table = "employees" if "employees" in schema_info else safe_fallback
                 elif any(k in q for k in ["product", "item", "stock", "price", "category", "rating"]):
                     target_table = "products" if "products" in schema_info else safe_fallback
+                elif any(k in q for k in ["order", "orders"]):
+                    target_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else safe_fallback)
                 else:
                     uploaded = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
                     target_table = uploaded[0] if uploaded else ("sales" if "sales" in schema_info else safe_fallback)
             else:
                 target_table = max(scores, key=scores.get)
+
+        if target_table and target_table.lower() == "audit_logs" and "audit" not in q:
+            business_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+            target_table = business_tables[0] if business_tables else "products"
 
         table_meta = schema_info.get(target_table, {})
         cols_meta = table_meta.get("columns", [])
@@ -1249,10 +1258,56 @@ JSON Response Format:
             explanation = f"Retrieves the first {limit_val} records from the '{target_table}' table."
         return sql, explanation
 
-    def _clean_sql(self, raw_sql: str) -> str:
-        """Strips markdown fences and leading/trailing whitespace from SQL."""
+    def _clean_sql(self, raw_sql: str, schema_info: Optional[Dict[str, Any]] = None, user_question: Optional[str] = None) -> str:
+        """Strips markdown fences and leading/trailing whitespace from SQL, and normalizes columns to match schema."""
         sql = raw_sql.strip()
         sql = re.sub(r"^```sql\s*", "", sql, flags=re.IGNORECASE)
         sql = re.sub(r"^```\s*", "", sql)
         sql = re.sub(r"\s*```$", "", sql)
+        sql = sql.strip()
+
+        if not schema_info:
+            return sql
+
+        # 1. Block audit_logs if user question didn't ask for it
+        if user_question:
+            q_low = user_question.lower()
+            if "audit_logs" in sql.lower() and not any(k in q_low for k in ["audit", "security log"]):
+                logger.warning("Blocked LLM from querying audit_logs for question '%s'", user_question)
+                return ""
+
+        # 2. Schema Column Normalization: rewrite aliased columns to actual schema column names
+        if "products" in schema_info:
+            p_cols = {c["name"].lower(): c["name"] for c in schema_info["products"].get("columns", [])}
+            actual_name = next((p_cols[k] for k in ["product_name", "name", "title", "item_name"] if k in p_cols), None)
+            if actual_name and "name" not in p_cols:
+                sql = re.sub(r"\b(?:p|products)\.name\b", f"p.{actual_name}", sql, flags=re.IGNORECASE)
+            actual_id = next((p_cols[k] for k in ["product_id", "id", "item_id"] if k in p_cols), None)
+            if actual_id and "id" not in p_cols:
+                sql = re.sub(r"\b(?:p|products)\.id\b", f"p.{actual_id}", sql, flags=re.IGNORECASE)
+
+        if "customers" in schema_info:
+            c_cols = {c["name"].lower(): c["name"] for c in schema_info["customers"].get("columns", [])}
+            actual_c_name = next((c_cols[k] for k in ["customer_name", "name", "full_name"] if k in c_cols), None)
+            if actual_c_name and "name" not in c_cols:
+                sql = re.sub(r"\b(?:c|customers)\.name\b", f"c.{actual_c_name}", sql, flags=re.IGNORECASE)
+            actual_c_id = next((c_cols[k] for k in ["customer_id", "id", "user_id"] if k in c_cols), None)
+            if actual_c_id and "id" not in c_cols:
+                sql = re.sub(r"\b(?:c|customers)\.id\b", f"c.{actual_c_id}", sql, flags=re.IGNORECASE)
+
+        if "orders" in schema_info:
+            o_cols = {c["name"].lower(): c["name"] for c in schema_info["orders"].get("columns", [])}
+            actual_o_id = next((o_cols[k] for k in ["order_id", "id"] if k in o_cols), None)
+            if actual_o_id and "id" not in o_cols:
+                sql = re.sub(r"\b(?:o|orders)\.id\b", f"o.{actual_o_id}", sql, flags=re.IGNORECASE)
+
+        if "order_items" in schema_info:
+            oi_cols = {c["name"].lower(): c["name"] for c in schema_info["order_items"].get("columns", [])}
+            actual_oi_id = next((oi_cols[k] for k in ["order_item_id", "id"] if k in oi_cols), None)
+            if actual_oi_id and "id" not in oi_cols:
+                sql = re.sub(r"\b(?:oi|order_items)\.id\b", f"oi.{actual_oi_id}", sql, flags=re.IGNORECASE)
+
+        # 3. Fix COUNT(s.id) to COUNT(*)
+        sql = re.sub(r"COUNT\s*\(\s*s\.id\s*\)", "COUNT(*)", sql, flags=re.IGNORECASE)
+
         return sql.strip()

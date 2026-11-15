@@ -309,7 +309,7 @@ def resolve_clean_table_name(filename: str) -> str:
         return "employees"
     if "sale" in raw_lower and "order" not in raw_lower:
         return "sales"
-    if "audit" in raw_lower or ("log" in raw_lower and "catalog" not in raw_lower):
+    if "audit" in raw_lower:
         return "audit_logs"
 
     clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw).strip("_").lower()
@@ -458,7 +458,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                     "type": "document",
                     "rag_info": rag_info,
                     "documents": rag_service.list_documents(),
-                    "schema": get_db_schema_info()
+                    "schema": get_db_schema_info(force_refresh=True)
                 }
 
         # 7. Apache Parquet (.parquet)
@@ -475,7 +475,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "type": "document",
                 "rag_info": rag_info,
                 "documents": rag_service.list_documents(),
-                "schema": get_db_schema_info()
+                "schema": get_db_schema_info(force_refresh=True)
             }
 
         else:

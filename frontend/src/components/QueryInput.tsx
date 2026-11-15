@@ -95,9 +95,11 @@ export const QueryInput: React.FC<QueryInputProps> = ({
             </button>
 
             {/* Individual table buttons */}
-            {tables.map((tbl) => {
+            {tables
+              .filter((tbl) => !['audit_logs', 'sqlite_sequence'].includes(tbl.toLowerCase()))
+              .map((tbl) => {
               const isSelected = activeTable === tbl;
-              const isCustom = !['sales', 'products', 'customers', 'employees', 'audit_logs'].includes(tbl.toLowerCase());
+              const isCustom = !['sales', 'products', 'customers', 'employees', 'orders', 'order_items', 'payments', 'support_tickets'].includes(tbl.toLowerCase());
               return (
                 <button
                   key={tbl}
