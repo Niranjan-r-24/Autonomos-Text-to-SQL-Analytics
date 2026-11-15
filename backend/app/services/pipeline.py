@@ -334,7 +334,9 @@ class TextToSqlPipeline:
                 "metric_label": "Value"
             }
 
-        sample_row = rows[0]
+        # Normalize column names by stripping surrounding quotes
+        columns = [c.strip('"`') for c in columns]
+        sample_row = {k.strip('"`'): v for k, v in rows[0].items()}
         numeric_cols = []
         string_cols = []
         date_cols = []

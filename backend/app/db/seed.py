@@ -238,5 +238,15 @@ def seed_database():
         conn.commit()
         print("[SEED] Database seeding completed successfully!")
 
+    try:
+        from backend.app.services.schema_service import clear_schema_cache
+        clear_schema_cache()
+    except Exception:
+        try:
+            from app.services.schema_service import clear_schema_cache
+            clear_schema_cache()
+        except Exception:
+            pass
+
 if __name__ == "__main__":
     seed_database()

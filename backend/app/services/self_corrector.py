@@ -160,41 +160,65 @@ class SelfCorrectionService:
             match = re.search(r"(?:no such column:\s*|column\s*['\"]?)([a-zA-Z0-9_\.]+)", error_msg, re.IGNORECASE)
             if match:
                 bad_col_raw = match.group(1)
+                has_prefix = "." in bad_col_raw
+                prefix = bad_col_raw.split(".")[0] if has_prefix else ""
                 bad_col = bad_col_raw.split(".")[-1].lower()
 
-                # Gather columns from tables mentioned in failed_sql first, or all known columns
+                # Map aliases to table names in SQL
+                alias_to_table = {}
+                for am in re.finditer(r"\b(?:FROM|JOIN)\s+([a-zA-Z0-9_\"]+)\s+(?:AS\s+)?([a-zA-Z0-9_]+)\b", failed_sql, re.IGNORECASE):
+                    t_clean = am.group(1).replace('"', '').lower()
+                    a_clean = am.group(2).lower()
+                    if t_clean in schema_info:
+                        alias_to_table[a_clean] = t_clean
+
+                # Determine targeted table and candidate columns
+                target_tbl = alias_to_table.get(prefix.lower()) if has_prefix else None
                 sql_tables = [t for t in schema_info.keys() if re.search(r"\b" + re.escape(t) + r"\b", failed_sql, re.IGNORECASE)]
-                candidate_cols = []
-                if sql_tables:
+                
+                if target_tbl and target_tbl in schema_info:
+                    candidate_cols = [c["name"] for c in schema_info[target_tbl].get("columns", [])]
+                elif sql_tables:
+                    candidate_cols = []
                     for t in sql_tables:
                         candidate_cols.extend([c["name"] for c in schema_info[t].get("columns", [])])
-                
-                all_cols = []
-                table_for_col = {}
-                for tbl, meta in schema_info.items():
-                    for c in meta.get("columns", []):
-                        c_name = c["name"]
-                        all_cols.append(c_name)
-                        table_for_col[c_name.lower()] = tbl
+                else:
+                    candidate_cols = [c["name"] for t in schema_info.values() for c in t.get("columns", [])]
 
-                # 1. First attempt fuzzy matching against candidate/targeted table columns
-                matches = difflib.get_close_matches(bad_col, candidate_cols, n=1, cutoff=0.6)
+                all_cols = [c["name"] for t in schema_info.values() for c in t.get("columns", [])]
+
+                # Match column
+                matches = difflib.get_close_matches(bad_col, candidate_cols, n=1, cutoff=0.5)
                 if not matches:
-                    # 2. Fuzzy match against all schema columns
-                    matches = difflib.get_close_matches(bad_col, all_cols, n=1, cutoff=0.6)
+                    matches = [c for c in candidate_cols if bad_col in c.lower() or c.lower() in bad_col]
                 if not matches:
-                    # 3. Substring matching with lower threshold
-                    matches = [c for c in candidate_cols if bad_col in c.lower()]
+                    matches = difflib.get_close_matches(bad_col, all_cols, n=1, cutoff=0.4)
                 if not matches:
-                    matches = [c for c in all_cols if bad_col in c.lower()]
-                if not matches:
-                    matches = difflib.get_close_matches(bad_col, all_cols, n=1, cutoff=0.35)
+                    matches = [c for c in all_cols if bad_col in c.lower() or c.lower() in bad_col]
+
                 if matches:
                     best_replacement = matches[0]
-                    # Replace in SQL
-                    fixed = re.sub(r"\b" + re.escape(bad_col_raw) + r"\b", best_replacement, fixed)
+                    # If prefixed, keep table prefix intact
+                    full_replacement = f"{prefix}.{best_replacement}" if has_prefix else best_replacement
+                    fixed = re.sub(r"\b" + re.escape(bad_col_raw) + r"\b", full_replacement, fixed)
+
+                    # Multi-column schema healing: If products or customers table had aliased id/name replaced,
+                    # also heal companion id/name columns to avoid secondary failure on next retry
+                    if target_tbl == "products" or (has_prefix and prefix.lower() == "p"):
+                        p_cols = {c["name"].lower(): c["name"] for c in schema_info.get("products", {}).get("columns", [])}
+                        if "product_id" in p_cols and "id" not in p_cols:
+                            fixed = re.sub(r"\b(?:p|products)\.id\b", f"{prefix or 'p'}.product_id", fixed)
+                        if "product_name" in p_cols and "name" not in p_cols:
+                            fixed = re.sub(r"\b(?:p|products)\.name\b", f"{prefix or 'p'}.product_name", fixed)
+                    elif target_tbl == "customers" or (has_prefix and prefix.lower() == "c"):
+                        c_cols = {c["name"].lower(): c["name"] for c in schema_info.get("customers", {}).get("columns", [])}
+                        if "customer_id" in c_cols and "id" not in c_cols:
+                            fixed = re.sub(r"\b(?:c|customers)\.id\b", f"{prefix or 'c'}.customer_id", fixed)
+                        if "customer_name" in c_cols and "name" not in c_cols:
+                            fixed = re.sub(r"\b(?:c|customers)\.name\b", f"{prefix or 'c'}.customer_name", fixed)
+
                     if fixed != failed_sql:
-                        return fixed, f"Schema Alignment: Corrected column '{bad_col_raw}' to '{best_replacement}'"
+                        return fixed, f"Schema Alignment: Corrected column '{bad_col_raw}' to '{full_replacement}'"
 
                 # If direct string replacement failed, re-synthesize cleanly
                 if schema_info:
@@ -204,13 +228,31 @@ class SelfCorrectionService:
                     if healed_sql and healed_sql.strip() != failed_sql.strip():
                         return healed_sql, f"Schema Recovery: Re-synthesized query to resolve missing column '{bad_col_raw}'"
 
-        # Rule 2: Ambiguous Column -> Add explicit table alias prefixes
+        # Rule 2: Ambiguous Column -> Disambiguate with matching table alias
         if "ambiguous column" in err_lower:
-            # Common ambiguous columns in relational schemas: id, name, created_at, status
-            fixed = re.sub(r"(?<![a-zA-Z0-9_\.])id\b", "s.id", fixed)
-            fixed = re.sub(r"(?<![a-zA-Z0-9_\.])name\b", "p.name", fixed)
-            if fixed != failed_sql:
-                return fixed, "Disambiguation: Added table alias prefixes to ambiguous columns"
+            match = re.search(r"ambiguous column(?:\s*name)?:\s*([a-zA-Z0-9_\.]+)", error_msg, re.IGNORECASE)
+            ambig_col = match.group(1).split(".")[-1].lower() if match else None
+            
+            if ambig_col:
+                # Find tables in query that define this column
+                for am in re.finditer(r"\b(?:FROM|JOIN)\s+([a-zA-Z0-9_\"]+)\s+(?:AS\s+)?([a-zA-Z0-9_]+)\b", failed_sql, re.IGNORECASE):
+                    tbl_name = am.group(1).replace('"', '').lower()
+                    alias_name = am.group(2)
+                    if tbl_name in schema_info:
+                        cols = [c["name"].lower() for c in schema_info[tbl_name].get("columns", [])]
+                        if ambig_col in cols:
+                            fixed = re.sub(r"(?<![a-zA-Z0-9_\.])" + re.escape(ambig_col) + r"\b", f"{alias_name}.{ambig_col}", fixed)
+                            if fixed != failed_sql:
+                                return fixed, f"Disambiguation: Added '{alias_name}' alias to ambiguous column '{ambig_col}'"
+                            break
+
+            # Fallback re-synthesis if ambiguous column couldn't be cleanly resolved
+            if schema_info:
+                from backend.app.services.sql_generator import SQLGenerator
+                gen = SQLGenerator()
+                healed_sql, exp = gen._synthesize_dynamic_sql(user_question, schema_info)
+                if healed_sql and healed_sql.strip() != failed_sql.strip():
+                    return healed_sql, "Disambiguation Recovery: Re-synthesized query"
 
         # Rule 3: SQLite GROUP BY or aggregate alias issues
         if "misuse of aggregate" in err_lower or "group by" in err_lower:

@@ -63,6 +63,17 @@ class SQLGenerator:
         actual_cols = {c["name"].lower() for c in meta.get("columns", [])}
         return all(rc.lower() in actual_cols for rc in required_cols)
 
+    @staticmethod
+    def _resolve_col(schema_info: Dict[str, Any], table_name: str, candidate_names: List[str]) -> Optional[str]:
+        """Finds the first existing column in table_name matching any candidate name (case-insensitive)."""
+        if not schema_info or table_name not in schema_info:
+            return None
+        cols = {c["name"].lower(): c["name"] for c in schema_info[table_name].get("columns", [])}
+        for cand in candidate_names:
+            if cand.lower() in cols:
+                return cols[cand.lower()]
+        return None
+
     def generate(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[str, str, str]:
         """
         Generates SQL query and explanation for the provided user question.
@@ -108,36 +119,50 @@ Generate a standard SQLite/ANSI SQL query and a short, clear plain English expla
 DATABASE SCHEMA:
 {formatted_schema}
 {active_table_instruction}
-CRITICAL INTENT AND RANKING RULES:
-1. TABLE SELECTION & DOMAIN RULES:
-   - Questions about "customers", "clients", "users", "accounts", or "subscribers" (e.g., "How many customers are in the database?") MUST ALWAYS query the 'customers' table (e.g. SELECT COUNT(*) AS customer_count FROM customers;). NEVER query 'audit_logs' or 'sales'.
+CRITICAL INTENT AND SCHEMA GROUNDING RULES:
+1. STRICT SCHEMA GROUNDING (NEVER GUESS COLUMN NAMES):
+   - You MUST ONLY query table names and column names that appear in the DATABASE SCHEMA above.
+   - NEVER assume canonical column names like 'name' or 'id' if the table has 'product_name' or 'product_id' or 'customer_name' or 'customer_id'.
+   - If 'products' has 'product_name' and 'product_id', you MUST use 'products.product_name' and 'products.product_id' (NEVER 'p.name' or 'p.id').
+   - If 'customers' has 'customer_name' and 'customer_id', use 'customers.customer_name' and 'customers.customer_id'.
+
+2. MULTI-TABLE RELATIONAL DATASETS (E-COMMERCE / ORDERS / TRANSACTIONS):
+   - If 'order_items' and 'products' exist:
+     Product revenue or sales volume queries MUST join 'order_items' and 'products' on 'order_items.product_id = products.product_id':
+     SELECT p.product_name, SUM(oi.line_total) AS total_revenue, SUM(oi.quantity) AS total_units_sold
+     FROM order_items oi
+     JOIN products p ON oi.product_id = p.product_id
+     GROUP BY p.product_id, p.product_name
+     ORDER BY total_revenue DESC LIMIT 5;
+   - If 'orders' and 'customers' exist: join on 'orders.customer_id = customers.customer_id'.
+   - If 'payments' exists: payments connect to 'orders' via 'order_id'.
+   - If 'sales' exists (canonical sales table): join 'sales' and 'products' on 'sales.product_id = products.product_id' (or 'products.id' if the column is 'id').
+
+3. DOMAIN & TABLE ROUTING RULES:
+   - Questions about "customers", "users", "clients", "subscribers" (e.g., "How many customers are in the database?") MUST ALWAYS query the 'customers' table (e.g. SELECT COUNT(*) AS customer_count FROM customers;). NEVER query 'audit_logs' or 'sales'.
    - 'audit_logs' contains system security logs (actions, IP addresses, failures). NEVER query 'audit_logs' unless the user explicitly asks about audit logs, security events, logins, or IP addresses.
-   - Questions about "products", "catalog", "items", "prices", or "categories" MUST query the 'products' table (or join with 'sales' for sales volume/revenue).
+   - Questions about "products", "catalog", "items", "prices", or "categories" MUST query the 'products' table (or join with 'order_items' or 'sales' for sales volume/revenue).
    - Questions about "employees", "staff", "departments", or "salaries" MUST query the 'employees' table.
-   - Questions about "sales", "orders", "transactions", or "revenue" MUST query the 'sales' table.
-2. Strictly respect requested ranking direction:
+   - Questions about "orders", "purchases", "order status" MUST query 'orders' (or 'sales').
+
+4. RANKING DIRECTION & LIMITS:
    - For "lowest", "bottom", "least", "cheapest", "worst", "minimum", "ascending", or "ASC": use ORDER BY <metric> ASC.
    - For "top", "highest", "most", "best", "greatest", "maximum", "descending", or "DESC": use ORDER BY <metric> DESC.
    - NEVER default to DESC when the user asks for lowest, bottom, or ascending rankings.
-2. Distinguish metrics carefully:
-   - Revenue / Sales volume in currency -> SUM(s.total_price) or p.price
-   - Units sold / Quantity -> SUM(s.quantity)
-   - Order count / Number of sales -> COUNT(s.id)
-   - Customer spending -> c.total_spent or SUM(s.total_price)
-   - Rating -> p.rating or AVG(p.rating)
-3. Respect requested limits:
-   - e.g., "Top 5" -> LIMIT 5, "Lowest 10" -> LIMIT 10, "Bottom 3" -> LIMIT 3.
-4. Security & Safety:
+   - Respect requested limits: e.g., "Top 5" -> LIMIT 5, "Lowest 10" -> LIMIT 10, "Bottom 3" -> LIMIT 3.
+
+5. SECURITY & READ-ONLY SAFETY:
    - Generate strictly read-only SELECT queries (JOINs, aggregations, GROUP BY, ORDER BY, LIMIT).
    - Use clear column aliases (e.g., AS total_revenue, AS customer_count, AS total_units_sold).
-5. Explanations:
+   - Always qualify column names with table prefixes (e.g. p.product_name, oi.product_id) to avoid ambiguous column errors.
+
+6. EXPLANATION:
    - Provide a 1-2 sentence explanation of what the query does (which tables are joined, filters used, ranking metric, and sort direction).
-   - If the user request is ambiguous, note any assumptions in the explanation.
 
 JSON Response Format:
 {{
   "sql": "SELECT ...",
-  "explanation": "This query joins the sales and products tables to aggregate total revenue for the lowest 5 products, sorted in ascending order."
+  "explanation": "Brief 1-2 sentence plain-English explanation of the query logic and filters."
 }}"""
 
         if "gemini" in self.provider:
@@ -203,7 +228,11 @@ JSON Response Format:
             "customers": ["customer", "customers", "client", "clients", "user", "users", "buyer", "buyers", "subscriber", "subscribers", "account", "accounts", "member", "members"],
             "products": ["product", "products", "item", "items", "catalog", "catalogue", "merchandise", "goods"],
             "employees": ["employee", "employees", "staff", "worker", "workers", "headcount", "personnel", "engineer", "engineers"],
-            "sales": ["sale", "sales", "transaction", "transactions", "order", "orders", "purchase", "purchases"],
+            "order_items": ["order item", "order items", "line item", "line items", "order_item", "order_items"],
+            "orders": ["order", "orders", "shipment", "shipments"],
+            "payments": ["payment", "payments", "paid", "upi", "card"],
+            "support_tickets": ["ticket", "tickets", "complaint", "complaints", "support", "support ticket"],
+            "sales": ["sale", "sales", "transaction", "transactions", "purchase", "purchases"],
             "audit_logs": ["audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs", "security event", "security events", "failed login", "login failure", "security log"]
         }
 
@@ -249,8 +278,14 @@ JSON Response Format:
                 count_table = "employees" if "employees" in schema_info else target_table_name
             elif any(k in q for k in ["product", "item", "catalog"]):
                 count_table = "products" if "products" in schema_info else target_table_name
-            elif any(k in q for k in ["sale", "order", "transaction", "purchase"]):
-                count_table = "sales" if "sales" in schema_info else target_table_name
+            elif any(k in q for k in ["ticket", "complaint", "support"]):
+                count_table = "support_tickets" if "support_tickets" in schema_info else target_table_name
+            elif any(k in q for k in ["payment"]):
+                count_table = "payments" if "payments" in schema_info else target_table_name
+            elif any(k in q for k in ["order"]):
+                count_table = "orders" if "orders" in schema_info else ("sales" if "sales" in schema_info else target_table_name)
+            elif any(k in q for k in ["sale", "transaction", "purchase"]):
+                count_table = "sales" if "sales" in schema_info else ("orders" if "orders" in schema_info else target_table_name)
             elif any(k in q for k in ["audit", "log", "security event"]):
                 count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
             elif target_table_name and target_table_name != "audit_logs":
@@ -421,20 +456,29 @@ JSON Response Format:
             explanation = f"Calculates overall total revenue and completed sales count across all transactions{date_desc}."
             return sql, explanation
 
+        # Resolve dynamic identifiers across core tables
+        p_id = self._resolve_col(schema_info, "products", ["product_id", "id", "item_id"])
+        p_name = self._resolve_col(schema_info, "products", ["product_name", "name", "title", "item_name"]) or p_id
+        p_cat = self._resolve_col(schema_info, "products", ["category", "dept", "department"])
+        p_price = self._resolve_col(schema_info, "products", ["unit_price", "price", "retail_price", "cost"])
+
+        c_id = self._resolve_col(schema_info, "customers", ["customer_id", "id", "user_id"])
+        c_name = self._resolve_col(schema_info, "customers", ["customer_name", "name", "full_name"]) or c_id
+
         # Pattern: Completed Sales Detailed Transactions with Customer and Product Names (Multi-Table 3-Way Join)
         if (
             self._has_cols(schema_info, "sales", ["id", "customer_id", "product_id", "total_price", "sale_date", "status"])
-            and self._has_cols(schema_info, "customers", ["id", "name"])
-            and self._has_cols(schema_info, "products", ["id", "name"])
+            and "customers" in schema_info and c_id
+            and "products" in schema_info and p_id
             and ("sale" in q or "transaction" in q or "order" in q)
             and ("customer" in q or "user" in q)
             and ("product" in q or "item" in q)
         ):
             sql = (
-                "SELECT s.id, c.name AS customer_name, p.name AS product_name, s.total_price, s.sale_date "
-                "FROM sales s "
-                "JOIN customers c ON s.customer_id = c.id "
-                "JOIN products p ON s.product_id = p.id "
+                f"SELECT s.id, c.{c_name} AS customer_name, p.{p_name} AS product_name, s.total_price, s.sale_date "
+                f"FROM sales s "
+                f"JOIN customers c ON s.customer_id = c.{c_id} "
+                f"JOIN products p ON s.product_id = p.{p_id} "
                 f"WHERE s.status = 'Completed'{date_where_s} "
                 f"ORDER BY s.sale_date DESC{limit_clause or ' LIMIT 10'};"
             )
@@ -447,41 +491,42 @@ JSON Response Format:
         # Pattern: Customer Spending by Product Category (Multi-Table 3-Way Join)
         if (
             self._has_cols(schema_info, "sales", ["id", "customer_id", "product_id", "total_price", "status"])
-            and self._has_cols(schema_info, "customers", ["id", "plan"])
-            and self._has_cols(schema_info, "products", ["id", "category"])
+            and "customers" in schema_info and c_id
+            and "products" in schema_info and p_id and p_cat
             and ("customer" in q or "plan" in q)
             and ("category" in q or "product category" in q)
             and ("spent" in q or "spending" in q or "revenue" in q or "sales" in q)
         ):
+            c_plan = self._resolve_col(schema_info, "customers", ["plan", "tier"]) or f"c.{c_name}"
             sql = (
-                "SELECT c.plan, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count "
-                "FROM sales s "
-                "JOIN customers c ON s.customer_id = c.id "
-                "JOIN products p ON s.product_id = p.id "
+                f"SELECT {c_plan}, p.{p_cat}, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS sales_count "
+                f"FROM sales s "
+                f"JOIN customers c ON s.customer_id = c.{c_id} "
+                f"JOIN products p ON s.product_id = p.{p_id} "
                 f"WHERE s.status = 'Completed'{date_where_s} "
-                "GROUP BY c.plan, p.category "
-                "ORDER BY total_revenue DESC;"
+                f"GROUP BY {c_plan}, p.{p_cat} "
+                f"ORDER BY total_revenue DESC;"
             )
             explanation = (
                 f"Performs a three-table join between sales, customers, and products to aggregate "
-                f"total revenue and transaction count by customer plan and product category{date_desc}."
+                f"total revenue and transaction count by customer segment and product category{date_desc}."
             )
             return sql, explanation
 
         # Pattern: Average Order Value per Customer Plan (Multi-Table Join)
         if (
             self._has_cols(schema_info, "sales", ["id", "customer_id", "total_price", "status"])
-            and self._has_cols(schema_info, "customers", ["id", "plan"])
+            and "customers" in schema_info and c_id and "plan" in [c["name"].lower() for c in schema_info.get("customers", {}).get("columns", [])]
             and "plan" in q
             and ("order value" in q or "average order" in q or "avg order" in q or ("order" in q and ("average" in q or "avg" in q)) or "aov" in q)
         ):
             sql = (
-                "SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
-                "FROM sales s "
-                "JOIN customers c ON s.customer_id = c.id "
+                f"SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
+                f"FROM sales s "
+                f"JOIN customers c ON s.customer_id = c.{c_id} "
                 f"WHERE s.status = 'Completed'{date_where_s} "
-                "GROUP BY c.plan "
-                "ORDER BY avg_order_value DESC;"
+                f"GROUP BY c.plan "
+                f"ORDER BY avg_order_value DESC;"
             )
             explanation = (
                 f"Joins sales and customers by plan to calculate order count, average order value, "
@@ -489,31 +534,77 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern: Products by Units Sold / Quantity
+        # Pattern: Products by Revenue / Units Sold via order_items (Multi-Table Relational Join for E-commerce Datasets)
         if (
-            self._has_cols(schema_info, "sales", ["id", "product_id", "quantity", "status"])
-            and self._has_cols(schema_info, "products", ["id", "name", "category"])
+            "order_items" in schema_info
+            and "products" in schema_info
+            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q or "revenue" in q or "sales" in q or "sold" in q or "quantity" in q)
+            and not ("inventory" in q or "stock" in q or "customer" in q or "ticket" in q)
+        ):
+            oi_p_id = self._resolve_col(schema_info, "order_items", ["product_id", "item_id", "id"])
+            oi_rev = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount", "revenue"])
+            oi_qty = self._resolve_col(schema_info, "order_items", ["quantity", "qty", "units"])
+            oi_price = self._resolve_col(schema_info, "order_items", ["unit_price", "price"])
+
+            if p_id and oi_p_id:
+                is_qty_ranking = ("quantity" in q or "volume" in q or "unit" in q or "sold" in q) and not ("revenue" in q or "sales" in q or "dollar" in q or "$" in q or "line_total" in q)
+                cat_select = f", p.{p_cat}" if p_cat else ""
+                cat_group = f", p.{p_cat}" if p_cat else ""
+
+                rev_expr = f"SUM(oi.{oi_rev})" if oi_rev else (f"SUM(oi.{oi_qty} * oi.{oi_price})" if (oi_qty and oi_price) else f"COUNT(oi.{oi_p_id})")
+                qty_expr = f"SUM(oi.{oi_qty})" if oi_qty else "COUNT(*)"
+
+                order_metric = "total_units_sold" if is_qty_ranking else "total_revenue"
+                metric_desc = "total units sold" if is_qty_ranking else "total revenue"
+
+                sql = (
+                    f"SELECT p.{p_name} AS product_name{cat_select}, "
+                    f"{rev_expr} AS total_revenue, "
+                    f"{qty_expr} AS total_units_sold "
+                    f"FROM order_items oi "
+                    f"JOIN products p ON oi.{oi_p_id} = p.{p_id} "
+                    f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
+                    f"ORDER BY {order_metric} {direction}{limit_clause};"
+                )
+                explanation = (
+                    f"Joins 'order_items' and 'products' to aggregate {metric_desc} "
+                    f"for {rank_label} products sorted in {direction_word} order."
+                )
+                return sql, explanation
+
+        # Pattern: Products by Units Sold / Quantity via sales
+        s_pid = self._resolve_col(schema_info, "sales", ["product_id", "id"])
+        s_rev = self._resolve_col(schema_info, "sales", ["total_price", "amount", "revenue", "price"])
+        s_qty = self._resolve_col(schema_info, "sales", ["quantity", "qty", "units"])
+        s_status = self._resolve_col(schema_info, "sales", ["status"])
+        s_where = f"WHERE s.{s_status} = 'Completed'{date_where_s} " if s_status else (f"WHERE 1=1{date_where_s} " if date_where_s else "")
+
+        if (
+            "sales" in schema_info and s_pid and s_qty
+            and "products" in schema_info and p_id
             and (("unit" in q and ("sold" in q or "sale" in q)) or "quantity" in q or "volume" in q or "sold" in q)
             and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q or "highest" in q)
             and not ("inventory" in q or "stock" in q)
         ):
+            cat_select = f", p.{p_cat}" if p_cat else ""
+            cat_group = f", p.{p_cat}" if p_cat else ""
             sql = (
-                f"SELECT p.name AS product_name, p.category, SUM(s.quantity) AS total_quantity "
-                f"FROM sales s JOIN products p ON s.product_id = p.id "
-                f"WHERE s.status = 'Completed'{date_where_s} "
-                f"GROUP BY p.id, p.name, p.category "
+                f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_qty}) AS total_quantity "
+                f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
+                f"{s_where}"
+                f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
                 f"ORDER BY total_quantity {direction}{limit_clause};"
             )
             explanation = (
-                f"Joins the 'sales' and 'products' tables, filters for completed transactions{date_desc}, "
+                f"Joins the 'sales' and 'products' tables{date_desc}, "
                 f"and aggregates total quantity sold for {rank_label} products sorted in {direction_word} order."
             )
             return sql, explanation
 
-        # Pattern: Products by Revenue / Sales or Default Benchmark Ranking
+        # Pattern: Products by Revenue / Sales or Default Benchmark Ranking via sales
         if (
-            self._has_cols(schema_info, "sales", ["id", "product_id", "total_price", "status"])
-            and self._has_cols(schema_info, "products", ["id", "name", "category"])
+            "sales" in schema_info and s_pid and s_rev
+            and "products" in schema_info and p_id
             and ("product" in q or "item" in q)
             and (
                 "revenue" in q or "sales" in q
@@ -523,21 +614,23 @@ JSON Response Format:
             )
         ):
             is_unspecified_metric = not any(k in q for k in ["revenue", "sales", "price", "profit", "order"])
+            cat_select = f", p.{p_cat}" if p_cat else ""
+            cat_group = f", p.{p_cat}" if p_cat else ""
             sql = (
-                f"SELECT p.name AS product_name, p.category, SUM(s.total_price) AS total_revenue, COUNT(s.id) AS total_orders "
-                f"FROM sales s JOIN products p ON s.product_id = p.id "
-                f"WHERE s.status = 'Completed'{date_where_s} "
-                f"GROUP BY p.id, p.name, p.category "
+                f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_rev}) AS total_revenue, COUNT(s.id) AS total_orders "
+                f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
+                f"{s_where}"
+                f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
                 f"ORDER BY total_revenue {direction}{limit_clause};"
             )
             if is_unspecified_metric:
                 explanation = (
                     f"Defaulted to total revenue as the primary ranking benchmark since no metric was specified; "
-                    f"aggregates completed sales for {rank_label} products in {direction_word} order{date_desc} (can also rank by quantity sold, order count, or customer rating)."
+                    f"aggregates completed sales for {rank_label} products in {direction_word} order{date_desc}."
                 )
             else:
                 explanation = (
-                    f"Joins the 'sales' and 'products' tables, filters for completed transactions{date_desc}, "
+                    f"Joins the 'sales' and 'products' tables{date_desc}, "
                     f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
                 )
             return sql, explanation
@@ -817,7 +910,7 @@ JSON Response Format:
             metric_col = mentioned_num[0]
         else:
             if any(k in q for k in ["revenue", "sales", "spending", "amount", "income", "turnover", "total", "spent"]):
-                pref = ["total_amount", "amount", "revenue", "sales", "total_price", "total_spent", "price", "unit_price", "value", "total"]
+                pref = ["total_amount", "amount", "line_total", "revenue", "sales", "total_price", "total_spent", "price", "unit_price", "value", "total"]
             elif any(k in q for k in ["quantity", "units", "volume", "sold", "stock"]):
                 pref = ["quantity", "units_sold", "units", "qty", "volume", "stock_quantity", "stock"]
             elif any(k in q for k in ["price", "cost", "cheap", "expensive"]):

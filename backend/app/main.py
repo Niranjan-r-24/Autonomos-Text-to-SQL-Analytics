@@ -453,8 +453,24 @@ async def upload_dataset(file: UploadFile = File(...)):
                 detail=f"Unsupported format '{ext}'. Supported formats: .csv, .xlsx, .xls, .json, .db, .sqlite, .sql, .txt, .tsv, .parquet, .pdf, .docx, .md"
             )
 
-        # Standardize column names
-        df.columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(c).strip().lower()) for c in df.columns]
+        # Standardize column names (handle numeric-only headers and SQL identifier safety)
+        if all(str(c).strip().isdigit() for c in df.columns):
+            if "ticket" in clean_table_name:
+                default_ticket_cols = ["ticket_id", "customer_id", "order_id", "issue", "priority", "status", "created_at"]
+                if len(df.columns) == len(default_ticket_cols):
+                    df.columns = default_ticket_cols
+                else:
+                    df.columns = [f"col_{c}" for c in df.columns]
+            else:
+                df.columns = [f"col_{c}" for c in df.columns]
+        else:
+            cleaned_cols = []
+            for c in df.columns:
+                c_str = re.sub(r"[^a-zA-Z0-9_]", "_", str(c).strip().lower()).strip("_")
+                if not c_str or c_str[0].isdigit():
+                    c_str = f"col_{c_str}"
+                cleaned_cols.append(c_str)
+            df.columns = cleaned_cols
 
         # Save to database engine via SQLAlchemy engine
         with engine.begin() as conn:
