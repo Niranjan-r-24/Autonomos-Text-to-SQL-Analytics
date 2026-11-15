@@ -664,3 +664,72 @@ def test_regression_rapid_consecutive_requests():
         assert bool(data["visualization"]["chart_type"])
 
 
+def test_natural_language_answer_count_query():
+    """
+    Verify Natural Language Answer dynamically formats entity count queries into human sentences.
+    e.g. 'There are 40 customers in the database.'
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("How many customers are in the database?")
+
+    assert res["success"] is True
+    assert res["row_count"] == 1
+    answer = res["insights"]["direct_answer"]
+    assert "There are" in answer
+    assert "customers in the database" in answer
+
+
+def test_natural_language_answer_top_product():
+    """
+    Verify Natural Language Answer dynamically formats ranking queries.
+    e.g. '<Product> is the top-performing product ...'
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("Top product by revenue")
+
+    assert res["success"] is True
+    assert res["row_count"] >= 1
+    answer = res["insights"]["direct_answer"]
+    assert "top-performing product" in answer
+    assert "Apex Cloud AI Platform" in answer
+
+
+def test_unknown_table_query_fails_meaningfully_without_fallback():
+    """
+    Verify querying an unknown table returns an honest failure with meaningful connected tables info,
+    and NEVER silently falls back to an arbitrary table like sales or audit_logs.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+
+    # 1. Direct raw SQL on missing table
+    res_sql = pipeline.run("SELECT * FROM non_existent_table;")
+    assert res_sql["success"] is False
+    assert "non_existent_table" in res_sql["error"]
+    assert "does not exist in the database" in res_sql["error"]
+    assert "Connected tables:" in res_sql["error"]
+    assert res_sql["insights"]["status"] == "error"
+    assert "The query could not be executed" in res_sql["insights"]["direct_answer"]
+
+    # 2. Natural language query mentioning missing table
+    res_nl = pipeline.run("Show all records from invoices;")
+    assert res_nl["success"] is False
+    assert "invoices" in res_nl["error"]
+    assert "does not exist in the database" in res_nl["error"]
+    assert res_nl["insights"]["status"] == "error"
+
+
+def test_empty_results_graceful_handling():
+    """
+    Verify empty query results are handled gracefully with a clear direct answer and caveats.
+    """
+    pipeline = TextToSqlPipeline(provider="fallback")
+    res = pipeline.run("SELECT * FROM sales WHERE total_price > 99999999;")
+
+    assert res["success"] is True
+    assert res["row_count"] == 0
+    assert res["insights"]["status"] == "empty"
+    assert "No matching records were found" in res["insights"]["direct_answer"]
+    assert len(res["insights"]["caveats"]) >= 2
+
+
+

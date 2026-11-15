@@ -69,6 +69,15 @@ export default function Home() {
     handleRunQuery(targetQuery, tableName);
   };
 
+  const handleSelectTable = (tableName: string | null) => {
+    setActiveTable(tableName);
+    if (tableName) {
+      const targetQuery = `Show first 10 rows from ${tableName}`;
+      setQuery(targetQuery);
+      handleRunQuery(targetQuery, tableName);
+    }
+  };
+
   const handleRunQuery = async (overrideQuery?: string, overrideTable?: string) => {
     const targetQuery = overrideQuery || query;
     if (!targetQuery.trim() || isExecuting) return;
@@ -83,7 +92,7 @@ export default function Home() {
         query: targetQuery.trim(),
         api_key: apiKey,
         provider: provider,
-        active_table: overrideTable || activeTable || undefined,
+        active_table: overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined),
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;
@@ -176,6 +185,10 @@ export default function Home() {
             setQuery={setQuery}
             onSubmit={handleRunQuery}
             isExecuting={isExecuting}
+            activeTable={activeTable}
+            tables={tableList}
+            tableColumns={activeTable && schemaData[activeTable]?.columns ? schemaData[activeTable].columns.map((c: any) => c.name) : []}
+            onSelectTable={handleSelectTable}
           />
         </section>
 
@@ -243,6 +256,7 @@ export default function Home() {
         isOpen={isSchemaModalOpen}
         onClose={() => setIsSchemaModalOpen(false)}
         onReSeed={handleReSeed}
+        onSelectTable={handleSelectTable}
       />
 
       {/* API Key Configuration Modal */}

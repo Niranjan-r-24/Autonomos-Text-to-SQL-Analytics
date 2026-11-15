@@ -29,11 +29,19 @@ def seed_database():
 
     with engine.connect() as conn:
         # Drop existing tables if re-seeding
-        conn.execute(text(f"DROP TABLE IF EXISTS sales{cascade};"))
-        conn.execute(text(f"DROP TABLE IF EXISTS audit_logs{cascade};"))
-        conn.execute(text(f"DROP TABLE IF EXISTS customers{cascade};"))
-        conn.execute(text(f"DROP TABLE IF EXISTS products{cascade};"))
-        conn.execute(text(f"DROP TABLE IF EXISTS employees{cascade};"))
+        try:
+            from sqlalchemy import inspect
+            insp = inspect(engine)
+            existing_tables = insp.get_table_names()
+            for t in existing_tables:
+                if not t.startswith("sqlite_"):
+                    conn.execute(text(f'DROP TABLE IF EXISTS "{t}"{cascade};'))
+        except Exception:
+            conn.execute(text(f"DROP TABLE IF EXISTS sales{cascade};"))
+            conn.execute(text(f"DROP TABLE IF EXISTS audit_logs{cascade};"))
+            conn.execute(text(f"DROP TABLE IF EXISTS customers{cascade};"))
+            conn.execute(text(f"DROP TABLE IF EXISTS products{cascade};"))
+            conn.execute(text(f"DROP TABLE IF EXISTS employees{cascade};"))
         conn.commit()
 
         # 1. Create employees table

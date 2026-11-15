@@ -24,6 +24,7 @@ interface BusinessInsightsPanelProps {
   rowCount?: number;
   isLoading?: boolean;
   error?: string | null;
+  showDirectAnswer?: boolean;
 }
 
 export const BusinessInsightsPanel: React.FC<BusinessInsightsPanelProps> = ({
@@ -32,6 +33,7 @@ export const BusinessInsightsPanel: React.FC<BusinessInsightsPanelProps> = ({
   rowCount = 0,
   isLoading = false,
   error = null,
+  showDirectAnswer = true,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -216,7 +218,7 @@ export const BusinessInsightsPanel: React.FC<BusinessInsightsPanelProps> = ({
       </div>
 
       {/* 2. Natural-Language Insight Hero Banner (Above Results) */}
-      {insights.direct_answer && (
+      {showDirectAnswer && insights.direct_answer && (
         <div className="p-4 bg-linear-to-r from-[#ECFDF5] via-[#F0FDF4] to-[#F8FAFC] border-2 border-[#10B981]/40 rounded-xl space-y-1.5 shadow-2xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[#047857] font-bold text-[11px] uppercase tracking-wider">

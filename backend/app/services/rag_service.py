@@ -40,23 +40,27 @@ class ProductionRAGService:
             except Exception as e:
                 logger.warning("Failed to load records.json: %s", e)
 
-        # 2. Attempt Chroma persistent collection
-        try:
-            import chromadb
-            chroma_dir = RAG_DIR / "chroma"
-            chroma_dir.mkdir(parents=True, exist_ok=True)
-            self._chroma = chromadb.PersistentClient(path=str(chroma_dir)).get_or_create_collection("knowledge")
-            stored = self._chroma.get(include=["documents", "metadatas"])
-            if stored and stored.get("ids"):
-                loaded = [
-                    {"id": i, "text": doc, "source": meta.get("source", "unknown"), "chunk": meta.get("chunk", 1)}
-                    for i, doc, meta in zip(stored["ids"], stored["documents"], stored["metadatas"])
-                ]
-                if loaded:
-                    self.records = loaded
-                    logger.info("Loaded %d records from Chroma collection", len(self.records))
-        except Exception as e:
-            logger.info("Chroma vector store running in offline/memory fallback mode: %s", e)
+    @property
+    def chroma_collection(self):
+        """Lazy loader for persistent Chroma vector store to avoid blocking application startup."""
+        if self._chroma is None:
+            try:
+                import chromadb
+                chroma_dir = RAG_DIR / "chroma"
+                chroma_dir.mkdir(parents=True, exist_ok=True)
+                self._chroma = chromadb.PersistentClient(path=str(chroma_dir)).get_or_create_collection("knowledge")
+                stored = self._chroma.get(include=["documents", "metadatas"])
+                if stored and stored.get("ids"):
+                    loaded = [
+                        {"id": i, "text": doc, "source": meta.get("source", "unknown"), "chunk": meta.get("chunk", 1)}
+                        for i, doc, meta in zip(stored["ids"], stored["documents"], stored["metadatas"])
+                    ]
+                    if loaded and not self.records:
+                        self.records = loaded
+                        logger.info("Loaded %d records from Chroma collection", len(self.records))
+            except Exception as e:
+                logger.info("Chroma vector store running in offline/memory fallback mode: %s", e)
+        return self._chroma
 
     @property
     def has_documents(self) -> bool:
@@ -114,9 +118,10 @@ class ProductionRAGService:
             records_file = RAG_DIR / "records.json"
             records_file.write_text(json.dumps(self.records, indent=2), encoding="utf-8")
 
-            if self._chroma is not None:
+            chroma = self.chroma_collection
+            if chroma is not None:
                 try:
-                    self._chroma.upsert(
+                    chroma.upsert(
                         ids=[r["id"] for r in unique_records],
                         documents=[r["text"] for r in unique_records],
                         metadatas=[{"source": r["source"], "chunk": r["chunk"]} for r in unique_records]
@@ -174,9 +179,10 @@ class ProductionRAGService:
         lexical = self._bm25_search(query, self.records)
         semantic: List[Dict[str, Any]] = []
 
-        if self._chroma is not None:
+        chroma = self.chroma_collection
+        if chroma is not None:
             try:
-                res = self._chroma.query(query_texts=[query], n_results=min(10, len(self.records)))
+                res = chroma.query(query_texts=[query], n_results=min(10, len(self.records)))
                 if res and res.get("documents") and res["documents"][0]:
                     docs = res["documents"][0]
                     metas = res["metadatas"][0] if res.get("metadatas") else [{}] * len(docs)

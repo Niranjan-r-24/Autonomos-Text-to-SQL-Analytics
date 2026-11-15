@@ -1,9 +1,9 @@
 """
 Schema Retrieval and Inspection Service.
-Extracts table schemas, column data types, row counts, and sample records from the active database.
+Extracts table schemas, column data types, row counts, and sample records from the active database with in-memory caching.
 """
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy import inspect, text
 try:
     from backend.app.db.database import engine
@@ -12,13 +12,28 @@ except ImportError:
 
 logger = logging.getLogger("text2sql.schema")
 
-def get_db_schema_info() -> Dict[str, Any]:
+_SCHEMA_CACHE: Optional[Dict[str, Any]] = None
+
+
+def clear_schema_cache() -> None:
+    """Clears the in-memory schema cache to force fresh inspection upon next query."""
+    global _SCHEMA_CACHE
+    _SCHEMA_CACHE = None
+    logger.info("Schema cache cleared.")
+
+
+def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Inspects the connected database and returns structured schema metadata.
+    Uses in-memory caching for sub-millisecond execution on repeated requests.
     
     Returns:
         Dict mapping table names to column details, row count, and sample records.
     """
+    global _SCHEMA_CACHE
+    if _SCHEMA_CACHE is not None and not force_refresh:
+        return _SCHEMA_CACHE
+
     try:
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
@@ -48,10 +63,10 @@ def get_db_schema_info() -> Dict[str, Any]:
                 except Exception as e:
                     logger.warning("Failed to count rows for table %s: %s", table, e)
 
-                # Fetch sample rows (up to 3) for grounding
+                # Fetch sample rows (up to 10) for grounding and dynamic value matching
                 sample_rows: List[Dict[str, Any]] = []
                 try:
-                    res = conn.execute(text(f'SELECT * FROM "{table}" LIMIT 3'))
+                    res = conn.execute(text(f'SELECT * FROM "{table}" LIMIT 10'))
                     cols = list(res.keys())
                     sample_rows = [dict(zip(cols, row)) for row in res.fetchall()]
                 except Exception as e:
@@ -64,6 +79,7 @@ def get_db_schema_info() -> Dict[str, Any]:
                 }
 
         logger.info("Successfully retrieved schema for %d tables: %s", len(schema_info), list(schema_info.keys()))
+        _SCHEMA_CACHE = schema_info
         return schema_info
 
     except Exception as e:
@@ -71,13 +87,23 @@ def get_db_schema_info() -> Dict[str, Any]:
         raise RuntimeError(f"Database schema retrieval failed: {str(e)}") from e
 
 
-def format_schema_for_llm(schema_info: Dict[str, Any]) -> str:
+def format_schema_for_llm(schema_info: Dict[str, Any], active_table: Optional[str] = None) -> str:
     """
     Formats the schema metadata into a concise, clear prompt representation for the LLM.
+    Puts active_table first if specified.
     """
     ddl_lines: List[str] = []
-    for table_name, meta in schema_info.items():
-        ddl_lines.append(f"Table: {table_name} (Total Rows: {meta.get('row_count', 0)})")
+    
+    # Sort tables so active_table appears first
+    sorted_tables = list(schema_info.keys())
+    if active_table and active_table in sorted_tables:
+        sorted_tables.remove(active_table)
+        sorted_tables.insert(0, active_table)
+
+    for table_name in sorted_tables:
+        meta = schema_info[table_name]
+        is_active = " [CURRENT ACTIVE/UPLOADED DATASET]" if active_table and table_name.lower() == active_table.lower() else ""
+        ddl_lines.append(f"Table: {table_name}{is_active} (Total Rows: {meta.get('row_count', 0)})")
         ddl_lines.append("Columns:")
         for col in meta.get("columns", []):
             pk = " [PRIMARY KEY]" if col.get("primary_key") else ""
@@ -86,7 +112,7 @@ def format_schema_for_llm(schema_info: Dict[str, Any]) -> str:
         sample_rows = meta.get("sample_rows", [])
         if sample_rows:
             ddl_lines.append("Sample Data:")
-            for idx, row in enumerate(sample_rows[:2]):
+            for idx, row in enumerate(sample_rows[:3]):
                 ddl_lines.append(f"  Row {idx + 1}: {row}")
         ddl_lines.append("")
         

@@ -93,7 +93,7 @@ class BusinessInsightsInterpreter:
         # Case 1: Query Execution Error
         if error:
             return {
-                "direct_answer": "The query could not be completed due to a database execution error.",
+                "direct_answer": f"The query could not be executed: {error}",
                 "summary": f"Execution halted: {error}",
                 "key_findings": ["No data could be retrieved because the query encountered an error."],
                 "comparisons": [],
@@ -440,8 +440,43 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
                     direct_answer = f"{metric_lead} during the selected period is {primary_val} across {sec_val} {sec_metric.replace('_', ' ')}{desc_label}."
                 else:
                     metric_name = primary_metric.replace('_', ' ')
-                    metric_lead = metric_name.capitalize() if metric_name.lower().startswith("total") else f"Total {metric_name}"
-                    direct_answer = f"{metric_lead} during the selected period is {primary_val}{desc_label}."
+                    is_count_metric = any(k in primary_metric.lower() for k in ["count", "cnt", "total_records", "total_rows", "total_items", "num_"]) or any(k in q for k in ["how many", "count", "number of", "total number"])
+                    if is_count_metric:
+                        entities_map = {
+                            "customer": "customers",
+                            "client": "customers",
+                            "user": "users",
+                            "product": "products",
+                            "item": "products",
+                            "employee": "employees",
+                            "staff": "employees",
+                            "sale": "sales",
+                            "order": "orders",
+                            "transaction": "transactions",
+                            "log": "audit logs",
+                            "event": "audit events",
+                            "department": "departments"
+                        }
+                        detected_entity = None
+                        for kw, plural in entities_map.items():
+                            if kw in primary_metric.lower() or kw in q or kw in sql_lower:
+                                detected_entity = plural
+                                break
+
+                        entity_phrase = detected_entity if detected_entity else "records"
+                        if descriptive_parts:
+                            direct_answer = f"There are {primary_val} {entity_phrase} in {', '.join(descriptive_parts)} in the database."
+                        else:
+                            direct_answer = f"There are {primary_val} {entity_phrase} in the database."
+                    elif "avg" in primary_metric.lower() or "average" in q:
+                        clean_m = metric_name.replace('avg ', '').replace('average ', '').strip()
+                        direct_answer = f"The average {clean_m} is {primary_val} across all recorded entries{desc_label}."
+                    elif "sum" in primary_metric.lower() or "total" in q or "total" in primary_metric.lower():
+                        clean_m = metric_name.replace('sum ', '').replace('total ', '').strip()
+                        direct_answer = f"Total {clean_m} is {primary_val} across all recorded entries{desc_label}."
+                    else:
+                        metric_lead = metric_name.capitalize() if metric_name.lower().startswith("total") else f"Total {metric_name}"
+                        direct_answer = f"{metric_lead} during the selected period is {primary_val}{desc_label}."
                 takeaway = f"Monitor {primary_metric.replace('_', ' ')} ({primary_val}) as a foundational KPI for performance tracking."
             else:
                 primary_metric = columns[0]
@@ -833,7 +868,30 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             unique_vals = len(set(str(r.get(col, '')) for r in rows))
             summary_stats.append(f"{col.replace('_', ' ').capitalize()}: {unique_vals} unique categories")
 
-        direct_answer = f"Retrieved {row_count} records answering '{question}' across columns: {', '.join(columns)}."
+        entities_map = {
+            "customer": "customers",
+            "client": "customers",
+            "user": "users",
+            "product": "products",
+            "item": "products",
+            "employee": "employees",
+            "staff": "employees",
+            "sale": "sales",
+            "order": "orders",
+            "transaction": "transactions",
+            "log": "audit logs",
+            "event": "audit events"
+        }
+        detected_entity = None
+        for kw, plural in entities_map.items():
+            if kw in q or kw in sql_lower:
+                detected_entity = plural
+                break
+
+        if detected_entity:
+            direct_answer = f"Retrieved {row_count} {detected_entity} matching '{question}' from the database."
+        else:
+            direct_answer = f"Retrieved {row_count} records answering '{question}' across columns: {', '.join(columns)}."
 
         return {
             "direct_answer": direct_answer,

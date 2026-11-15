@@ -384,6 +384,33 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
       </div>
 
       {/* =========================================================================
+          ORDER 0: NATURAL LANGUAGE ANSWER
+          Display this dynamic human-readable business answer above result table, charts, and analytics
+          ========================================================================= */}
+      {insights?.direct_answer && (
+        <section className="w-full">
+          <div className={`w-full ${insights.status === 'empty' ? 'bg-amber-50/70 border-amber-300/80' : 'bg-linear-to-r from-[#ECFDF5] via-[#F0FDF4] to-[#FFFFFF] border-[#10B981]/50'} border-2 rounded-2xl p-4 sm:p-5 shadow-xs space-y-2 transition-all`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className={`w-6 h-6 rounded-lg ${insights.status === 'empty' ? 'bg-amber-500 text-white' : 'bg-[#10B981] text-white'} flex items-center justify-center shadow-2xs`}>
+                  <Sparkles className="w-3.5 h-3.5" />
+                </div>
+                <span className={`text-xs font-bold uppercase tracking-wider ${insights.status === 'empty' ? 'text-amber-800' : 'text-[#047857]'}`}>
+                  Natural Language Answer
+                </span>
+              </div>
+              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${insights.status === 'empty' ? 'text-amber-800 bg-amber-100/70 border-amber-300' : 'text-[#047857] bg-[#ECFDF5] border-[#10B981]/30'}`}>
+                {insights.status === 'empty' ? 'Zero Matches' : 'Live Business Answer'}
+              </span>
+            </div>
+            <p className={`text-base sm:text-lg font-bold ${insights.status === 'empty' ? 'text-amber-900' : 'text-[#064E3B]'} leading-snug`}>
+              {insights.direct_answer}
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/* =========================================================================
           ORDER 1: BUSINESS ANSWER (EXECUTIVE INSIGHTS PANEL)
           ========================================================================= */}
       <section className="w-full">
@@ -392,13 +419,14 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
           question={question}
           rowCount={rowCount !== undefined ? rowCount : rows.length}
           isLoading={isExecuting}
+          showDirectAnswer={false}
         />
       </section>
 
       {/* =========================================================================
           ORDER 2: ONE APPROPRIATE CHART
           ========================================================================= */}
-      {rows.length > 0 && (
+      {rows.length > 0 && (isKpiCard || (activeView !== 'table' && numericKeys.length > 0)) && (
         <section className="w-full space-y-3 pt-2">
           {/* KPI Card if single row */}
           {isKpiCard ? (
@@ -672,9 +700,9 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
       )}
 
       {/* =========================================================================
-          ORDER 3: RESULTS TABLE
+          ORDER 3: RESULTS TABLE (With Graceful Empty Results State)
           ========================================================================= */}
-      {rows.length > 0 && (
+      {rows.length > 0 ? (
         <section className="w-full space-y-2.5 pt-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -687,8 +715,27 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
               </span>
             </div>
 
-            {/* Table Search & Page size */}
+            {/* Table Search, Chart toggle & Page size */}
             <div className="flex items-center gap-2">
+              {numericKeys.length > 0 && !isKpiCard && (
+                <button
+                  onClick={() =>
+                    setActiveView(
+                      activeView === 'table'
+                        ? ((visualization?.chart_type && visualization.chart_type !== 'table'
+                            ? visualization.chart_type
+                            : 'bar') as any)
+                        : 'table'
+                    )
+                  }
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] hover:bg-[#F1F5F9] text-xs font-semibold text-[#334155] cursor-pointer transition-colors shadow-2xs"
+                  title="Toggle visualization chart"
+                >
+                  <BarChart2 className="w-3.5 h-3.5 text-[#10B981]" />
+                  <span>{activeView === 'table' ? 'Show Chart' : 'Hide Chart'}</span>
+                </button>
+              )}
+
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-[#94A3B8] absolute left-2.5 top-2" />
                 <input
@@ -795,6 +842,20 @@ export const QueryResponseCard: React.FC<QueryResponseCardProps> = ({
               </div>
             </div>
           )}
+        </section>
+      ) : (
+        <section className="w-full pt-2">
+          <div className="w-full bg-[#FFFFFF] border border-amber-200/80 rounded-2xl p-6 sm:p-8 text-center space-y-3 shadow-2xs">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 mx-auto flex items-center justify-center">
+              <TableIcon className="w-5 h-5 text-amber-600" />
+            </div>
+            <div className="space-y-1 max-w-md mx-auto">
+              <h4 className="text-sm font-bold text-[#0F172A]">0 Records Returned</h4>
+              <p className="text-xs text-[#64748B] leading-relaxed">
+                The database executed the query safely, but zero records matched your filter criteria. Try adjusting date parameters, removing specific WHERE conditions, or verifying that active records exist in the database.
+              </p>
+            </div>
+          </div>
         </section>
       )}
 

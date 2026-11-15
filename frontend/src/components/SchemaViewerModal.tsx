@@ -8,6 +8,7 @@ interface SchemaViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onReSeed?: () => void;
+  onSelectTable?: (tableName: string) => void;
 }
 
 export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
@@ -15,6 +16,7 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
   isOpen,
   onClose,
   onReSeed,
+  onSelectTable,
 }) => {
   const tableNames = Object.keys(schema || {});
   const [activeTable, setActiveTable] = useState<string>('');
@@ -129,6 +131,19 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
                   Rows: <strong className="text-[#0F172A]">{currentTableData.row_count}</strong> • Columns: <strong className="text-[#0F172A]">{currentTableData.columns?.length || 0}</strong>
                 </p>
               </div>
+
+              {onSelectTable && activeTable && (
+                <button
+                  onClick={() => {
+                    onSelectTable(activeTable);
+                    onClose();
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white text-xs font-bold transition-all shadow-md shadow-[#10B981]/20 cursor-pointer"
+                >
+                  <Database className="w-3.5 h-3.5" />
+                  <span>Query This Table</span>
+                </button>
+              )}
             </div>
 
             {/* Column Schema Definitions */}

@@ -165,6 +165,15 @@ def _format_friendly_db_error(raw_error: str, sql_query: str) -> str:
     if "no such table" in err_lower:
         match = re.search(r"no such table:\s*([a-zA-Z0-9_\.]+)", raw_error, re.IGNORECASE)
         table_name = match.group(1) if match else "unknown"
+        try:
+            from backend.app.services.schema_service import get_db_schema_info
+            schema = get_db_schema_info()
+            available = [t for t in schema.keys() if t.lower() != "sqlite_sequence"]
+            if available:
+                tables_list = ", ".join(available)
+                return f"Database Error: Table '{table_name}' does not exist in the database. Connected tables: {tables_list}. Please verify the table name or check your schema."
+        except Exception:
+            pass
         return f"Database Error: Table '{table_name}' does not exist in the database. Please check the schema."
 
     if "no such column" in err_lower:

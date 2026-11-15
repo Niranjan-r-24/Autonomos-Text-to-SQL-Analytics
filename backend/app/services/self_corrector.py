@@ -151,17 +151,9 @@ class SelfCorrectionService:
         err_lower = error_msg.lower()
         fixed = failed_sql
 
-        # Rule 0: Unknown / Non-existent Table -> Re-synthesize using active schema
-        if any(k in err_lower for k in ["no such table", "table", "does not exist"]):
-            tbl_match = re.search(r"(?:no such table:\s*|table\s*['\"]?)([a-zA-Z0-9_\.]+)", error_msg, re.IGNORECASE)
-            if tbl_match:
-                bad_tbl = tbl_match.group(1).split(".")[-1].lower()
-                if bad_tbl not in [t.lower() for t in schema_info.keys()]:
-                    from backend.app.services.sql_generator import SQLGenerator
-                    gen = SQLGenerator()
-                    healed_sql, exp = gen._synthesize_dynamic_sql(user_question, schema_info)
-                    if healed_sql and healed_sql.strip() != failed_sql.strip():
-                        return healed_sql, f"Schema Recovery: Replaced non-existent table '{bad_tbl}' with grounded query"
+        # Rule 0: Non-existent table - do NOT silently replace with an arbitrary table
+        if any(k in err_lower for k in ["no such table", "table", "does not exist"]) and "column" not in err_lower:
+            return failed_sql, "Unknown Table: Non-existent table cannot be automatically substituted"
 
         # Rule 1: Unknown Column -> Find closest matching column in active schema or re-synthesize
         if any(k in err_lower for k in ["no such column", "does not exist", "was not found", "unknown column"]):
@@ -234,11 +226,7 @@ class SelfCorrectionService:
             if fixed != failed_sql:
                 return fixed, "Syntax Repair: Removed dangling comma"
 
-        # Default fallback: safe table sample if completely unfixable
-        if schema_info:
-            first_table = list(schema_info.keys())[0]
-            return f'SELECT * FROM "{first_table}" LIMIT 10;', "Fallback: Resorted to safe table inspection query"
-
+        # If unfixable, return the failed SQL honestly without misleading table substitutions
         return failed_sql, "No applicable repair heuristic found"
 
     def _heal_with_llm(

@@ -1,14 +1,15 @@
 """
 SQL and Query Explanation Generation Service.
 Generates valid ANSI/SQLite SQL queries and plain-English explanations using LLMs
-(Google Gemini, OpenAI) with a reliable deterministic offline fallback engine.
+(Google Gemini, OpenAI) with a fast, high-precision, intent-aware deterministic offline engine.
+Specially optimized for custom uploaded datasets (.CSV, .XLSX, .JSON, .SQLITE) and multi-table schemas.
 """
 import os
 import re
 import json
 import logging
 import httpx
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 try:
     from backend.app.services.schema_service import format_schema_for_llm
     from backend.app.db.database import engine
@@ -19,11 +20,34 @@ except ImportError:
     except Exception:
         engine = None
 
+from sqlalchemy import text
+
 logger = logging.getLogger("text2sql.generator")
+
+_DISTINCT_CACHE: Dict[Tuple[str, str], List[str]] = {}
+
+
+def _get_column_distinct_values(table_name: str, col_name: str) -> List[str]:
+    """Retrieves cached distinct text values from SQLite for smart intent filtering."""
+    cache_key = (table_name.lower(), col_name.lower())
+    if cache_key in _DISTINCT_CACHE:
+        return _DISTINCT_CACHE[cache_key]
+
+    vals: List[str] = []
+    if engine is not None:
+        try:
+            with engine.connect() as conn:
+                res = conn.execute(text(f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL LIMIT 40;'))
+                vals = [str(r[0]).strip() for r in res.fetchall() if r[0] is not None and len(str(r[0]).strip()) >= 2]
+        except Exception:
+            pass
+    _DISTINCT_CACHE[cache_key] = vals
+    return vals
+
 
 class SQLGenerator:
     """Generates SQL queries and plain-English query explanations from user natural language input."""
-    
+
     def __init__(self, api_key: Optional[str] = None, provider: str = "gemini"):
         self.provider = (provider or "gemini").lower()
         self.api_key = api_key or (
@@ -51,12 +75,12 @@ class SQLGenerator:
         Returns:
             Tuple of (sql_query: str, explanation: str, generated_by: str)
         """
-        logger.info("Generating SQL for question: '%s' using provider: %s", user_question, self.provider)
+        logger.info("Generating SQL for question: '%s' (active_table: %s, provider: %s)", user_question, active_table, self.provider)
 
         # 1. Attempt LLM generation if API key is present
         if self.api_key and self.provider != "fallback":
             try:
-                llm_sql, llm_explanation = self._generate_with_llm(user_question, schema_info)
+                llm_sql, llm_explanation = self._generate_with_llm(user_question, schema_info, active_table=active_table)
                 if llm_sql:
                     cleaned_sql = self._clean_sql(llm_sql)
                     provider_label = "Gemini 1.5 Flash" if "gemini" in self.provider else "OpenAI GPT-4o"
@@ -70,18 +94,28 @@ class SQLGenerator:
         logger.info("Generated SQL via Deterministic Engine: %s", sql)
         return sql, explanation, "Deterministic Analytics Engine"
 
-    def _generate_with_llm(self, user_question: str, schema_info: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    def _generate_with_llm(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         """Invokes LLM API to generate JSON containing both SQL and explanation with strict ranking direction rules."""
-        formatted_schema = format_schema_for_llm(schema_info)
+        formatted_schema = format_schema_for_llm(schema_info, active_table=active_table)
+
+        active_table_instruction = ""
+        if active_table and active_table in schema_info:
+            active_table_instruction = f"\nTARGET TABLE: The active dataset is '{active_table}'. Prioritize writing queries against '{active_table}' unless the question explicitly asks for another table.\n"
 
         system_prompt = f"""You are an expert SQL Developer and Database Architect.
 Generate a standard SQLite/ANSI SQL query and a short, clear plain English explanation for the user question.
 
 DATABASE SCHEMA:
 {formatted_schema}
-
+{active_table_instruction}
 CRITICAL INTENT AND RANKING RULES:
-1. Strictly respect requested ranking direction:
+1. TABLE SELECTION & DOMAIN RULES:
+   - Questions about "customers", "clients", "users", "accounts", or "subscribers" (e.g., "How many customers are in the database?") MUST ALWAYS query the 'customers' table (e.g. SELECT COUNT(*) AS customer_count FROM customers;). NEVER query 'audit_logs' or 'sales'.
+   - 'audit_logs' contains system security logs (actions, IP addresses, failures). NEVER query 'audit_logs' unless the user explicitly asks about audit logs, security events, logins, or IP addresses.
+   - Questions about "products", "catalog", "items", "prices", or "categories" MUST query the 'products' table (or join with 'sales' for sales volume/revenue).
+   - Questions about "employees", "staff", "departments", or "salaries" MUST query the 'employees' table.
+   - Questions about "sales", "orders", "transactions", or "revenue" MUST query the 'sales' table.
+2. Strictly respect requested ranking direction:
    - For "lowest", "bottom", "least", "cheapest", "worst", "minimum", "ascending", or "ASC": use ORDER BY <metric> ASC.
    - For "top", "highest", "most", "best", "greatest", "maximum", "descending", or "DESC": use ORDER BY <metric> DESC.
    - NEVER default to DESC when the user asks for lowest, bottom, or ascending rankings.
@@ -117,7 +151,7 @@ JSON Response Format:
                     "responseMimeType": "application/json"
                 }
             }
-            with httpx.Client(timeout=12) as client:
+            with httpx.Client(timeout=6) as client:
                 res = client.post(url, json=payload)
                 if res.status_code == 200:
                     data = res.json()
@@ -142,7 +176,7 @@ JSON Response Format:
                 "temperature": 0.1,
                 "response_format": {"type": "json_object"}
             }
-            with httpx.Client(timeout=12) as client:
+            with httpx.Client(timeout=6) as client:
                 res = client.post(url, headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
@@ -158,27 +192,109 @@ JSON Response Format:
         """
         Provides high-precision, intent-aware deterministic SQL queries and explanations.
         Correctly recognizes ranking direction (ASC for lowest/bottom, DESC for top/highest),
-        metrics (revenue, units sold, spending, orders, rating), filters, and limits.
-        Strictly guards benchmark queries so they only fire when tables and columns exist in active schema.
+        metrics, filters, and limits.
         """
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
-
-        # Check if user prompt explicitly references a custom/uploaded table
-        # or if active_table was specified
         canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
-        target_custom_table = None
-        for tbl in schema_info.keys():
-            tbl_l = tbl.lower()
-            if tbl_l not in canonical_tables:
-                if tbl_l in q_tokens or tbl_l in q or tbl_l.replace("_", " ") in q or tbl_l.rstrip("s") in q_tokens:
-                    target_custom_table = tbl
-                    break
-        if not target_custom_table and active_table and active_table in schema_info and active_table.lower() not in canonical_tables:
-            target_custom_table = active_table
 
-        if target_custom_table:
-            return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_custom_table)
+        # Step A: Table Intent Detection with Semantic Synonyms
+        table_synonyms = {
+            "customers": ["customer", "customers", "client", "clients", "user", "users", "buyer", "buyers", "subscriber", "subscribers", "account", "accounts", "member", "members"],
+            "products": ["product", "products", "item", "items", "catalog", "catalogue", "merchandise", "goods"],
+            "employees": ["employee", "employees", "staff", "worker", "workers", "headcount", "personnel", "engineer", "engineers"],
+            "sales": ["sale", "sales", "transaction", "transactions", "order", "orders", "purchase", "purchases"],
+            "audit_logs": ["audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs", "security event", "security events", "failed login", "login failure", "security log"]
+        }
+
+        target_table_name = None
+        # 1. Match semantic table synonyms
+        for tbl, syns in table_synonyms.items():
+            if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
+                target_table_name = tbl
+                break
+
+        # 2. Match exact schema table names
+        if not target_table_name:
+            for tbl in schema_info.keys():
+                tbl_l = tbl.lower()
+                if tbl_l == "sqlite_sequence":
+                    continue
+                if tbl_l in q_tokens or tbl_l in q or tbl_l.replace("_", " ") in q or tbl_l.rstrip("s") in q_tokens:
+                    target_table_name = tbl
+                    break
+
+        # Step A.1: Direct Entity Count Pattern (e.g. "How many customers are in the database?", "How many products?", "Count of employees")
+        is_count_intent = (
+            any(k in q for k in ["how many", "count of", "number of", "total number of", "total count of", "how many "])
+            or ("count" in q and not any(k in q for k in ["by", "per", "group", "plan", "country", "status", "department", "category", "where"]))
+        )
+        if is_count_intent and not any(k in q for k in ["average", "avg", "highest", "lowest", "top", "bottom", "more than", "greater than", "less than", "between"]):
+            # Determine count table
+            count_table = None
+            if any(k in q for k in ["customer", "client", "user", "buyer", "subscriber", "member", "account"]):
+                count_table = "customers" if "customers" in schema_info else target_table_name
+            elif any(k in q for k in ["employee", "staff", "worker", "personnel", "headcount"]):
+                count_table = "employees" if "employees" in schema_info else target_table_name
+            elif any(k in q for k in ["product", "item", "catalog"]):
+                count_table = "products" if "products" in schema_info else target_table_name
+            elif any(k in q for k in ["sale", "order", "transaction", "purchase"]):
+                count_table = "sales" if "sales" in schema_info else target_table_name
+            elif any(k in q for k in ["audit", "log", "security event"]):
+                count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
+            elif target_table_name and target_table_name != "audit_logs":
+                count_table = target_table_name
+
+            if count_table and count_table in schema_info:
+                sql = f'SELECT COUNT(*) AS total_count FROM "{count_table}";'
+                explanation = f"Calculates total count of records in the '{count_table}' table."
+                return sql, explanation
+
+        # Step A.2: Check if user explicitly asked for a table that does NOT exist in the database
+        if not target_table_name:
+            stopwords = {
+                "the", "a", "an", "all", "each", "this", "that", "these", "my", "our", "database",
+                "data", "db", "here", "current", "active", "system", "first", "last", "top", "bottom",
+                "any", "some", "every", "select", "where", "group", "order", "limit", "records",
+                "rows", "items", "entries", "values", "details", "information", "info", "columns",
+                "fields", "table", "tables", "chart", "graph", "analytics", "insights", "summary",
+                "scratch", "file", "csv", "json", "sample", "view"
+            }
+            explicit_table_requested = None
+            for pat in [r"\bfrom\s+([a-zA-Z0-9_]+)\b", r"\btable\s+([a-zA-Z0-9_]+)\b", r"\b([a-zA-Z0-9_]+)\s+table\b"]:
+                m = re.search(pat, q)
+                if m:
+                    cand = m.group(1).lower()
+                    if cand not in stopwords and len(cand) > 1:
+                        exists_in_schema = any(
+                            cand == t.lower() or cand.rstrip("s") == t.lower().rstrip("s")
+                            for t in schema_info.keys()
+                        )
+                        if not exists_in_schema:
+                            explicit_table_requested = m.group(1)
+                            break
+
+            if explicit_table_requested:
+                return (
+                    f'SELECT * FROM "{explicit_table_requested}" LIMIT 10;',
+                    f"Attempted to query requested table '{explicit_table_requested}'."
+                )
+
+        # Step B: If not mentioned, check active_table
+        if not target_table_name and active_table and active_table in schema_info and active_table.lower() != "sqlite_sequence":
+            target_table_name = active_table
+
+        # Step C: If still not set, check if an uploaded (non-canonical) table exists in schema
+        if not target_table_name:
+            non_canonicals = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
+            if len(non_canonicals) == 1:
+                # If there's a custom uploaded table, and user isn't asking about audit logs, prioritize it
+                if not any(k in q for k in ["audit", "log", "ip_address"]):
+                    target_table_name = non_canonicals[0]
+
+        # If a custom uploaded table is targeted, route directly to dynamic synthesizer
+        if target_table_name and target_table_name.lower() not in canonical_tables:
+            return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_table_name)
 
         # 1. Parse ranking direction
         is_lowest = any(k in q for k in [
@@ -191,10 +307,21 @@ JSON Response Format:
         direction_word = "ascending" if direction == "ASC" else "descending"
         rank_label = "lowest" if direction == "ASC" else "top"
 
-        # 2. Parse limit count
-        limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)?\s*(\d+)\b", q)
-        limit_val = int(limit_match.group(1)) if limit_match else 5
-        has_explicit_limit = bool(limit_match) or any(k in q for k in ["top", "bottom", "lowest", "highest", "limit", "first"])
+        # 2. Parse limit count without capturing comparison numbers like > 30000
+        limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)\s*(\d+)\b", q)
+        if not limit_match:
+            limit_match = re.search(r"\b(\d+)\s*(?:rows?|records?|items?|entries|results?|products?|users?|customers?|employees?)\b", q)
+
+        if limit_match:
+            limit_val = int(limit_match.group(1))
+            has_explicit_limit = True
+        elif is_highest or is_lowest:
+            limit_val = 1 if any(k in q for k in ["what is", "which is", "who is", "find the", "single", "most", "least"]) else 5
+            has_explicit_limit = True
+        else:
+            limit_val = 5
+            has_explicit_limit = False
+
         limit_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
 
         # 3. Parse date / temporal filters if specified
@@ -488,7 +615,7 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern: Security & Audit logs (Strictly require security or audit or log keywords)
+        # Pattern: Security & Audit logs
         if self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and ("event" in q or "log" in q))):
             if "action" in q and ("ip" in q or "address" in q):
                 sql = (
@@ -530,28 +657,22 @@ JSON Response Format:
 
         # Pattern: First N rows from specific table (e.g. from table chips or direct prompt)
         first_table_match = re.search(r"(?:from|in|table)\s+([a-zA-Z0-9_]+)", q)
-        target_table = first_table_match.group(1).lower() if first_table_match else None
-        if target_table and schema_info and target_table in schema_info and (
+        target_table_candidate = first_table_match.group(1).lower() if first_table_match else None
+        if target_table_candidate and schema_info and target_table_candidate in schema_info and (
             any(k in q for k in ["first", "sample", "all rows", "show rows", "browse", "records"])
             or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "="])
         ):
-            sql = f'SELECT * FROM "{target_table}" LIMIT {limit_val};'
-            explanation = f"Retrieves the first {limit_val} records from the '{target_table}' table."
+            sql = f'SELECT * FROM "{target_table_candidate}" LIMIT {limit_val};'
+            explanation = f"Retrieves the first {limit_val} records from the '{target_table_candidate}' table."
             return sql, explanation
 
         # Dynamic Schema Synthesizer: Intelligently handles custom tables, columns, metrics, and filters
-        return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_custom_table)
+        return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_table_name)
 
     def _synthesize_dynamic_sql(self, user_question: str, schema_info: Dict[str, Any], target_table: Optional[str] = None) -> Tuple[str, str]:
         """
-        Dynamically synthesizes schema-grounded SQL for arbitrary databases and custom tables
-        when no static benchmark pattern matches.
-        
-        Performs:
-        1. Multi-factor table resolution (exact, stemmed, column token matches, sample data).
-        2. Column categorization (numeric, categorical, temporal).
-        3. Intent mapping (aggregation, group-by, ranking, filtering, sorting, limits).
-        4. Safe standard ANSI/SQLite query generation with clear explanation.
+        Dynamically synthesizes schema-grounded SQL for arbitrary databases and custom tables.
+        Handles numeric comparisons, text filters, aggregations, group-bys, and ranked limits accurately.
         """
         if not schema_info:
             return 'SELECT * FROM "sales" LIMIT 10;', "Retrieves sample records from the default sales table."
@@ -559,7 +680,7 @@ JSON Response Format:
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
 
-        # 1. Ranking & Limit Parsing
+        # 1. Ranking Direction & Limits
         is_lowest = any(k in q for k in [
             "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "min", "minimum", "fewest"
         ])
@@ -570,83 +691,75 @@ JSON Response Format:
         direction_word = "ascending" if direction == "ASC" else "descending"
         rank_label = "lowest" if direction == "ASC" else "top"
 
-        limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)?\s*(\d+)\b", q)
+        # Explicit limit parsing (guarded so comparison numbers like > 30000 or years 2024 are never captured)
+        limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)\s*(\d+)\b", q)
+        if not limit_match:
+            limit_match = re.search(r"\b(\d+)\s*(?:rows?|records?|items?|entries|results?|products?|cars?|students?|employees?|users?)\b", q)
+
         if limit_match:
-            limit_val = int(limit_match.group(1))
-            has_explicit_limit = True
-        elif is_highest or is_lowest:
-            if any(k in q for k in ["what is", "which is", "who is", "find the", "single", "most", "least"]):
-                limit_val = 1
+            num = int(limit_match.group(1))
+            # Make sure it's not a comparison value like > 30000
+            comp_match = re.search(r"(?:>=|<=|>|<|=|!=|greater than|less than|above|below|over|under)\s*" + str(num), q)
+            if not comp_match and num < 5000 and num not in [2020, 2021, 2022, 2023, 2024, 2025, 2026]:
+                limit_val = num
                 has_explicit_limit = True
             else:
-                limit_val = 5
-                has_explicit_limit = True
+                limit_val = 5 if (is_highest or is_lowest) else 10
+                has_explicit_limit = False
+        elif is_highest or is_lowest:
+            limit_val = 1 if any(k in q for k in ["what is", "which is", "who is", "find the", "single", "most", "least"]) else 5
+            has_explicit_limit = True
         else:
             limit_val = 10
             has_explicit_limit = False
 
-        # 2. Multi-Factor Table Resolution (if not already locked to a target table)
+        # 2. Multi-Factor Table Resolution (if target_table is not explicitly locked)
+        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
         if not target_table or target_table not in schema_info:
             scores = {}
-            canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
-
             for tbl_name, meta in schema_info.items():
                 tbl_clean = tbl_name.lower()
                 if tbl_clean == "sqlite_sequence":
                     continue
                 score = 0
-                
-                # Exact or token match on table name
+
+                # Match table name
                 if tbl_clean in q_tokens or tbl_clean in q:
-                    score += 250
+                    score += 300
                 elif tbl_clean.rstrip("s") in q_tokens or (tbl_clean + "s") in q_tokens:
-                    score += 180
+                    score += 200
                 elif any(part in q_tokens for part in tbl_clean.split("_") if len(part) > 2):
-                    score += 80
-                
-                # Column token and semantic matches
+                    score += 100
+
+                # Match column names
                 cols = meta.get("columns", [])
                 for c in cols:
                     c_name = c["name"].lower()
                     if c_name in q_tokens:
-                        score += 45
+                        score += 50
                     elif c_name.replace("_", " ") in q:
-                        score += 40
-                    elif len(c_name) > 3 and c_name in q:
-                        score += 25
+                        score += 45
 
-                    # Semantic synonym match
-                    if any(k in q for k in ["revenue", "sales", "spending", "amount", "total"]):
-                        if any(syn in c_name for syn in ["total_amount", "amount", "revenue", "sales", "total_price", "price"]):
-                            score += 50
-                    if any(k in q for k in ["product", "item", "good"]):
-                        if any(syn in c_name for syn in ["product_name", "product", "item_name", "title"]):
-                            score += 50
-                    if any(k in q for k in ["customer", "user", "client"]):
-                        if any(syn in c_name for syn in ["customer_name", "customer", "user", "username"]):
-                            score += 50
-
-                # Sample row value matches
-                for row in meta.get("sample_rows", []):
-                    for val in row.values():
-                        if isinstance(val, str) and len(val) >= 3:
-                            v_lower = val.lower()
-                            if v_lower in q_tokens or v_lower in q:
-                                score += 30
-                                break
-
-                # Boost custom uploaded tables if they have matching columns
+                # Boost non-canonical uploaded tables if they match columns
                 if tbl_clean not in canonical_tables and score > 0:
-                    score += 75
+                    score += 120
 
-                # Penalize audit_logs if no security/audit terms
                 if tbl_clean == "audit_logs" and not any(k in q for k in ["audit", "log", "security", "ip", "fail"]):
-                    score -= 100
-                    
+                    score -= 500
+
                 scores[tbl_name] = score
 
-            if not scores:
-                target_table = list(schema_info.keys())[0]
+            if not scores or max(scores.values()) <= 0:
+                # Do NOT default to audit_logs! Default to the table matching question domain keywords, or sales
+                if any(k in q for k in ["customer", "client", "user", "buyer", "people", "account", "subscriber"]):
+                    target_table = "customers" if "customers" in schema_info else list(schema_info.keys())[0]
+                elif any(k in q for k in ["employee", "staff", "salary", "department", "hire"]):
+                    target_table = "employees" if "employees" in schema_info else list(schema_info.keys())[0]
+                elif any(k in q for k in ["product", "item", "stock", "price", "category", "rating"]):
+                    target_table = "products" if "products" in schema_info else list(schema_info.keys())[0]
+                else:
+                    uploaded = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
+                    target_table = uploaded[0] if uploaded else ("sales" if "sales" in schema_info else list(schema_info.keys())[0])
             else:
                 target_table = max(scores, key=scores.get)
 
@@ -665,7 +778,14 @@ JSON Response Format:
             c_lower = c_name.lower()
             c_type = str(c.get("type", "")).upper()
 
-            if any(k in c_type for k in ["INT", "FLOAT", "DOUBLE", "REAL", "NUMERIC", "DECIMAL"]):
+            is_num_type = any(k in c_type for k in ["INT", "FLOAT", "DOUBLE", "REAL", "NUMERIC", "DECIMAL", "BIGINT"])
+            sample_vals = [r.get(c_name) for r in table_meta.get("sample_rows", []) if r.get(c_name) is not None]
+            has_numeric_samples = sample_vals and all(
+                isinstance(v, (int, float)) or (isinstance(v, str) and v.replace(".", "", 1).replace("-", "", 1).isdigit())
+                for v in sample_vals
+            )
+
+            if is_num_type or has_numeric_samples:
                 if not (c_lower == "id" or c_lower.endswith("_id")):
                     numeric_cols.append(c_name)
                 else:
@@ -690,58 +810,44 @@ JSON Response Format:
                 pref = ["price", "unit_price", "cost", "retail_price"]
             elif any(k in q for k in ["salary", "pay", "wage", "compensation"]):
                 pref = ["salary", "compensation", "pay"]
-            elif any(k in q for k in ["rating", "score", "stars"]):
-                pref = ["rating", "score"]
+            elif any(k in q for k in ["rating", "score", "stars", "grade", "performance"]):
+                pref = ["rating", "score", "performance_score", "grade"]
+            elif any(k in q for k in ["age", "years old"]):
+                pref = ["age", "years"]
+            elif any(k in q for k in ["mileage", "distance", "miles"]):
+                pref = ["mileage", "miles"]
             else:
-                pref = ["total_amount", "salary", "total_price", "price", "revenue", "amount", "total_spent", "spent", "quantity", "stock_quantity", "stock", "rating", "units", "score", "cost", "credits", "value"]
+                pref = ["total_amount", "salary", "total_price", "price", "revenue", "amount", "total_spent", "spent", "quantity", "stock_quantity", "stock", "rating", "score", "units", "cost", "value"]
             metric_col = next((c for p in pref for c in numeric_cols if p in c.lower()), (numeric_cols[0] if numeric_cols else None))
 
-        # 5. Entity / Dimension Detection with Semantic Synonyms
+        # 5. Entity / Dimension Column Detection
         entity_col = None
-        if any(k in q for k in ["product", "item", "good"]):
-            prod_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["product_name", "product", "item_name", "item", "title", "sku"])]
-            if not prod_cols:
-                prod_cols = [c for c in text_cols if "name" in c.lower() and "customer" not in c.lower() and "user" not in c.lower()]
-            if prod_cols:
-                entity_col = prod_cols[0]
-        elif any(k in q for k in ["customer", "client", "user"]):
-            cust_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["customer_name", "customer", "user_name", "username", "client_name"])]
-            if not cust_cols:
-                cust_cols = [c for c in text_cols if "name" in c.lower() and "product" not in c.lower()]
-            if cust_cols:
-                entity_col = cust_cols[0]
-        elif any(k in q for k in ["department", "dept"]):
-            dept_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["department", "dept"])]
-            if dept_cols:
-                entity_col = dept_cols[0]
-        elif any(k in q for k in ["category", "genre", "type"]):
-            cat_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["category", "type", "genre"])]
-            if cat_cols:
-                entity_col = cat_cols[0]
-        elif any(k in q for k in ["region", "country", "city", "state"]):
-            geo_cols = [c for c in text_cols if any(syn in c.lower() for syn in ["region", "country", "city", "state"])]
-            if geo_cols:
-                entity_col = geo_cols[0]
-        elif text_cols and (is_highest or is_lowest or any(k in q for k in ["top", "bottom", "rank", "sort", "who", "which", "list", "show", "first"])):
-            candidate_text = [c for c in text_cols if not (c.lower() == "id" or c.lower().endswith("_id"))]
-            entity_col = candidate_text[0] if candidate_text else text_cols[0]
+        for cand in ["name", "title", "item_name", "product_name", "car_name", "student_name", "emp_name", "customer_name"]:
+            match = next((c for c in text_cols if c.lower() == cand), None)
+            if match:
+                entity_col = match
+                break
+        if not entity_col:
+            entity_col = next((c for c in text_cols if "name" in c.lower()), (text_cols[0] if text_cols else None))
 
-        # Explicit Group By parsing (e.g. "by category", "per region", "by department")
+        # Explicit Group By parsing (e.g. "by brand", "per department", "by category", "for each fuel type")
         group_col = None
-        by_match = re.search(r"\b(?:by|per|for each|in each|across)\s+([a-zA-Z0-9_]+)", q)
+        by_match = re.search(r"\b(?:by|per|for each|in each|across|grouped by)\s+([a-zA-Z0-9_ ]+)", q)
         if by_match:
-            candidate = by_match.group(1).lower()
+            candidate = by_match.group(1).strip().lower().replace(" ", "_")
+            candidate_raw = by_match.group(1).strip().lower()
             for c in all_cols:
-                if c.lower() == candidate or c.lower().rstrip("s") == candidate.rstrip("s"):
-                    if c in numeric_cols and (is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q):
-                        metric_col = c
-                    elif c not in numeric_cols:
-                        group_col = c
+                c_l = c.lower()
+                if c_l == candidate or c_l.rstrip("s") == candidate.rstrip("s") or c_l == candidate_raw:
+                    group_col = c
+                    break
+                elif candidate in c_l or c_l in candidate:
+                    group_col = c
                     break
 
         if not group_col and entity_col and (
             any(k in q for k in ["distribution", "breakdown"])
-            or (any(k in q for k in ["top", "bottom", "highest", "lowest", "rank", "best", "worst"]) and any(k in q for k in ["product", "customer", "department", "user", "item", "category"]))
+            or (any(k in q for k in ["top", "bottom", "highest", "lowest", "rank", "best", "worst"]) and any(k in q for k in ["product", "customer", "department", "user", "item", "category", "brand", "role"]))
         ):
             group_col = entity_col
 
@@ -749,69 +855,14 @@ JSON Response Format:
         where_filters = []
         filter_descriptions = []
 
-        candidate_filter_cols = [c for c in text_cols if not (c.lower() == "id" or c.lower().endswith("_id"))]
-        stopwords = {"the", "all", "each", "every", "a", "an", "this", "sample", "table", "database", "here", "top", "bottom", "order", "orders", "first", "last", "rows", "records", "data"}
-
-        for c in candidate_filter_cols:
-            c_l = c.lower()
-            matched_sample = False
-            # Check sample rows for known values
-            for r in table_meta.get("sample_rows", []):
-                val = r.get(c)
-                if val and isinstance(val, str) and len(val) >= 2:
-                    if re.search(rf"\b{re.escape(val.lower())}\b", q):
-                        clean_val = val.replace("'", "''")
-                        where_filters.append(f'LOWER("{c}") = \'{clean_val.lower()}\'')
-                        filter_descriptions.append(f"{c} is '{val}'")
-                        matched_sample = True
-                        break
-
-            # Prepositional regex matching strictly to the corresponding domain column
-            if not matched_sample:
-                if c_l in ["country", "nation"]:
-                    m = re.search(r"\b(?:from|country|nation|in)\s+([a-zA-Z]+)\b", q)
-                    if m and m.group(1).lower() not in stopwords:
-                        val_str = m.group(1).lower()
-                        where_filters.append(f'LOWER("{c}") = \'{val_str}\'')
-                        filter_descriptions.append(f"{c} is '{m.group(1)}'")
-                elif c_l in ["department", "dept"]:
-                    m = re.search(r"\b(?:department|dept|in)\s+([a-zA-Z]+)\b", q)
-                    if m and m.group(1).lower() not in stopwords:
-                        val_str = m.group(1).lower()
-                        where_filters.append(f'LOWER("{c}") = \'{val_str}\'')
-                        filter_descriptions.append(f"{c} is '{m.group(1)}'")
-                elif c_l in ["plan", "tier"]:
-                    m = re.search(r"\b(?:plan|tier)\s+([a-zA-Z]+)\b", q)
-                    if m and m.group(1).lower() not in stopwords:
-                        val_str = m.group(1).lower()
-                        where_filters.append(f'LOWER("{c}") = \'{val_str}\'')
-                        filter_descriptions.append(f"{c} is '{m.group(1)}'")
-                elif c_l in ["city", "state", "region"]:
-                    m = re.search(r"\b(?:city|state|region)\s+([a-zA-Z]+)\b", q)
-                    if m and m.group(1).lower() not in stopwords:
-                        val_str = m.group(1).lower()
-                        where_filters.append(f'LOWER("{c}") = \'{val_str}\'')
-                        filter_descriptions.append(f"{c} is '{m.group(1)}'")
-
-        # Status completed / failure shortcuts
-        if "completed" in q and "status" in [c.lower() for c in all_cols]:
-            where_filters.append('"status" = \'Completed\'')
-            filter_descriptions.append("status is 'Completed'")
-        elif "fail" in q and "status" in [c.lower() for c in all_cols]:
-            where_filters.append('("status" = \'FAILURE\' OR "status" LIKE \'%FAIL%\')')
-            filter_descriptions.append("status indicates failure")
-        elif "active" in q and "status" in [c.lower() for c in all_cols]:
-            where_filters.append('"status" = \'Active\'')
-            filter_descriptions.append("status is 'Active'")
-
-        # Numeric comparison filters (e.g. price > 100, units < 50)
-        for num_c in numeric_cols:
-            pat = rf"\b{re.escape(num_c.lower())}\s*(>=|<=|>|<|=|greater than|more than|above|over|less than|below|under)\s*(\d+(?:\.\d+)?)\b"
+        # 6a. Numeric comparison filters (e.g. price > 30000, salary >= 80000, mileage < 20000)
+        for num_c in numeric_cols + date_cols:
+            pat = rf"\b{re.escape(num_c.lower())}\s*(>=|<=|>|<|=|!=|greater than|more than|above|over|less than|below|under)\s*(\d+(?:\.\d+)?)\b"
             m = re.search(pat, q)
             if m:
                 op_raw, n_val = m.group(1), m.group(2)
                 op_map = {
-                    ">": ">", ">=": ">=", "<": "<", "<=": "<=", "=": "=",
+                    ">": ">", ">=": ">=", "<": "<", "<=": "<=", "=": "=", "!=": "!=",
                     "greater than": ">", "more than": ">", "above": ">", "over": ">",
                     "less than": "<", "below": "<", "under": "<"
                 }
@@ -819,67 +870,71 @@ JSON Response Format:
                 where_filters.append(f'"{num_c}" {op} {n_val}')
                 filter_descriptions.append(f"{num_c} {op} {n_val}")
 
-        # Date / Temporal filters on target table
-        if date_cols:
-            d_col = date_cols[0]
-            month_names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
-            month_map = {
-                "january": "01", "february": "02", "march": "03", "april": "04",
-                "may": "05", "june": "06", "july": "07", "august": "08",
-                "september": "09", "october": "10", "november": "11", "december": "12"
-            }
-            month_pat = r"\b(" + "|".join(month_names) + r")(?:\s+(20[12]\d))?\b"
-            dyn_between_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\s*(?:and|to)\s*(\d{4}-\d{2}-\d{2})\b", q)
-            dyn_rel_year_match = re.search(r"\b(after|since|before|earlier than|later than)\s+(20[12]\d)\b", q)
-            dyn_month_match = re.search(month_pat, q)
-            dyn_year_match = re.search(r"\b(?:in|for|during|year|of)?\s*(20[12]\d)\b", q)
+        # 6b. Text distinct value matching across text columns in target table
+        matched_text_cols = set()
+        for c in text_cols:
+            distinct_vals = _get_column_distinct_values(target_table, c)
+            # Combine cached distinct values with sample rows
+            for r in table_meta.get("sample_rows", []):
+                val = r.get(c)
+                if val and isinstance(val, str) and str(val).strip() not in distinct_vals:
+                    distinct_vals.append(str(val).strip())
 
-            if dyn_between_match:
-                d1, d2 = dyn_between_match.group(1), dyn_between_match.group(2)
-                where_filters.append(f'"{d_col}" BETWEEN \'{d1}\' AND \'{d2}\'')
-                filter_descriptions.append(f"{d_col} between {d1} and {d2}")
-            elif dyn_rel_year_match:
-                op_w, yr = dyn_rel_year_match.group(1), dyn_rel_year_match.group(2)
-                if op_w in ["after", "since", "later than"]:
-                    where_filters.append(f'"{d_col}" >= \'{yr}-01-01\'')
-                    filter_descriptions.append(f"{d_col} after {yr}")
-                else:
-                    where_filters.append(f'"{d_col}" < \'{yr}-01-01\'')
-                    filter_descriptions.append(f"{d_col} before {yr}")
-            elif dyn_month_match:
-                m_name = dyn_month_match.group(1).lower()
-                m_yr = dyn_month_match.group(2) or "2026"
-                m_code = month_map[m_name]
-                where_filters.append(f'"{d_col}" LIKE \'{m_yr}-{m_code}%\'')
-                filter_descriptions.append(f"{d_col} in {m_name.capitalize()} {m_yr}")
-            elif dyn_year_match:
-                yr = dyn_year_match.group(1)
-                where_filters.append(f'"{d_col}" LIKE \'{yr}%\'')
-                filter_descriptions.append(f"{d_col} in {yr}")
+            for val in distinct_vals:
+                val_l = val.lower()
+                if len(val_l) >= 2 and re.search(rf"\b{re.escape(val_l)}\b", q):
+                    clean_val = val.replace("'", "''")
+                    where_filters.append(f'LOWER("{c}") = \'{clean_val.lower()}\'')
+                    filter_descriptions.append(f"{c} is '{val}'")
+                    matched_text_cols.add(c)
+                    break
+
+        # 6c. Explicit column = value expressions (e.g. brand is Honda, role = Developer)
+        for c in text_cols:
+            if c in matched_text_cols:
+                continue
+            c_l = c.lower()
+            m_col = re.search(rf"\b{re.escape(c_l)}\s*(?:is|=|equals|like)\s*['\"]?([a-zA-Z0-9_\s-]+?)['\"]?(?:\s+(?:and|or|\b)|\Z)", q)
+            if m_col:
+                v = m_col.group(1).strip()
+                if v and v not in ["the", "a", "an"]:
+                    clean_v = v.replace("'", "''")
+                    where_filters.append(f'LOWER("{c}") = \'{clean_v.lower()}\'')
+                    filter_descriptions.append(f"{c} is '{v}'")
+                    matched_text_cols.add(c)
+
+        # 6d. Status keywords
+        if "status" in [c.lower() for c in all_cols] and "status" not in matched_text_cols:
+            if "completed" in q:
+                where_filters.append('"status" = \'Completed\'')
+                filter_descriptions.append("status is 'Completed'")
+            elif "fail" in q:
+                where_filters.append('("status" = \'FAILURE\' OR "status" LIKE \'%FAIL%\')')
+                filter_descriptions.append("status indicates failure")
+            elif "active" in q:
+                where_filters.append('"status" = \'Active\'')
+                filter_descriptions.append("status is 'Active'")
 
         where_clause = f" WHERE {' AND '.join(where_filters)}" if where_filters else ""
 
-        # Aggregation intent
+        # 7. Aggregation Intent Analysis
         is_avg = any(k in q for k in ["average", "avg", "mean"])
-        is_sum = any(k in q for k in ["total", "sum", "overall", "how much", "revenue", "sales", "spending", "spent", "amount", "volume"])
-        is_count = any(k in q for k in ["count", "how many", "number of"])
+        is_sum = any(k in q for k in ["total", "sum", "overall", "how much", "revenue", "spending", "spent", "budget"])
+        is_count = any(k in q for k in ["count", "how many", "number of", "for each", "by"])
         is_max = any(k in q for k in ["highest", "max", "maximum", "greatest"]) and not has_explicit_limit
         is_min = any(k in q for k in ["lowest", "min", "minimum", "least", "cheapest"]) and not has_explicit_limit
 
-        # Determine if query requires GROUP BY aggregation or individual row ordering
-        target_group = group_col or (entity_col if any(k in q for k in ["revenue", "sales", "spending", "spent", "volume", "total", "sum"]) else None)
-        needs_group_by = bool(target_group and (
+        needs_group_by = bool(group_col and (
             by_match
-            or any(k in q for k in ["average", "avg", "mean", "total", "sum", "distribution", "breakdown", "revenue", "sales", "spending", "spent", "volume"])
+            or any(k in q for k in ["average", "avg", "mean", "total", "sum", "distribution", "breakdown", "count", "how many"])
         ))
 
         # Branch 1: Group By Aggregation Query
-        if needs_group_by and target_group:
+        if needs_group_by and group_col:
             if is_avg and metric_col:
                 agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
             elif is_sum and metric_col:
-                alias_name = "total_revenue" if ("revenue" in q or "sales" in q) and "revenue" not in metric_col.lower() else f"total_{metric_col}"
-                agg_fn, agg_alias = f'SUM("{metric_col}")', alias_name
+                agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
             elif is_max and metric_col:
                 agg_fn, agg_alias = f'MAX("{metric_col}")', f'max_{metric_col}'
             elif is_min and metric_col:
@@ -890,17 +945,16 @@ JSON Response Format:
                 agg_fn, agg_alias = 'COUNT(*)', 'total_count'
 
             l_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
-            sql = f'SELECT "{target_group}", {agg_fn} AS {agg_alias} FROM "{target_table}"{where_clause} GROUP BY "{target_group}" ORDER BY {agg_alias} {direction}{l_clause};'
-            explanation = f"Groups the '{target_table}' table by '{target_group}', computing {agg_alias.replace('_', ' ')} sorted in {direction_word} order."
+            sql = f'SELECT "{group_col}", {agg_fn} AS {agg_alias} FROM "{target_table}"{where_clause} GROUP BY "{group_col}" ORDER BY {agg_alias} {direction}{l_clause};'
+            explanation = f"Groups the '{target_table}' table by '{group_col}', computing {agg_alias.replace('_', ' ')} sorted in {direction_word} order."
             return sql, explanation
 
         # Branch 2: Single Scalar Aggregate (No Group By, No explicit limit > 1)
-        if (is_avg or is_sum or is_count or is_max or is_min or any(k in q for k in ["how much", "how many", "overall", "total", "revenue"])) and not (has_explicit_limit and limit_val > 1):
+        if (is_avg or is_sum or (is_count and not has_explicit_limit) or is_max or is_min or any(k in q for k in ["how much", "how many", "overall total"])) and not (has_explicit_limit and limit_val > 1):
             if is_avg and metric_col:
                 agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
             elif is_sum and metric_col:
-                alias_name = "total_revenue" if ("revenue" in q or "sales" in q) and "revenue" not in metric_col.lower() else f"total_{metric_col}"
-                agg_fn, agg_alias = f'SUM("{metric_col}")', alias_name
+                agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
             elif is_max and metric_col:
                 agg_fn, agg_alias = f'MAX("{metric_col}")', f'highest_{metric_col}'
             elif is_min and metric_col:
@@ -916,20 +970,12 @@ JSON Response Format:
 
         # Branch 3: Ranked Ordering (Highest / Lowest / Top N)
         if (is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q) and metric_col:
-            preferred_disp = ["name", "emp_name", "customer_name", "product_name", "title", "department", "dept", "category", "country", "plan", "role", "email"]
-            disp = [c for c in preferred_disp if c in all_cols]
-            if not disp and entity_col:
-                disp = [entity_col]
-            if metric_col not in disp:
-                disp.append(metric_col)
-            sel_cols = ", ".join([f'"{c}"' for c in disp]) if disp else "*"
-
-            sql = f'SELECT {sel_cols} FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
+            sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
             explanation = f"Retrieves the {rank_label} {limit_val} records from '{target_table}' ordered by '{metric_col}' in {direction_word} order."
             return sql, explanation
 
         # Branch 4: Chronological / Recent Query
-        if date_cols and any(k in q for k in ["recent", "latest", "newest", "last", "hired recently"]):
+        if date_cols and any(k in q for k in ["recent", "latest", "newest", "last"]):
             d_col = date_cols[0]
             sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{d_col}" DESC LIMIT {limit_val};'
             explanation = f"Retrieves the most recent records from '{target_table}' sorted chronologically by '{d_col}' in descending order."

@@ -38,7 +38,7 @@ from sqlalchemy import text
 try:
     from backend.app.db.database import DB_PATH, DATA_DIR, engine
     from backend.app.db.seed import seed_database
-    from backend.app.services.schema_service import get_db_schema_info
+    from backend.app.services.schema_service import get_db_schema_info, clear_schema_cache
     from backend.app.services.sql_executor import execute_safe_query
     from backend.app.services.pipeline import TextToSqlPipeline
     from backend.app.services.insights_service import BusinessInsightsInterpreter
@@ -46,7 +46,7 @@ try:
 except ImportError:
     from app.db.database import DB_PATH, DATA_DIR, engine
     from app.db.seed import seed_database
-    from app.services.schema_service import get_db_schema_info
+    from app.services.schema_service import get_db_schema_info, clear_schema_cache
     from app.services.sql_executor import execute_safe_query
     from app.services.pipeline import TextToSqlPipeline
     from app.services.insights_service import BusinessInsightsInterpreter
@@ -163,7 +163,8 @@ def trigger_seed():
     """Re-seeds the database with standard enterprise sample tables."""
     try:
         seed_database()
-        schema = get_db_schema_info()
+        clear_schema_cache()
+        schema = get_db_schema_info(force_refresh=True)
         return {
             "success": True,
             "message": "Database successfully re-seeded with fresh sample data.",
@@ -335,7 +336,8 @@ async def upload_dataset(file: UploadFile = File(...)):
             if os.path.exists(temp_db_path):
                 os.remove(temp_db_path)
 
-            updated_schema = get_db_schema_info()
+            clear_schema_cache()
+            updated_schema = get_db_schema_info(force_refresh=True)
             primary_table = imported_tables[0] if imported_tables else clean_table_name
             return {
                 "success": True,
@@ -359,7 +361,8 @@ async def upload_dataset(file: UploadFile = File(...)):
                         if stmt.strip():
                             conn.execute(text(stmt.strip()))
 
-            updated_schema = get_db_schema_info()
+            clear_schema_cache()
+            updated_schema = get_db_schema_info(force_refresh=True)
             return {
                 "success": True,
                 "message": f"Successfully executed SQL script '{filename}'.",
@@ -429,7 +432,8 @@ async def upload_dataset(file: UploadFile = File(...)):
         with engine.begin() as conn:
             df.to_sql(clean_table_name, conn, if_exists="replace", index=False)
 
-        updated_schema = get_db_schema_info()
+        clear_schema_cache()
+        updated_schema = get_db_schema_info(force_refresh=True)
         logger.info("Imported table '%s' with %d rows and %d columns", clean_table_name, len(df), len(df.columns))
 
         return {
