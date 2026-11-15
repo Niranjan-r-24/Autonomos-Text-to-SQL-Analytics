@@ -142,6 +142,10 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
       if (res.data && res.data.success) {
         setUploadResult(res.data);
         await fetchDocuments();
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
         if (onUploadSuccess) {
           onUploadSuccess(res.data.table_name || 'knowledge_base', res.data.schema || {});
         }

@@ -49,6 +49,22 @@ function synthesizeDynamicAnswer(
   }
 
   const q = (question || '').toLowerCase();
+
+  // Check for browse query ("Show first 10 rows from <tbl>", "browse <tbl>")
+  const isBrowse =
+    q.includes('show first') ||
+    q.includes('browse') ||
+    q.includes('sample rows') ||
+    q.includes('show rows') ||
+    q.includes('all rows') ||
+    q.startsWith('first 10') ||
+    q.startsWith('first 5');
+
+  if (isBrowse && rows.length > 1) {
+    const tblMatch = q.match(/(?:from|in|table)\s+([a-zA-Z0-9_]+)/);
+    const tblName = tblMatch ? tblMatch[1] : 'dataset';
+    return `Retrieved the first ${rows.length} records from the '${tblName}' table.`;
+  }
   const sampleRow = rows[0] || {};
   const cols = columns && columns.length > 0 ? columns : Object.keys(sampleRow);
 

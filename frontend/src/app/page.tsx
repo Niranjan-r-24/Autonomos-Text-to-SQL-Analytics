@@ -107,19 +107,22 @@ export default function Home() {
 
   const handleRunQuery = async (overrideQuery?: string, overrideTable?: string) => {
     const targetQuery = overrideQuery || query;
-    if (!targetQuery.trim() || isExecuting) return;
+    if (!targetQuery.trim()) return;
+    if (isExecuting && !overrideQuery) return;
 
     const currentRequestId = ++activeRequestIdRef.current;
     setIsExecuting(true);
     setErrorMessage(null);
     setPipelineResult(null);
 
+    const effectiveTable = overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined);
+
     try {
       const res = await axios.post(`${API_BASE}/api/query`, {
         query: targetQuery.trim(),
         api_key: apiKey,
         provider: provider,
-        active_table: overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined),
+        active_table: effectiveTable,
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;

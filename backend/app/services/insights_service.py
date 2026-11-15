@@ -405,6 +405,29 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
         is_breakdown = bool(text_cols and numeric_cols and not is_single_row)
 
         # ----------------------------------------------------
+        # Pattern 0: Direct Table Browse / Sample Rows Result
+        # ----------------------------------------------------
+        is_browse = (
+            any(k in q for k in ["show first", "first 10", "first 5", "browse", "sample rows", "show rows", "all rows", "records from", "from table", "table rows", "show records"])
+            or bool(re.match(r"^select\s+\*\s+from", sql_lower))
+            or ("select *" in sql_lower and not any(k in q for k in ["top", "highest", "lowest", "bottom", "rank", "best", "worst"]))
+        )
+        if is_browse and not is_single_row:
+            tbl_target = None
+            m_from = re.search(r"from\s+[\"']?([a-zA-Z0-9_]+)[\"']?", sql_lower)
+            if m_from:
+                tbl_target = m_from.group(1)
+            target_name = tbl_target if tbl_target else "dataset"
+            return {
+                "direct_answer": f"Retrieved the first {row_count} records from the '{target_name}' table.",
+                "summary": f"Displaying {row_count} sample records from the '{target_name}' table across {len(columns)} attributes.",
+                "key_findings": [f"Showing {row_count} records from '{target_name}' across columns: {', '.join(columns[:6])}."],
+                "comparisons": [f"Table columns: {', '.join(columns)}."],
+                "caveats": [f"Displaying up to {row_count} rows as requested."],
+                "business_takeaway": "Use the results table below to inspect individual rows or apply search filters."
+            }
+
+        # ----------------------------------------------------
         # Pattern 1: Single Row KPI / Aggregate Result
         # ----------------------------------------------------
         if is_single_row:

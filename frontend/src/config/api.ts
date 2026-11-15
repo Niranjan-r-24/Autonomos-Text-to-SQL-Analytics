@@ -12,13 +12,17 @@ export function getApiBaseUrl(): string {
 
   // 2. Client-side browser checks
   if (typeof window !== 'undefined') {
+    const host = window.location.hostname || 'localhost';
     const isLocal =
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1';
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.startsWith('192.168.') ||
+      host.startsWith('10.') ||
+      host.startsWith('172.');
     
     // In local development, direct to FastAPI on port 8000
     if (isLocal) {
-      return 'http://localhost:8000';
+      return `http://${host}:8000`;
     }
 
     // In production on Vercel without NEXT_PUBLIC_API_URL, relative path uses Next.js rewrites
@@ -26,7 +30,7 @@ export function getApiBaseUrl(): string {
   }
 
   // 3. SSR / Node.js server fallback
-  return process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : '';
+  return 'http://localhost:8000';
 }
 
 export const API_BASE = getApiBaseUrl();

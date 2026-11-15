@@ -221,7 +221,22 @@ JSON Response Format:
         """
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
-        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
+        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
+
+        # Step 0: Direct Table Browse / First N Rows (e.g. "Show first 10 rows from <tbl>", "browse <tbl>", table chip click)
+        tbl_browse_match = re.search(r"(?:from|in|table)\s+[\"']?([a-zA-Z0-9_]+)[\"']?", q)
+        if tbl_browse_match:
+            candidate_tbl = tbl_browse_match.group(1).lower()
+            matching_tbl = next((t for t in schema_info.keys() if t.lower() == candidate_tbl or t.lower().rstrip("s") == candidate_tbl.rstrip("s")), None)
+            if matching_tbl and (
+                any(k in q for k in ["first", "sample", "all rows", "show rows", "show first", "browse", "records from", "rows from", "view", "display"])
+                or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom"])
+            ):
+                lim_m = re.search(r"\b(\d+)\b", q)
+                lim = int(lim_m.group(1)) if lim_m else 10
+                sql = f'SELECT * FROM "{matching_tbl}" LIMIT {lim};'
+                explanation = f"Retrieves the first {lim} records from the '{matching_tbl}' table."
+                return sql, explanation
 
         # Step A: Table Intent Detection with Semantic Synonyms
         table_synonyms = {
@@ -548,8 +563,8 @@ JSON Response Format:
             has_order_items
             and (
                 "sales" not in schema_info
-                or active_table in ("order_items", "orders")
-                or (self._resolve_col(schema_info, "products", ["product_name"]) is not None and "sales" not in schema_info)
+                or active_table in ("order_items", "orders", "products")
+                or self._resolve_col(schema_info, "products", ["product_name"]) is not None
                 or any(k in q for k in ["order item", "order items", "order_item", "order_items", "line_total", "line total"])
             )
             and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q or "revenue" in q or "sales" in q or "sold" in q or "quantity" in q)
@@ -650,7 +665,33 @@ JSON Response Format:
                 )
             return sql, explanation
 
-        # Pattern: Customers by Spending / Value
+        # Pattern: Customers by Spending / Value (Relational Join for Multi-Table E-Commerce Datasets)
+        has_relational_customers = (
+            "customers" in schema_info and c_id and c_name
+            and "orders" in schema_info
+            and "order_items" in schema_info
+            and ("customer" in q or "user" in q or "client" in q or "buyer" in q)
+            and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q or "value" in q or "order" in q or "purchase" in q)
+            and not ("country" in q or "city" in q or "plan" in q or "active" in q)
+        )
+        if has_relational_customers:
+            o_cid = self._resolve_col(schema_info, "orders", ["customer_id", "c_id", "id"])
+            o_id = self._resolve_col(schema_info, "orders", ["order_id", "id"])
+            oi_oid = self._resolve_col(schema_info, "order_items", ["order_id", "o_id"])
+            oi_total = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount"])
+            if o_cid and o_id and oi_oid and oi_total:
+                sql = (
+                    f"SELECT c.{c_name} AS customer_name, SUM(oi.{oi_total}) AS total_spent, COUNT(DISTINCT o.{o_id}) AS total_orders "
+                    f"FROM customers c "
+                    f"JOIN orders o ON c.{c_id} = o.{o_cid} "
+                    f"JOIN order_items oi ON o.{o_id} = oi.{oi_oid} "
+                    f"GROUP BY c.{c_id}, c.{c_name} "
+                    f"ORDER BY total_spent {direction}{limit_clause};"
+                )
+                explanation = f"Joins 'customers', 'orders', and 'order_items' to calculate customer spending in {direction_word} order."
+                return sql, explanation
+
+        # Pattern: Customers by Spending / Value (Canonical Single-Table)
         if (
             self._has_cols(schema_info, "customers", ["name", "email", "company", "country", "plan", "total_spent"])
             and ("customer" in q or "user" in q or "client" in q)
@@ -665,6 +706,44 @@ JSON Response Format:
                 f"Retrieves customers ranked by total spending in {direction_word} order ({'lowest spenders first' if direction == 'ASC' else 'highest spenders first'})."
             )
             return sql, explanation
+
+        # Pattern: Payments Breakdown by Payment Method or Status
+        if "payments" in schema_info and ("payment" in q or "paid" in q or "upi" in q or "card" in q or "method" in q):
+            p_method = self._resolve_col(schema_info, "payments", ["payment_method", "method", "type"])
+            p_amt = self._resolve_col(schema_info, "payments", ["amount", "total", "line_total", "price"])
+            p_status = self._resolve_col(schema_info, "payments", ["payment_status", "status"])
+            
+            if any(k in q for k in ["method", "most used", "frequently", "popular", "breakdown", "by method"]) and p_method:
+                amt_expr = f", SUM({p_amt}) AS total_amount" if p_amt else ""
+                sql = f'SELECT "{p_method}", COUNT(*) AS usage_count{amt_expr} FROM "payments" GROUP BY "{p_method}" ORDER BY usage_count DESC;'
+                explanation = f"Aggregates payment transactions by '{p_method}' to highlight the most popular payment methods."
+                return sql, explanation
+            elif any(k in q for k in ["status", "successful", "failed"]) and p_status:
+                amt_expr = f", SUM({p_amt}) AS total_amount" if p_amt else ""
+                sql = f'SELECT "{p_status}", COUNT(*) AS payment_count{amt_expr} FROM "payments" GROUP BY "{p_status}" ORDER BY payment_count DESC;'
+                explanation = f"Groups payment records by status to monitor transaction outcomes."
+                return sql, explanation
+
+        # Pattern: Support Tickets Breakdown by Priority or Status
+        if "support_tickets" in schema_info and ("ticket" in q or "support" in q or "issue" in q or "complaint" in q):
+            t_prio = self._resolve_col(schema_info, "support_tickets", ["priority", "severity", "level"])
+            t_status = self._resolve_col(schema_info, "support_tickets", ["status", "state"])
+            if ("priority" in q or "severity" in q or not "status" in q) and t_prio:
+                sql = f'SELECT "{t_prio}", COUNT(*) AS ticket_count FROM "support_tickets" GROUP BY "{t_prio}" ORDER BY ticket_count DESC;'
+                explanation = f"Aggregates support tickets by priority level to highlight critical issues."
+                return sql, explanation
+            elif t_status:
+                sql = f'SELECT "{t_status}", COUNT(*) AS ticket_count FROM "support_tickets" GROUP BY "{t_status}" ORDER BY ticket_count DESC;'
+                explanation = f"Aggregates support tickets by status to identify open versus resolved issues."
+                return sql, explanation
+
+        # Pattern: Orders by Status
+        if "orders" in schema_info and ("order" in q or "shipping" in q) and ("status" in q or "state" in q or "by status" in q or "breakdown" in q) and not any(k in q for k in ["product", "revenue", "item", "order_item", "line_total"]):
+            o_status = self._resolve_col(schema_info, "orders", ["status", "order_status", "state"])
+            if o_status:
+                sql = f'SELECT "{o_status}", COUNT(*) AS order_count FROM "orders" GROUP BY "{o_status}" ORDER BY order_count DESC;'
+                explanation = f"Aggregates order volumes grouped by order status in descending order."
+                return sql, explanation
 
         # Pattern: Customer Distribution by Plan & Country
         if (
@@ -735,7 +814,11 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Security & Audit logs
-        if self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (any(k in q for k in ["audit", "audit_log", "audit_logs", "security", "ip_address"]) or ("log" in q and not "catalog" in q) or ("fail" in q and ("event" in q or "log" in q))):
+        if self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (
+            any(k in q for k in ["audit", "audit_log", "audit_logs", "security event", "security log", "ip_address", "failed login"])
+            or ("fail" in q and ("event" in q or "audit" in q or "login" in q))
+            or (any(k in q for k in ["security", "audit"]) and any(k in q for k in ["log", "event", "failure", "fail", "ip", "action"]))
+        ):
             if "action" in q and ("ip" in q or "address" in q):
                 sql = (
                     "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
@@ -833,7 +916,7 @@ JSON Response Format:
             has_explicit_limit = False
 
         # 2. Multi-Factor Table Resolution (if target_table is not explicitly locked, or if audit_logs was passed for a business query)
-        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence"}
+        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
         if (
             not target_table
             or target_table not in schema_info
@@ -1114,7 +1197,11 @@ JSON Response Format:
             return sql, explanation
 
         # Branch 3: Ranked Ordering (Highest / Lowest / Top N / Order By)
-        if (is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q or "order" in q or "desc" in q or "asc" in q or order_by_col) and metric_col:
+        is_order_intent = (
+            is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q
+            or bool(re.search(r"\border(?:ed)?\s+by\b", q)) or "desc" in q or "asc" in q or bool(order_by_col)
+        )
+        if is_order_intent and metric_col:
             sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
             explanation = f"Retrieves records from '{target_table}' ordered by '{metric_col}' in {direction_word} order."
             return sql, explanation
