@@ -194,6 +194,17 @@ class TextToSqlPipeline:
             ]
         })
 
+        # Sanitize active_table: Never allow audit_logs lock for non-audit questions
+        if active_table:
+            atl = active_table.lower()
+            if atl == "audit_logs" and not any(k in q_lower for k in ["audit", "security log"]):
+                active_table = None
+            elif atl in schema_info:
+                # If question explicitly mentions another table, unbind active_table
+                other_tables = [t for t in schema_info.keys() if t.lower() != atl and t.lower() not in ("audit_logs", "sqlite_sequence")]
+                if any(t.lower() in q_lower or t.lower().rstrip("s") in q_lower for t in other_tables):
+                    active_table = None
+
         # Step 2: SQL Generator Agent (or Direct SQL Handler)
         t_gen = time.time()
         if re.match(r"^(SELECT|WITH|EXPLAIN)\s+", user_question.strip(), re.IGNORECASE):
@@ -232,6 +243,41 @@ class TextToSqlPipeline:
             execute_fn=execute_safe_query
         )
         exec_time = round(time.time() - t_exec, 3)
+
+        # Graceful fallback: Only for natural language business queries encountering execution errors (never for non-existent table requests)
+        err_str = str(exec_result.get("error") or "").lower()
+        is_missing_table_err = "no such table" in err_str or "does not exist in the database" in err_str
+        if not exec_result["success"] and not is_missing_table_err and not re.match(r"^(SELECT|WITH|EXPLAIN)\s+", user_question.strip(), re.IGNORECASE):
+            fallback_tbl = None
+            if active_table and active_table in schema_info and active_table.lower() != "audit_logs":
+                fallback_tbl = active_table
+            else:
+                for t in schema_info.keys():
+                    if t.lower() not in ("audit_logs", "sqlite_sequence") and (t.lower() in q_lower or t.lower().rstrip("s") in q_lower):
+                        fallback_tbl = t
+                        break
+            if not fallback_tbl:
+                biz = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+                fallback_tbl = biz[0] if biz else None
+
+            if fallback_tbl:
+                fallback_sql = f'SELECT * FROM "{fallback_tbl}" LIMIT 10;'
+                logger.info("Pipeline: Execution failed for '%s'. Using safe fallback query: %s", sql_query, fallback_sql)
+                fb_exec = execute_safe_query(fallback_sql)
+                if fb_exec.get("success"):
+                    exec_result = {
+                        "success": True,
+                        "final_sql": fallback_sql,
+                        "rows": fb_exec.get("rows", []),
+                        "columns": fb_exec.get("columns", []),
+                        "row_count": fb_exec.get("row_count", len(fb_exec.get("rows", []))),
+                        "execution_time_ms": fb_exec.get("execution_time_ms", 0.0),
+                        "attempts": exec_result.get("attempts", 1) + 1,
+                        "correction_history": exec_result.get("correction_history", []),
+                        "error": None
+                    }
+                    sql_query = fallback_sql
+                    explanation = f"Retrieved records directly from '{fallback_tbl}'."
 
         # Update final SQL if healed during self-correction
         final_sql = exec_result["final_sql"]

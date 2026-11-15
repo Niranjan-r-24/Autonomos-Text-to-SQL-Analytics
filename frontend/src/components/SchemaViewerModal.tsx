@@ -18,7 +18,9 @@ export const SchemaViewerModal: React.FC<SchemaViewerModalProps> = ({
   onReSeed,
   onSelectTable,
 }) => {
-  const tableNames = Object.keys(schema || {});
+  const tableNames = Object.keys(schema || {}).filter(
+    (t) => !['audit_logs', 'sqlite_sequence'].includes(t.toLowerCase())
+  );
   const [activeTable, setActiveTable] = useState<string>('');
   const [isSeeding, setIsSeeding] = useState(false);
 

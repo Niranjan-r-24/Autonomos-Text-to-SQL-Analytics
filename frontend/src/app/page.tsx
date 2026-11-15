@@ -43,7 +43,13 @@ export default function Home() {
     try {
       const res = await axios.get(`${API_BASE}/api/schema`);
       if (res.data && res.data.schema) {
-        setSchemaData(res.data.schema);
+        const filtered: Record<string, any> = {};
+        for (const [k, v] of Object.entries(res.data.schema)) {
+          if (!['audit_logs', 'sqlite_sequence'].includes(k.toLowerCase())) {
+            filtered[k] = v;
+          }
+        }
+        setSchemaData(filtered);
       }
     } catch (err) {
       console.error('Failed to load schema:', err);
@@ -86,7 +92,13 @@ export default function Home() {
       setActiveTable(tableName);
     }
     if (updatedSchema && Object.keys(updatedSchema).length > 0) {
-      setSchemaData(updatedSchema);
+      const filtered: Record<string, any> = {};
+      for (const [k, v] of Object.entries(updatedSchema)) {
+        if (!['audit_logs', 'sqlite_sequence'].includes(k.toLowerCase())) {
+          filtered[k] = v;
+        }
+      }
+      setSchemaData(filtered);
     }
     const targetQuery = tableName === 'knowledge_base'
       ? 'What information is contained in the uploaded document?'
@@ -206,7 +218,9 @@ export default function Home() {
     }
   };
 
-  const tableList = Object.keys(schemaData);
+  const tableList = Object.keys(schemaData).filter(
+    (t) => !['audit_logs', 'sqlite_sequence'].includes(t.toLowerCase())
+  );
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col font-sans text-[#0F172A] selection:bg-[#10B981]/20 selection:text-[#0F172A]">

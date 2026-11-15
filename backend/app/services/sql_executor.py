@@ -162,18 +162,28 @@ def execute_safe_query(sql_query: str) -> Dict[str, Any]:
                     actual_name = next((p_cols[k] for k in ["product_name", "name", "title", "item_name"] if k in p_cols), None)
                     if actual_name and "name" not in p_cols:
                         healed_sql = re.sub(r"\b(?:p|products)\.name\b", f"p.{actual_name}", healed_sql, flags=re.IGNORECASE)
+                        healed_sql = re.sub(r"\bproducts\.name\b", f"products.{actual_name}", healed_sql, flags=re.IGNORECASE)
                     actual_id = next((p_cols[k] for k in ["product_id", "id", "item_id"] if k in p_cols), None)
                     if actual_id and "id" not in p_cols:
                         healed_sql = re.sub(r"\b(?:p|products)\.id\b", f"p.{actual_id}", healed_sql, flags=re.IGNORECASE)
+                        healed_sql = re.sub(r"\bproducts\.id\b", f"products.{actual_id}", healed_sql, flags=re.IGNORECASE)
+                    actual_price = next((p_cols[k] for k in ["unit_price", "price", "retail_price", "cost"] if k in p_cols), None)
+                    if actual_price and "price" not in p_cols:
+                        healed_sql = re.sub(r"\b(?:p|products)\.price\b", f"p.{actual_price}", healed_sql, flags=re.IGNORECASE)
+                    actual_stock = next((p_cols[k] for k in ["stock_qty", "stock_quantity", "stock"] if k in p_cols), None)
+                    if actual_stock and "stock_quantity" not in p_cols:
+                        healed_sql = re.sub(r"\b(?:p|products)\.stock_quantity\b", f"p.{actual_stock}", healed_sql, flags=re.IGNORECASE)
 
                 if "customers" in schema_info:
                     c_cols = {c["name"].lower(): c["name"] for c in schema_info["customers"].get("columns", [])}
                     actual_c_name = next((c_cols[k] for k in ["customer_name", "name", "full_name"] if k in c_cols), None)
                     if actual_c_name and "name" not in c_cols:
                         healed_sql = re.sub(r"\b(?:c|customers)\.name\b", f"c.{actual_c_name}", healed_sql, flags=re.IGNORECASE)
+                        healed_sql = re.sub(r"\bcustomers\.name\b", f"customers.{actual_c_name}", healed_sql, flags=re.IGNORECASE)
                     actual_c_id = next((c_cols[k] for k in ["customer_id", "id", "user_id"] if k in c_cols), None)
                     if actual_c_id and "id" not in c_cols:
                         healed_sql = re.sub(r"\b(?:c|customers)\.id\b", f"c.{actual_c_id}", healed_sql, flags=re.IGNORECASE)
+                        healed_sql = re.sub(r"\bcustomers\.id\b", f"customers.{actual_c_id}", healed_sql, flags=re.IGNORECASE)
 
                 if "orders" in schema_info:
                     o_cols = {c["name"].lower(): c["name"] for c in schema_info["orders"].get("columns", [])}
@@ -181,7 +191,26 @@ def execute_safe_query(sql_query: str) -> Dict[str, Any]:
                     if actual_o_id and "id" not in o_cols:
                         healed_sql = re.sub(r"\b(?:o|orders)\.id\b", f"o.{actual_o_id}", healed_sql, flags=re.IGNORECASE)
 
+                if "order_items" in schema_info:
+                    oi_cols = {c["name"].lower(): c["name"] for c in schema_info["order_items"].get("columns", [])}
+                    actual_oi_id = next((oi_cols[k] for k in ["order_item_id", "id"] if k in oi_cols), None)
+                    if actual_oi_id and "id" not in oi_cols:
+                        healed_sql = re.sub(r"\b(?:oi|order_items)\.id\b", f"oi.{actual_oi_id}", healed_sql, flags=re.IGNORECASE)
+
                 healed_sql = re.sub(r"COUNT\s*\(\s*s\.id\s*\)", "COUNT(*)", healed_sql, flags=re.IGNORECASE)
+
+                # Dynamic fuzzy fix for whatever column name failed
+                col_match = re.search(r"no such column:\s*([a-zA-Z0-9_\.]+)", raw_error, re.IGNORECASE)
+                if col_match:
+                    bad_raw = col_match.group(1)
+                    bad_base = bad_raw.split(".")[-1].lower()
+                    for tname, tdata in schema_info.items():
+                        all_t_cols = [c["name"] for c in tdata.get("columns", [])]
+                        close = [c for c in all_t_cols if bad_base in c.lower() or c.lower() in bad_base]
+                        if close:
+                            replacement = close[0]
+                            healed_sql = re.sub(r"\b" + re.escape(bad_raw) + r"\b", replacement if "." not in bad_raw else f"{bad_raw.split('.')[0]}.{replacement}", healed_sql)
+                            break
 
                 if healed_sql.strip() != sql_query.strip():
                     logger.info("execute_safe_query: Level-0 self-healed SQL '%s' -> '%s' and retrying", sql_query, healed_sql)

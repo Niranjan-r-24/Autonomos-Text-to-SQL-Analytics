@@ -152,7 +152,9 @@ def get_schema():
     """Returns structured schema definitions (tables, columns, types, sample data) for all database tables."""
     try:
         schema = get_db_schema_info()
-        return {"success": True, "schema": schema}
+        # Filter out internal audit_logs and sqlite system tables from API response
+        clean_schema = {k: v for k, v in schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
+        return {"success": True, "schema": clean_schema}
     except Exception as e:
         logger.error("Failed to retrieve schema: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -165,10 +167,11 @@ def trigger_seed():
         seed_database()
         clear_schema_cache()
         schema = get_db_schema_info(force_refresh=True)
+        clean_schema = {k: v for k, v in schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
         return {
             "success": True,
             "message": "Database successfully re-seeded with fresh sample data.",
-            "schema": schema
+            "schema": clean_schema
         }
     except Exception as e:
         logger.error("Failed to re-seed database: %s", str(e), exc_info=True)
@@ -368,7 +371,8 @@ async def upload_dataset(file: UploadFile = File(...)):
                 os.remove(temp_db_path)
 
             clear_schema_cache()
-            updated_schema = get_db_schema_info(force_refresh=True)
+            raw_schema = get_db_schema_info(force_refresh=True)
+            updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
             primary_table = imported_tables[0] if imported_tables else clean_table_name
             return {
                 "success": True,
@@ -393,7 +397,8 @@ async def upload_dataset(file: UploadFile = File(...)):
                             conn.execute(text(stmt.strip()))
 
             clear_schema_cache()
-            updated_schema = get_db_schema_info(force_refresh=True)
+            raw_schema = get_db_schema_info(force_refresh=True)
+            updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
             return {
                 "success": True,
                 "message": f"Successfully executed SQL script '{filename}'.",
@@ -451,6 +456,8 @@ async def upload_dataset(file: UploadFile = File(...)):
             else:
                 # Ingest unstructured text document into RAG knowledge store
                 rag_info = rag_service.ingest(filename, contents)
+                raw_schema = get_db_schema_info(force_refresh=True)
+                clean_s = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
                 return {
                     "success": True,
                     "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
@@ -458,7 +465,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                     "type": "document",
                     "rag_info": rag_info,
                     "documents": rag_service.list_documents(),
-                    "schema": get_db_schema_info(force_refresh=True)
+                    "schema": clean_s
                 }
 
         # 7. Apache Parquet (.parquet)
@@ -468,6 +475,8 @@ async def upload_dataset(file: UploadFile = File(...)):
         # 8. Document Knowledge Base (.pdf, .docx, .doc, .md) for RAG
         elif ext in [".pdf", ".docx", ".doc", ".md"]:
             rag_info = rag_service.ingest(filename, contents)
+            raw_schema = get_db_schema_info(force_refresh=True)
+            clean_s = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
             return {
                 "success": True,
                 "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
@@ -475,7 +484,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "type": "document",
                 "rag_info": rag_info,
                 "documents": rag_service.list_documents(),
-                "schema": get_db_schema_info(force_refresh=True)
+                "schema": clean_s
             }
 
         else:
@@ -508,7 +517,8 @@ async def upload_dataset(file: UploadFile = File(...)):
             df.to_sql(clean_table_name, conn, if_exists="replace", index=False)
 
         clear_schema_cache()
-        updated_schema = get_db_schema_info(force_refresh=True)
+        raw_schema = get_db_schema_info(force_refresh=True)
+        updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
         logger.info("Imported table '%s' with %d rows and %d columns", clean_table_name, len(df), len(df.columns))
 
         return {
