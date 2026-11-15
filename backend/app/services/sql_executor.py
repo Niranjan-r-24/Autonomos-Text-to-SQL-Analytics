@@ -145,6 +145,67 @@ def execute_safe_query(sql_query: str) -> Dict[str, Any]:
     except Exception as e:
         exec_duration_ms = round((time.time() - start_time) * 1000, 2)
         raw_error = str(e)
+        logger.warning("SQL Execution Error in %.2f ms: %s | Query: %s", exec_duration_ms, raw_error, sql_query)
+
+        # Level-0 Self-Healing for missing column names (e.g. p.name -> p.product_name, p.id -> p.product_id)
+        if "no such column" in raw_error.lower():
+            try:
+                try:
+                    from backend.app.services.schema_service import get_db_schema_info
+                except ImportError:
+                    from app.services.schema_service import get_db_schema_info
+                schema_info = get_db_schema_info()
+
+                healed_sql = sql_query
+                if "products" in schema_info:
+                    p_cols = {c["name"].lower(): c["name"] for c in schema_info["products"].get("columns", [])}
+                    actual_name = next((p_cols[k] for k in ["product_name", "name", "title", "item_name"] if k in p_cols), None)
+                    if actual_name and "name" not in p_cols:
+                        healed_sql = re.sub(r"\b(?:p|products)\.name\b", f"p.{actual_name}", healed_sql, flags=re.IGNORECASE)
+                    actual_id = next((p_cols[k] for k in ["product_id", "id", "item_id"] if k in p_cols), None)
+                    if actual_id and "id" not in p_cols:
+                        healed_sql = re.sub(r"\b(?:p|products)\.id\b", f"p.{actual_id}", healed_sql, flags=re.IGNORECASE)
+
+                if "customers" in schema_info:
+                    c_cols = {c["name"].lower(): c["name"] for c in schema_info["customers"].get("columns", [])}
+                    actual_c_name = next((c_cols[k] for k in ["customer_name", "name", "full_name"] if k in c_cols), None)
+                    if actual_c_name and "name" not in c_cols:
+                        healed_sql = re.sub(r"\b(?:c|customers)\.name\b", f"c.{actual_c_name}", healed_sql, flags=re.IGNORECASE)
+                    actual_c_id = next((c_cols[k] for k in ["customer_id", "id", "user_id"] if k in c_cols), None)
+                    if actual_c_id and "id" not in c_cols:
+                        healed_sql = re.sub(r"\b(?:c|customers)\.id\b", f"c.{actual_c_id}", healed_sql, flags=re.IGNORECASE)
+
+                if "orders" in schema_info:
+                    o_cols = {c["name"].lower(): c["name"] for c in schema_info["orders"].get("columns", [])}
+                    actual_o_id = next((o_cols[k] for k in ["order_id", "id"] if k in o_cols), None)
+                    if actual_o_id and "id" not in o_cols:
+                        healed_sql = re.sub(r"\b(?:o|orders)\.id\b", f"o.{actual_o_id}", healed_sql, flags=re.IGNORECASE)
+
+                healed_sql = re.sub(r"COUNT\s*\(\s*s\.id\s*\)", "COUNT(*)", healed_sql, flags=re.IGNORECASE)
+
+                if healed_sql.strip() != sql_query.strip():
+                    logger.info("execute_safe_query: Level-0 self-healed SQL '%s' -> '%s' and retrying", sql_query, healed_sql)
+                    with engine.connect() as retry_conn:
+                        retry_res = retry_conn.execute(text(healed_sql))
+                        if retry_res.returns_rows:
+                            cols = list(retry_res.keys())
+                            r_rows = retry_res.fetchmany(1000)
+                            ret_rows = [dict(zip(cols, r)) for r in r_rows]
+                        else:
+                            cols = []
+                            ret_rows = []
+                        exec_duration_ms = round((time.time() - start_time) * 1000, 2)
+                        return {
+                            "success": True,
+                            "rows": ret_rows,
+                            "columns": cols,
+                            "row_count": len(ret_rows),
+                            "execution_time_ms": exec_duration_ms,
+                            "error": None
+                        }
+            except Exception as retry_err:
+                logger.warning("execute_safe_query: Immediate retry after level-0 healing failed: %s", retry_err)
+
         friendly_error = _format_friendly_db_error(raw_error, sql_query)
         logger.error("SQL Execution Error in %.2f ms: %s | Query: %s", exec_duration_ms, raw_error, sql_query)
         
