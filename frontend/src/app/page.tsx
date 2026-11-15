@@ -263,6 +263,7 @@ export default function Home() {
         {pipelineResult && !isExecuting && (
           <section className="w-full">
             <QueryResponseCard
+              key={`${pipelineResult.question || query}-${pipelineResult.sql}-${pipelineResult.rows?.length}-${pipelineResult.columns?.join(',')}`}
               question={pipelineResult.question || query}
               sql={pipelineResult.sql || ''}
               explanation={pipelineResult.explanation || ''}

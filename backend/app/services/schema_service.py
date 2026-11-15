@@ -19,6 +19,15 @@ def clear_schema_cache() -> None:
     """Clears the in-memory schema cache to force fresh inspection upon next query."""
     global _SCHEMA_CACHE
     _SCHEMA_CACHE = None
+    try:
+        from backend.app.services.sql_generator import clear_distinct_cache
+        clear_distinct_cache()
+    except Exception:
+        try:
+            from app.services.sql_generator import clear_distinct_cache
+            clear_distinct_cache()
+        except Exception:
+            pass
     logger.info("Schema cache cleared.")
 
 

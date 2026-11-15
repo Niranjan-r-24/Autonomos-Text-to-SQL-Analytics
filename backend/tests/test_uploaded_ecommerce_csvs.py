@@ -92,3 +92,26 @@ class TestUploadedEcommerceCSVs:
         assert result["success"] is True
         assert "product_name" in result["final_sql"]
         assert len(result["rows"]) >= 1
+
+    def test_give_me_all_products_browse_query(self, schema):
+        """'Give me all products' should browse products directly without joining order_items or audit_logs."""
+        pipeline = TextToSqlPipeline(provider="fallback")
+        res = pipeline.run("Give me all products", active_table=None)
+        
+        assert res["success"] is True
+        assert res["row_count"] >= 1
+        assert "products" in res["sql"].lower()
+        assert "audit_logs" not in res["sql"].lower()
+        assert res["columns"] == ["product_id", "product_name", "category", "unit_price", "stock_qty"]
+        assert "records from the 'products' table" in res["insights"]["direct_answer"].lower() or "products" in res["insights"]["direct_answer"].lower()
+
+    def test_show_first_10_rows_from_each_table(self, schema):
+        """Show first 10 rows from each table returns the exact records and correct columns."""
+        pipeline = TextToSqlPipeline(provider="fallback")
+        for tbl in ["customers", "products", "orders", "order_items", "payments", "support_tickets"]:
+            res = pipeline.run(f"Show first 10 rows from {tbl}", active_table=tbl)
+            assert res["success"] is True
+            assert res["row_count"] >= 1
+            assert tbl in res["sql"].lower()
+            assert "audit_logs" not in res["sql"].lower()
+            assert tbl in res["insights"]["direct_answer"].lower()

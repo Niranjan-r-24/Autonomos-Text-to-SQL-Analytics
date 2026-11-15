@@ -50,20 +50,39 @@ function synthesizeDynamicAnswer(
 
   const q = (question || '').toLowerCase();
 
-  // Check for browse query ("Show first 10 rows from <tbl>", "browse <tbl>")
+  // Check for browse query ("Show first 10 rows from <tbl>", "browse <tbl>", "Give me all products", "All products")
   const isBrowse =
     q.includes('show first') ||
     q.includes('browse') ||
     q.includes('sample rows') ||
     q.includes('show rows') ||
     q.includes('all rows') ||
+    q.includes('give me all') ||
+    q.includes('show all') ||
+    q.includes('list all') ||
+    q.includes('get all') ||
     q.startsWith('first 10') ||
-    q.startsWith('first 5');
+    q.startsWith('first 5') ||
+    q.startsWith('all ') ||
+    q.endsWith(' table') ||
+    q === 'all products' ||
+    q === 'products' ||
+    q === 'customers' ||
+    q === 'orders';
 
-  if (isBrowse && rows.length > 1) {
-    const tblMatch = q.match(/(?:from|in|table)\s+([a-zA-Z0-9_]+)/);
-    const tblName = tblMatch ? tblMatch[1] : 'dataset';
-    return `Retrieved the first ${rows.length} records from the '${tblName}' table.`;
+  if (isBrowse && rows.length > 0) {
+    const tblMatch = q.match(/(?:from|in|table)\s+[\"']?([a-zA-Z0-9_]+)[\"']?/);
+    let tblName = tblMatch ? tblMatch[1] : '';
+    if (!tblName) {
+      for (const t of ['products', 'customers', 'orders', 'order_items', 'payments', 'support_tickets', 'sales', 'employees', 'fleet_inventory']) {
+        if (q.includes(t) || q.includes(t.slice(0, -1))) {
+          tblName = t;
+          break;
+        }
+      }
+    }
+    const finalTbl = tblName || 'dataset';
+    return `Retrieved ${rows.length} records from the '${finalTbl}' table.`;
   }
   const sampleRow = rows[0] || {};
   const cols = columns && columns.length > 0 ? columns : Object.keys(sampleRow);

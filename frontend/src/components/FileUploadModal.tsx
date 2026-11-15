@@ -41,9 +41,15 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   const [deletingDoc, setDeletingDoc] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch document availability when modal opens
+  // Fetch document availability and reset state when modal opens
   useEffect(() => {
     if (isOpen) {
+      setSelectedFile(null);
+      setUploadResult(null);
+      setErrorMessage(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
       fetchDocuments();
     }
   }, [isOpen]);

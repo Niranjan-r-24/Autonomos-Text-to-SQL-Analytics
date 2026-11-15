@@ -1,0 +1,13 @@
+customer_id,customer_name,city,region,signup_date,is_active
+1,Aarav,Chennai,South,2024-01-14,True
+2,Diya,Bengaluru,South,2024-01-27,True
+3,Kabir,Mumbai,West,2024-02-09,True
+4,Meera,Delhi,North,2024-02-22,True
+5,Ishaan,Hyderabad,South,2024-03-06,True
+6,Anaya,Pune,West,2024-03-19,True
+7,Vihaan,Kolkata,East,2024-04-01,False
+8,Sara,Jaipur,North,2024-04-14,True
+9,Arjun,Coimbatore,South,2024-04-27,True
+10,Myra,Ahmedabad,West,2024-05-10,True
+11,Rohan,Lucknow,North,2024-05-23,True
+12,Ira,Kochi,South,2024-06-05,True

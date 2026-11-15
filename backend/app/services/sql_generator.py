@@ -27,6 +27,13 @@ logger = logging.getLogger("text2sql.generator")
 _DISTINCT_CACHE: Dict[Tuple[str, str], List[str]] = {}
 
 
+def clear_distinct_cache() -> None:
+    """Clears the cached distinct column values to force fresh reads after uploads or re-seeding."""
+    global _DISTINCT_CACHE
+    _DISTINCT_CACHE.clear()
+    logger.info("Distinct values cache cleared.")
+
+
 def _get_column_distinct_values(table_name: str, col_name: str) -> List[str]:
     """Retrieves cached distinct text values from SQLite for smart intent filtering."""
     cache_key = (table_name.lower(), col_name.lower())
@@ -223,7 +230,9 @@ JSON Response Format:
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
         canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
 
-        # Step 0: Direct Table Browse / First N Rows (e.g. "Show first 10 rows from <tbl>", "browse <tbl>", table chip click)
+        # Step 0: Direct Table Browse / First N Rows / Show All
+        # Matches: "Show first 10 rows from <tbl>", "browse <tbl>", "Give me all <tbl>", "Show all <tbl>", "All <tbl>", "list <tbl>"
+        candidate_browse_tbl = None
         tbl_browse_match = re.search(r"(?:from|in|table)\s+[\"']?([a-zA-Z0-9_]+)[\"']?", q)
         if tbl_browse_match:
             candidate_tbl = tbl_browse_match.group(1).lower()
@@ -232,11 +241,25 @@ JSON Response Format:
                 any(k in q for k in ["first", "sample", "all rows", "show rows", "show first", "browse", "records from", "rows from", "view", "display"])
                 or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom"])
             ):
-                lim_m = re.search(r"\b(\d+)\b", q)
-                lim = int(lim_m.group(1)) if lim_m else 10
-                sql = f'SELECT * FROM "{matching_tbl}" LIMIT {lim};'
-                explanation = f"Retrieves the first {lim} records from the '{matching_tbl}' table."
-                return sql, explanation
+                candidate_browse_tbl = matching_tbl
+        elif (
+            any(k in q for k in ["give me all", "show all", "list all", "get all", "all ", "browse ", "display "])
+            or q.startswith("show ") or q.startswith("list ") or q.startswith("all ") or q in [t.lower() for t in schema_info.keys()]
+        ) and not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "revenue", "sales", "spend", "sold"]):
+            for t in schema_info.keys():
+                tl = t.lower()
+                if tl in ("sqlite_sequence", "audit_logs"):
+                    continue
+                if tl in q_tokens or tl in q or tl.rstrip("s") in q_tokens:
+                    candidate_browse_tbl = t
+                    break
+
+        if candidate_browse_tbl:
+            lim_m = re.search(r"\b(\d+)\b", q)
+            lim = int(lim_m.group(1)) if lim_m else 10
+            sql = f'SELECT * FROM "{candidate_browse_tbl}" LIMIT {lim};'
+            explanation = f"Retrieves the first {lim} records from the '{candidate_browse_tbl}' table."
+            return sql, explanation
 
         # Step A: Table Intent Detection with Semantic Synonyms
         table_synonyms = {
@@ -559,15 +582,20 @@ JSON Response Format:
 
         # Pattern: Products by Revenue / Units Sold via order_items (Multi-Table Relational Join for E-commerce Datasets)
         has_order_items = "order_items" in schema_info and "products" in schema_info
+        is_revenue_or_qty_query = any(k in q for k in [
+            "revenue", "sales", "sold", "quantity", "units", "qty", "turnover", "volume",
+            "top", "bottom", "highest", "lowest", "best", "worst", "line_total", "rank", "spent", "spending"
+        ])
         is_ecommerce_csv = (
             has_order_items
+            and is_revenue_or_qty_query
             and (
                 "sales" not in schema_info
                 or active_table in ("order_items", "orders", "products")
                 or self._resolve_col(schema_info, "products", ["product_name"]) is not None
                 or any(k in q for k in ["order item", "order items", "order_item", "order_items", "line_total", "line total"])
             )
-            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q or "revenue" in q or "sales" in q or "sold" in q or "quantity" in q)
+            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q)
             and not ("inventory" in q or "stock" in q or "customer" in q or "ticket" in q or "employee" in q or "salary" in q or "staff" in q or "worker" in q or "payment" in q or "audit" in q)
         )
         if is_ecommerce_csv:

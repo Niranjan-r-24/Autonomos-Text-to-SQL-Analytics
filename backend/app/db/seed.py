@@ -225,6 +225,25 @@ def seed_database():
                 {"n": emp[0], "d": emp[1], "s": emp[2], "h": emp[3]}
             )
 
+        # Seed E-Commerce Relational Datasets (orders, order_items, payments, support_tickets)
+        try:
+            import pandas as pd
+            sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_data")
+            ecommerce_files = {
+                "orders": "orders.csv",
+                "order_items": "order_items.csv",
+                "payments": "payments.csv",
+                "support_tickets": "support_tickets.csv",
+            }
+            for tbl, fname in ecommerce_files.items():
+                fpath = os.path.join(sample_dir, fname)
+                if os.path.exists(fpath):
+                    df_ecom = pd.read_csv(fpath)
+                    df_ecom.to_sql(tbl, con=conn, if_exists="replace", index=False)
+                    print(f"[SEED] Seeded e-commerce table '{tbl}' with {len(df_ecom)} rows.")
+        except Exception as e_ecom:
+            print(f"[SEED] Optional e-commerce tables not seeded: {e_ecom}")
+
         conn.commit()
         print("[SEED] Database seeding completed successfully!")
 

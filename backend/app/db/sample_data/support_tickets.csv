@@ -1,0 +1,9 @@
+0,1,2,3,4,5,6
+501,2,1002,Late delivery,High,Open,2025-02-04
+502,4,1005,Refund request,Medium,Resolved,2025-03-12
+503,1,1001,Damaged item,High,In Progress,2025-04-18
+504,8,1010,Payment issue,Critical,Open,2025-06-21
+505,6,1014,Wrong item,Low,Closed,2025-07-03
+506,9,1020,Return request,Medium,Open,2025-08-11
+507,3,1022,Payment issue,High,Resolved,2025-09-05
+508,12,1025,Late delivery,Low,Closed,2025-10-14
