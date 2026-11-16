@@ -88,8 +88,10 @@ export default function Home() {
 
   const handleUploadSuccess = (tableName: string, updatedSchema: Record<string, any>) => {
     fetchDocuments();
-    if (tableName !== 'knowledge_base') {
+    if (tableName !== 'knowledge_base' && !['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
       setActiveTable(tableName);
+    } else {
+      setActiveTable(null);
     }
     if (updatedSchema && Object.keys(updatedSchema).length > 0) {
       const filtered: Record<string, any> = {};
@@ -109,6 +111,10 @@ export default function Home() {
   };
 
   const handleSelectTable = (tableName: string | null) => {
+    if (tableName && ['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
+      setActiveTable(null);
+      return;
+    }
     setActiveTable(tableName);
     if (tableName) {
       const targetQuery = `Show first 10 rows from ${tableName}`;
@@ -128,7 +134,10 @@ export default function Home() {
     setPipelineResult(null);
 
     let effectiveTable = overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined);
-    if (effectiveTable && !overrideTable) {
+    if (effectiveTable && ['audit_logs', 'sqlite_sequence'].includes(effectiveTable.toLowerCase())) {
+      effectiveTable = undefined;
+      setActiveTable(null);
+    } else if (effectiveTable && !overrideTable) {
       const qLower = targetQuery.toLowerCase();
       // If activeTable is locked to a table, but user typed a question mentioning another table or count query, release lock
       const otherTables = Object.keys(schemaData).filter(
@@ -137,7 +146,7 @@ export default function Home() {
       const mentionsOther = otherTables.some(
         (t) => qLower.includes(t.toLowerCase()) || qLower.includes(t.toLowerCase().replace(/s$/, ''))
       );
-      if (mentionsOther || effectiveTable.toLowerCase() === 'audit_logs') {
+      if (mentionsOther) {
         effectiveTable = undefined;
       }
     }

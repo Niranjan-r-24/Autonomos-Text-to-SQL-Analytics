@@ -98,7 +98,9 @@ class SQLGenerator:
         # Sanitize active_table: Never allow audit_logs lock for non-audit questions
         if active_table:
             atl = active_table.lower()
-            if atl == "audit_logs" and not any(k in user_question.lower() for k in ["audit", "security log"]):
+            if atl == "audit_logs" and not any(k in user_question.lower() for k in [
+                "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+            ]):
                 active_table = None
             elif schema_info and atl in schema_info:
                 # If question explicitly mentions another table, unbind active_table
@@ -314,7 +316,12 @@ JSON Response Format:
             "payments": ["payment", "payments", "paid", "upi", "card"],
             "support_tickets": ["ticket", "tickets", "complaint", "complaints", "support", "support ticket"],
             "sales": ["sale", "sales", "transaction", "transactions", "purchase", "purchases"],
-            "audit_logs": ["audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs"]
+            "audit_logs": [
+                "audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs",
+                "error", "errors", "error log", "error logs", "error table", "security log",
+                "security logs", "failed login", "failed logins", "failure", "failures",
+                "failed event", "failed events", "security event", "security events"
+            ]
         }
 
         target_table_name = None
@@ -338,7 +345,9 @@ JSON Response Format:
         # 3. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
         if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
             target_table_name = active_table
-        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in ["audit", "security log"]):
+        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in [
+            "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+        ]):
             target_table_name = active_table
 
         # Step A.1: Direct Entity Count Pattern (e.g. "How many customers are in the database?", "How many products?", "Count of employees")
@@ -347,6 +356,12 @@ JSON Response Format:
             or ("count" in q and not any(k in q for k in ["by", "per", "group", "plan", "country", "status", "department", "category", "where"]))
         )
         if is_count_intent and not any(k in q for k in ["average", "avg", "highest", "lowest", "top", "bottom", "more than", "greater than", "less than", "between"]):
+            # Special check for security failure/login counts
+            if any(k in q for k in ["failed login", "failed logins", "failure", "failures", "error", "errors", "failed event", "failed events"]) and "audit_logs" in schema_info:
+                sql = "SELECT COUNT(*) AS total_failed_logins FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%';"
+                explanation = "Calculates total count of failed login and error events in the 'audit_logs' table."
+                return sql, explanation
+
             # Determine count table
             count_table = None
             alias = "total_count"
@@ -371,7 +386,7 @@ JSON Response Format:
             elif any(k in q for k in ["sale", "transaction", "purchase"]):
                 count_table = "sales" if "sales" in schema_info else ("orders" if "orders" in schema_info else target_table_name)
                 alias = "total_sales"
-            elif "audit" in q:
+            elif any(k in q for k in ["audit", "audit_log", "audit_logs", "log", "logs"]):
                 count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
                 alias = "total_audit_logs"
             elif target_table_name and target_table_name.lower() != "audit_logs":
@@ -392,7 +407,9 @@ JSON Response Format:
                 "any", "some", "every", "select", "where", "group", "order", "limit", "records",
                 "rows", "items", "entries", "values", "details", "information", "info", "columns",
                 "fields", "table", "tables", "chart", "graph", "analytics", "insights", "summary",
-                "scratch", "file", "csv", "json", "sample", "view"
+                "scratch", "file", "csv", "json", "sample", "view",
+                "show", "display", "view", "get", "fetch", "list", "see",
+                "error", "errors", "failed", "failure", "failures", "log", "logs", "status"
             }
             explicit_table_requested = None
             for pat in [r"\bfrom\s+([a-zA-Z0-9_]+)\b", r"\btable\s+([a-zA-Z0-9_]+)\b", r"\b([a-zA-Z0-9_]+)\s+table\b"]:
@@ -417,7 +434,9 @@ JSON Response Format:
         # Step B: If not mentioned, check active_table (never bind audit_logs for business queries)
         if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
             target_table_name = active_table
-        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in ["audit", "security log"]):
+        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in [
+            "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+        ]):
             target_table_name = active_table
 
         # Step C: If still not set, check if an uploaded (non-canonical) table exists in schema
@@ -906,12 +925,21 @@ JSON Response Format:
             return sql, explanation
 
         # Pattern: Security & Audit logs
-        if self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (
-            any(k in q for k in ["audit", "audit_log", "audit_logs", "security event", "security log", "ip_address", "failed login"])
-            or ("fail" in q and ("event" in q or "audit" in q or "login" in q))
+        is_security_or_audit = self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (
+            target_table_name == "audit_logs"
+            or any(k in q for k in [
+                "audit", "audit_log", "audit_logs", "security event", "security log", "security logs",
+                "failed login", "failed logins", "ip_address", "error log", "error logs", "error table",
+                "failed event", "failed events", "security audit"
+            ])
+            or ("fail" in q and any(k in q for k in ["event", "audit", "login", "auth", "action", "ip", "user", "most", "count", "who"]))
             or (any(k in q for k in ["security", "audit"]) and any(k in q for k in ["log", "event", "failure", "fail", "ip", "action"]))
-        ):
-            if "action" in q and ("ip" in q or "address" in q):
+            or (any(k in q for k in ["error", "errors"]) and any(k in q for k in ["table", "log", "logs", "show", "list", "recent", "what", "which", "are the"]))
+        )
+
+        if is_security_or_audit:
+            # 1. Action + IP combination breakdown (exact match for "Failed audit log events", "Show failed actions and IP addresses from audit logs")
+            if ("action" in q and ("ip" in q or "address" in q)) or q.strip() == "failed audit log events" or "action and ip" in q:
                 sql = (
                     "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
                     "FROM audit_logs "
@@ -924,30 +952,88 @@ JSON Response Format:
                     "grouping by action and IP address to highlight recurring issues."
                 )
                 return sql, explanation
-            elif any(k in q for k in ["record", "recent", "detail", "row"]) or ("show" in q and "audit" in q and not "action" in q and not "ip" in q):
+
+            # 2. User-specific failure breakdown (e.g., "Which user has the most failed logins?", "Failures by user")
+            if any(k in q for k in ["user", "user_id", "users", "who", "which user", "account"]):
                 sql = (
-                    "SELECT id, action, status, user_id, ip_address, timestamp "
-                    "FROM audit_logs "
-                    "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    "ORDER BY timestamp DESC LIMIT 10;"
+                    f"SELECT user_id, COUNT(*) AS failure_count "
+                    f"FROM audit_logs "
+                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    f"GROUP BY user_id "
+                    f"ORDER BY failure_count {direction} LIMIT {limit_val};"
                 )
                 explanation = (
-                    "Retrieves recent failed security and audit log event records sorted chronologically in descending order."
+                    f"Aggregates failed security and audit log events by user ID, showing users with the "
+                    f"{rank_label} number of failures."
                 )
                 return sql, explanation
-            else:
+
+            # 3. IP address breakdown (e.g., "Which IP address has the most failures?", "Failed logins by IP")
+            if (any(k in q for k in ["which ip", "ip address", "ip_address", "network", "by ip", "per ip", "most failures"]) or "ip" in q) and "action" not in q:
                 sql = (
-                    "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
-                    "FROM audit_logs "
-                    "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    "GROUP BY action, status, ip_address "
-                    "ORDER BY event_count DESC LIMIT 10;"
+                    f"SELECT ip_address, COUNT(id) AS failure_count, MAX(timestamp) AS last_occurred "
+                    f"FROM audit_logs "
+                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    f"GROUP BY ip_address "
+                    f"ORDER BY failure_count {direction} LIMIT {limit_val};"
                 )
                 explanation = (
-                    "Queries the 'audit_logs' table for security events with failure status, "
-                    "grouping by action and IP address to highlight recurring issues."
+                    f"Aggregates failed events by IP address to identify sources with the "
+                    f"{rank_label} failure frequency."
                 )
                 return sql, explanation
+
+            # 4. Action breakdown (e.g., "What actions failed the most?", "Which action has the most failures?")
+            if any(k in q for k in ["action", "actions", "by action", "which action", "what action"]):
+                sql = (
+                    f"SELECT action, status, COUNT(id) AS failure_count, MAX(timestamp) AS last_occurred "
+                    f"FROM audit_logs "
+                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    f"GROUP BY action, status "
+                    f"ORDER BY failure_count {direction} LIMIT {limit_val};"
+                )
+                explanation = (
+                    f"Aggregates failed security events by action type in {direction_word} order."
+                )
+                return sql, explanation
+
+            # 5. Direct browse of full table if explicitly requested (e.g. "Show first 10 rows from audit_logs", "browse audit_logs")
+            if any(k in q for k in ["first", "all rows", "from audit_logs", "table audit_logs", "all audit_logs", "all audit logs"]) and not any(k in q for k in ["fail", "error", "recent"]):
+                sql = f"SELECT * FROM audit_logs LIMIT {limit_val};"
+                explanation = f"Retrieves the first {limit_val} records from the 'audit_logs' table."
+                return sql, explanation
+
+            # 6. Detailed failure records / individual event logs (e.g. "Show recent failed audit log events", "Show recent security audit logs", "Show failed logins", "Show error table", "What are the errors?")
+            if (
+                any(k in q for k in ["record", "recent", "detail", "row", "show failed", "list failed", "failed login", "failed logins", "errors", "error table", "recent failures", "what are the failed", "what are the errors"])
+                or ("show" in q and any(k in q for k in ["audit", "log", "security", "fail", "error"]))
+                or ("audit" in q and not any(k in q for k in ["group", "count", "by"]))
+            ):
+                lim = limit_val if has_explicit_limit else 10
+                sql = (
+                    f"SELECT id, action, status, user_id, ip_address, timestamp "
+                    f"FROM audit_logs "
+                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                    f"ORDER BY timestamp DESC LIMIT {lim};"
+                )
+                explanation = (
+                    f"Retrieves the {lim} most recent failed security and audit log event records sorted chronologically in descending order."
+                )
+                return sql, explanation
+
+            # 7. Default security aggregation
+            sql = (
+                "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
+                "FROM audit_logs "
+                "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
+                "GROUP BY action, status, ip_address "
+                "ORDER BY event_count DESC LIMIT 10;"
+            )
+            explanation = (
+                "Queries the 'audit_logs' table for security events with failure status, "
+                "grouping by action and IP address to highlight recurring issues."
+            )
+            return sql, explanation
 
         # Pattern: First N rows from specific table (e.g. from table chips or direct prompt)
         first_table_match = re.search(r"(?:from|in|table)\s+([a-zA-Z0-9_]+)", q)
@@ -1072,7 +1158,9 @@ JSON Response Format:
             else:
                 target_table = max(scores, key=scores.get)
 
-        if target_table and target_table.lower() == "audit_logs" and not any(k in q for k in ["audit", "security log"]):
+        if target_table and target_table.lower() == "audit_logs" and not any(k in q for k in [
+            "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+        ]):
             return "", f"Query does not match any business tables in the database schema."
 
         if not target_table or target_table not in schema_info:
@@ -1341,7 +1429,9 @@ JSON Response Format:
         # 1. Block audit_logs if user question didn't ask for it
         if user_question:
             q_low = user_question.lower()
-            if "audit_logs" in sql.lower() and not any(k in q_low for k in ["audit", "security log"]):
+            if "audit_logs" in sql.lower() and not any(k in q_low for k in [
+                "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+            ]):
                 logger.warning("Blocked LLM from querying audit_logs for question '%s'", user_question)
                 return ""
 

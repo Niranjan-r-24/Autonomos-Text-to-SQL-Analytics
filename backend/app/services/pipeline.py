@@ -208,7 +208,9 @@ class TextToSqlPipeline:
         # Sanitize active_table: Never allow audit_logs lock for non-audit questions
         if active_table:
             atl = active_table.lower()
-            if atl == "audit_logs" and not any(k in q_lower for k in ["audit", "security log"]):
+            if atl == "audit_logs" and not any(k in q_lower for k in [
+                "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+            ]):
                 active_table = None
             elif atl in schema_info:
                 # If question explicitly mentions another table, unbind active_table
@@ -257,9 +259,13 @@ class TextToSqlPipeline:
             }
 
         # Strict security guard: Block audit_logs from ever being queried for non-audit questions
-        if "audit_logs" in sql_query.lower() and not any(k in user_question.lower() for k in ["audit", "security log"]):
+        is_security_q = any(k in user_question.lower() for k in [
+            "audit", "security", "fail", "login", "ip_address", "ip", "event",
+            "auth", "error", "log"
+        ])
+        if "audit_logs" in sql_query.lower() and not is_security_q:
             logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for business tables.", user_question)
-            sql_query, explanation = self.generator._generate_deterministic(user_question, schema_info, active_table=None)
+            sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info, target_table=None)
             generated_by = "Deterministic Analytics Engine"
 
         gen_time = round(time.time() - t_gen, 3)

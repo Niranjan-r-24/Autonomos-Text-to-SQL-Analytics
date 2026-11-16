@@ -1086,24 +1086,6 @@
     "chunk": 3
   },
   {
-    "id": "f11ce8fae632-0",
-    "text": "Enterprise Data Architecture Guide.\nSection 1: Data Modeling. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
-    "source": "test_architecture_guide.txt",
-    "chunk": 1
-  },
-  {
-    "id": "f11ce8fae632-1",
-    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
-    "source": "test_architecture_guide.txt",
-    "chunk": 2
-  },
-  {
-    "id": "fbf8855b0ddf-0",
-    "text": "Antigravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
-    "source": "operations_manual.txt",
-    "chunk": 1
-  },
-  {
     "id": "9283c0342a48-0",
     "text": "Cybersecurity Directive 2026: Mandatory multi-factor authentication for all cloud infrastructure.",
     "source": "cyber_directive.txt",
@@ -1119,6 +1101,24 @@
     "id": "265b82f49876-0",
     "text": "Data Retention Policy: Customer audit logs must be retained for 7 years.",
     "source": "retention_policy.pdf",
+    "chunk": 1
+  },
+  {
+    "id": "f11ce8fae632-0",
+    "text": "Enterprise Data Architecture Guide.\nSection 1: Data Modeling. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 1
+  },
+  {
+    "id": "f11ce8fae632-1",
+    "text": "crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial. Data pipelines are crucial.",
+    "source": "test_architecture_guide.txt",
+    "chunk": 2
+  },
+  {
+    "id": "fbf8855b0ddf-0",
+    "text": "Antigravity Operations Manual. Step 1: Initialize server. Step 2: Configure analytics.",
+    "source": "operations_manual.txt",
     "chunk": 1
   },
   {

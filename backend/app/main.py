@@ -313,7 +313,7 @@ def resolve_clean_table_name(filename: str) -> str:
     if "sale" in raw_lower and "order" not in raw_lower:
         return "sales"
     if "audit" in raw_lower:
-        return "audit_logs"
+        return "uploaded_audit_logs"
 
     clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw).strip("_").lower()
     if not clean or clean[0].isdigit():
