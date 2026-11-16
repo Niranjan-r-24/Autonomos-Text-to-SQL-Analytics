@@ -95,6 +95,17 @@ class SQLGenerator:
         """
         logger.info("Generating SQL for question: '%s' (active_table: %s, provider: %s)", user_question, active_table, self.provider)
 
+        # Sanitize active_table: Never allow audit_logs lock for non-audit questions
+        if active_table:
+            atl = active_table.lower()
+            if atl == "audit_logs" and not any(k in user_question.lower() for k in ["audit", "security log"]):
+                active_table = None
+            elif schema_info and atl in schema_info:
+                # If question explicitly mentions another table, unbind active_table
+                other_tables = [t for t in schema_info.keys() if t.lower() != atl and t.lower() not in ("audit_logs", "sqlite_sequence")]
+                if any(t.lower() in user_question.lower() or t.lower().rstrip("s") in user_question.lower() for t in other_tables):
+                    active_table = None
+
         # 1. Attempt LLM generation if API key is present
         if self.api_key and self.provider != "fallback":
             try:
@@ -237,12 +248,13 @@ JSON Response Format:
         tbl_browse_match = re.search(r"(?:from|in|table)\s+[\"']?([a-zA-Z0-9_]+)[\"']?", q)
         if tbl_browse_match:
             candidate_tbl = tbl_browse_match.group(1).lower()
-            matching_tbl = next((t for t in schema_info.keys() if t.lower() == candidate_tbl or t.lower().rstrip("s") == candidate_tbl.rstrip("s")), None)
-            if matching_tbl and (
-                any(k in q for k in ["first", "sample", "all rows", "show rows", "show first", "browse", "records from", "rows from", "view", "display"])
-                or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "how many", "number of", "total number", "how much", "what is the total"])
-            ):
-                candidate_browse_tbl = matching_tbl
+            if candidate_tbl not in ("the", "database", "data", "db", "this", "all", "our", "system"):
+                matching_tbl = next((t for t in schema_info.keys() if t.lower() == candidate_tbl or t.lower().rstrip("s") == candidate_tbl.rstrip("s")), None)
+                if matching_tbl and (
+                    any(k in q for k in ["first", "sample", "all rows", "show rows", "show first", "browse", "records from", "rows from", "view", "display"])
+                    or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "how many", "number of", "total number", "how much", "what is the total"])
+                ):
+                    candidate_browse_tbl = matching_tbl
         elif (
             any(k in q for k in ["give me all", "show all", "list all", "get all", "all ", "browse ", "display "])
             or q.startswith("show ") or q.startswith("list ") or q.startswith("all ") or q in [t.lower() for t in schema_info.keys()]
@@ -263,14 +275,14 @@ JSON Response Format:
             # Check for primary descriptive name/entity column
             p_name_col = next((c for c in tbl_cols if c.lower() in ["name", "product_name", "customer_name", "title", "car_model", "emp_name"]), None)
             if p_name_col:
-                matched_cols.append(f'"{p_name_col}"')
+                matched_cols.append(p_name_col)
 
             for col in tbl_cols:
                 col_l = col.lower()
                 if col_l in ["id", "audit_logs"]:
                     continue
-                if (col_l in q_tokens or col_l in q or col_l.rstrip("s") in q_tokens or col_l.replace("_", " ") in q) and f'"{col}"' not in matched_cols:
-                    matched_cols.append(f'"{col}"')
+                if (col_l in q_tokens or col_l in q or col_l.rstrip("s") in q_tokens or col_l.replace("_", " ") in q) and col not in matched_cols:
+                    matched_cols.append(col)
 
             select_clause = ", ".join(matched_cols) if len(matched_cols) >= 2 else "*"
             lim_m = re.search(r"\b(\d+)\b", q)
@@ -287,7 +299,8 @@ JSON Response Format:
                 limit_clause = " LIMIT 10"
                 limit_desc = "first 10 "
 
-            sql = f'SELECT {select_clause} FROM "{candidate_browse_tbl}"{limit_clause};'
+            tbl_name_str = candidate_browse_tbl if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", candidate_browse_tbl) else f'"{candidate_browse_tbl}"'
+            sql = f"SELECT {select_clause} FROM {tbl_name_str}{limit_clause}"
             explanation = f"Retrieves {limit_desc}records from the '{candidate_browse_tbl}' table."
             return sql, explanation
 
@@ -323,11 +336,10 @@ JSON Response Format:
                     break
 
         # 3. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
-        if not target_table_name and active_table and active_table in schema_info and active_table.lower() != "sqlite_sequence":
-            if active_table.lower() != "audit_logs":
-                target_table_name = active_table
-            elif "audit" in q:
-                target_table_name = active_table
+        if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
+            target_table_name = active_table
+        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in ["audit", "security log"]):
+            target_table_name = active_table
 
         # Step A.1: Direct Entity Count Pattern (e.g. "How many customers are in the database?", "How many products?", "Count of employees")
         is_count_intent = (
@@ -337,27 +349,38 @@ JSON Response Format:
         if is_count_intent and not any(k in q for k in ["average", "avg", "highest", "lowest", "top", "bottom", "more than", "greater than", "less than", "between"]):
             # Determine count table
             count_table = None
+            alias = "total_count"
             if any(k in q for k in ["customer", "client", "user", "buyer", "subscriber", "member", "account"]):
                 count_table = "customers" if "customers" in schema_info else target_table_name
+                alias = "total_customers"
             elif any(k in q for k in ["employee", "staff", "worker", "personnel", "headcount"]):
                 count_table = "employees" if "employees" in schema_info else target_table_name
+                alias = "total_employees"
             elif any(k in q for k in ["product", "item", "catalog"]):
                 count_table = "products" if "products" in schema_info else target_table_name
+                alias = "total_products"
             elif any(k in q for k in ["ticket", "complaint", "support"]):
                 count_table = "support_tickets" if "support_tickets" in schema_info else target_table_name
+                alias = "total_tickets"
             elif any(k in q for k in ["payment"]):
                 count_table = "payments" if "payments" in schema_info else target_table_name
+                alias = "total_payments"
             elif any(k in q for k in ["order"]):
                 count_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else ("sales" if "sales" in schema_info else target_table_name))
+                alias = "total_orders"
             elif any(k in q for k in ["sale", "transaction", "purchase"]):
                 count_table = "sales" if "sales" in schema_info else ("orders" if "orders" in schema_info else target_table_name)
+                alias = "total_sales"
             elif "audit" in q:
                 count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
+                alias = "total_audit_logs"
             elif target_table_name and target_table_name.lower() != "audit_logs":
                 count_table = target_table_name
+                alias = f"total_{target_table_name}"
 
             if count_table and count_table in schema_info:
-                sql = f'SELECT COUNT(*) AS total_count FROM "{count_table}";'
+                tbl_str = count_table if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", count_table) else f'"{count_table}"'
+                sql = f"SELECT COUNT(*) AS {alias} FROM {tbl_str}"
                 explanation = f"Calculates total count of records in the '{count_table}' table."
                 return sql, explanation
 
@@ -391,17 +414,20 @@ JSON Response Format:
                     f"Attempted to query requested table '{explicit_table_requested}'."
                 )
 
-        # Step B: If not mentioned, check active_table
-        if not target_table_name and active_table and active_table in schema_info and active_table.lower() != "sqlite_sequence":
+        # Step B: If not mentioned, check active_table (never bind audit_logs for business queries)
+        if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
+            target_table_name = active_table
+        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in ["audit", "security log"]):
             target_table_name = active_table
 
         # Step C: If still not set, check if an uploaded (non-canonical) table exists in schema
         if not target_table_name:
             non_canonicals = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
             if len(non_canonicals) == 1:
-                # If there's a custom uploaded table, and user isn't asking about audit logs, prioritize it
-                if not any(k in q for k in ["audit", "log", "ip_address"]):
-                    target_table_name = non_canonicals[0]
+                cust_tbl = non_canonicals[0]
+                cust_cols = [c["name"].lower() for c in schema_info[cust_tbl].get("columns", [])]
+                if cust_tbl.lower() in q or cust_tbl.lower().rstrip("s") in q or any(c in q_tokens or c in q for c in cust_cols if c not in ("id", "date", "status")):
+                    target_table_name = cust_tbl
 
         # If a custom uploaded table is targeted, route directly to dynamic synthesizer
         if target_table_name and target_table_name.lower() not in canonical_tables:
@@ -943,7 +969,7 @@ JSON Response Format:
         Handles numeric comparisons, text filters, aggregations, group-bys, and ranked limits accurately.
         """
         if not schema_info:
-            return 'SELECT * FROM "sales" LIMIT 10;', "Retrieves sample records from the default sales table."
+            return "", "Unable to generate query: No database schema provided."
 
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
@@ -1023,32 +1049,34 @@ JSON Response Format:
 
             if not scores or max(scores.values()) <= 0:
                 # Check domain keywords before determining if query is unsupported
-                business_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
-                safe_fallback = business_tables[0] if business_tables else "products"
-
                 if any(k in q for k in ["customer", "client", "user", "buyer", "people", "account", "subscriber"]):
-                    target_table = "customers" if "customers" in schema_info else safe_fallback
+                    target_table = "customers" if "customers" in schema_info else None
                 elif any(k in q for k in ["employee", "staff", "salary", "department", "hire"]):
-                    target_table = "employees" if "employees" in schema_info else safe_fallback
+                    target_table = "employees" if "employees" in schema_info else None
                 elif any(k in q for k in ["product", "item", "stock", "price", "category", "rating"]):
-                    target_table = "products" if "products" in schema_info else safe_fallback
+                    target_table = "products" if "products" in schema_info else None
                 elif any(k in q for k in ["order", "orders"]):
-                    target_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else safe_fallback)
+                    target_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else None)
                 elif any(k in q for k in ["sale", "sales", "revenue", "spend", "transaction"]):
-                    target_table = "sales" if "sales" in schema_info else safe_fallback
+                    target_table = "sales" if "sales" in schema_info else None
                 elif any(k in q for k in ["ticket", "support", "complaint"]):
-                    target_table = "support_tickets" if "support_tickets" in schema_info else safe_fallback
+                    target_table = "support_tickets" if "support_tickets" in schema_info else None
                 elif any(k in q for k in ["payment", "paid"]):
-                    target_table = "payments" if "payments" in schema_info else safe_fallback
+                    target_table = "payments" if "payments" in schema_info else None
                 else:
+                    target_table = None
+
+                if not target_table:
                     # Query does not match any table, column, or entity domain
                     return "", f"Unable to map query '{user_question}' to any database tables or columns."
             else:
                 target_table = max(scores, key=scores.get)
 
-        if target_table and target_table.lower() == "audit_logs" and "audit" not in q:
-            business_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
-            target_table = business_tables[0] if business_tables else "products"
+        if target_table and target_table.lower() == "audit_logs" and not any(k in q for k in ["audit", "security log"]):
+            return "", f"Query does not match any business tables in the database schema."
+
+        if not target_table or target_table not in schema_info:
+            return "", f"Unable to map query '{user_question}' to any database table."
 
         table_meta = schema_info.get(target_table, {})
         cols_meta = table_meta.get("columns", [])
