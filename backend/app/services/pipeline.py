@@ -55,7 +55,10 @@ class TextToSqlPipeline:
             "document", "policy", "pdf", "docx", "guide", "portfolio", "resume",
             "according to", "knowledge base", "what is the step", "steps to",
             "master prompt", "checklist", "handbook", "procedure", "contract",
-            "manual", "instructions", "faq", "terms", "notes"
+            "manual", "instructions", "faq", "terms", "notes", "retained",
+            "retention", "reimbursement", "allowance", "per diem", "directive",
+            "protocol", "guidelines", "requirement", "compliance", "authorized",
+            "authorization", "mileage rate", "how long should", "how long must"
         )
 
         doc_names = [d["filename"].lower() for d in rag_service.list_documents()]
@@ -73,6 +76,14 @@ class TextToSqlPipeline:
                 ]
             )
         )
+
+        # Proactive RAG Probe: If documents exist, check if question has strong match in document records
+        if not is_doc_query and rag_service.has_documents:
+            is_explicit_sql = any(q_lower.startswith(k) for k in ["select ", "with ", "show first", "how many", "count ", "average ", "avg ", "sum ", "total revenue"])
+            if not is_explicit_sql:
+                top_hits = rag_service._hybrid_search(user_question)
+                if top_hits and top_hits[0].get("score", 0) >= 4.0:
+                    is_doc_query = True
 
         if is_doc_query and rag_service.has_documents:
             t0 = time.time()
@@ -214,6 +225,37 @@ class TextToSqlPipeline:
         else:
             sql_query, explanation, generated_by = self.generator.generate(user_question, schema_info, active_table=active_table)
 
+        # Handle unsupported query where no matching tables/columns could be mapped
+        if not sql_query or not sql_query.strip():
+            total_duration_sec = round(time.time() - start_time, 3)
+            return {
+                "question": user_question,
+                "success": False,
+                "route": "sql",
+                "sql": "",
+                "explanation": explanation or "Unable to map question to active database schema.",
+                "generated_by": generated_by or "Query Router",
+                "insights": {
+                    "direct_answer": "I could not find any relevant tables or columns in the database to answer this question. Please verify available datasets in the Schema explorer.",
+                    "summary": "Unsupported query: no matching database tables or columns found.",
+                    "key_findings": ["No tables or attributes in the active database matched the query."],
+                    "comparisons": [],
+                    "caveats": ["Verify that the required dataset has been uploaded or check the schema viewer."],
+                    "business_takeaway": "Rephrase your query or upload the appropriate dataset to perform this analysis.",
+                    "status": "error"
+                },
+                "rows": [],
+                "columns": [],
+                "row_count": 0,
+                "execution_time_sec": total_duration_sec,
+                "sql_execution_time_ms": 0.0,
+                "visualization": {"chart_type": "table", "title": "Unsupported Query"},
+                "attempts": 1,
+                "correction_history": [],
+                "agent_steps": agent_steps,
+                "error": "No matching database table or columns found for this question."
+            }
+
         # Strict security guard: Block audit_logs from ever being queried for non-audit questions
         if "audit_logs" in sql_query.lower() and not any(k in user_question.lower() for k in ["audit", "security log"]):
             logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for business tables.", user_question)
@@ -243,41 +285,6 @@ class TextToSqlPipeline:
             execute_fn=execute_safe_query
         )
         exec_time = round(time.time() - t_exec, 3)
-
-        # Graceful fallback: Only for natural language business queries encountering execution errors (never for non-existent table requests)
-        err_str = str(exec_result.get("error") or "").lower()
-        is_missing_table_err = "no such table" in err_str or "does not exist in the database" in err_str
-        if not exec_result["success"] and not is_missing_table_err and not re.match(r"^(SELECT|WITH|EXPLAIN)\s+", user_question.strip(), re.IGNORECASE):
-            fallback_tbl = None
-            if active_table and active_table in schema_info and active_table.lower() != "audit_logs":
-                fallback_tbl = active_table
-            else:
-                for t in schema_info.keys():
-                    if t.lower() not in ("audit_logs", "sqlite_sequence") and (t.lower() in q_lower or t.lower().rstrip("s") in q_lower):
-                        fallback_tbl = t
-                        break
-            if not fallback_tbl:
-                biz = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
-                fallback_tbl = biz[0] if biz else None
-
-            if fallback_tbl:
-                fallback_sql = f'SELECT * FROM "{fallback_tbl}" LIMIT 10;'
-                logger.info("Pipeline: Execution failed for '%s'. Using safe fallback query: %s", sql_query, fallback_sql)
-                fb_exec = execute_safe_query(fallback_sql)
-                if fb_exec.get("success"):
-                    exec_result = {
-                        "success": True,
-                        "final_sql": fallback_sql,
-                        "rows": fb_exec.get("rows", []),
-                        "columns": fb_exec.get("columns", []),
-                        "row_count": fb_exec.get("row_count", len(fb_exec.get("rows", []))),
-                        "execution_time_ms": fb_exec.get("execution_time_ms", 0.0),
-                        "attempts": exec_result.get("attempts", 1) + 1,
-                        "correction_history": exec_result.get("correction_history", []),
-                        "error": None
-                    }
-                    sql_query = fallback_sql
-                    explanation = f"Retrieved records directly from '{fallback_tbl}'."
 
         # Update final SQL if healed during self-correction
         final_sql = exec_result["final_sql"]
@@ -450,15 +457,20 @@ class TextToSqlPipeline:
             or any(k in [c.lower() for c in columns] for k in ["month", "sales_month", "year"])
         )
 
-        if not numeric_cols:
+        is_browse_query = (
+            any(k in q_lower for k in ["list all", "show all", "give me all", "browse", "sample rows", "show rows", "show first", "first 10", "first 5", "all products", "all customers", "all orders", "all employees"])
+            and not any(k in q_lower for k in ["top", "bottom", "highest", "lowest", "rank", "sum", "total revenue", "average", "avg", "by status", "by department", "spending"])
+        )
+
+        if not numeric_cols or is_browse_query:
             chart_type = "table"
             title = f"Data Records for: {user_question}"
         elif date_cols and is_time_series:
             x_axis = date_cols[0]
             chart_type = "line"
             title = f"{primary_metric_label} Over Time"
-        elif len(rows) <= 6 and any(k in q_lower for k in ["distribution", "share", "proportion", "breakdown"]):
-            chart_type = "pie"
+        elif len(rows) <= 6 and any(k in q_lower for k in ["distribution", "share", "proportion", "breakdown", "by status"]):
+            chart_type = "pie" if len(rows) <= 4 else "bar"
             title = f"{primary_metric_label} Distribution by {x_axis.replace('_', ' ').title()}"
         else:
             chart_type = "bar"

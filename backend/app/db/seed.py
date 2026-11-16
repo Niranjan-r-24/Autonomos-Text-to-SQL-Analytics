@@ -153,13 +153,13 @@ def seed_database():
         sales_records = []
         customer_totals = {}
 
-        for i in range(1, 151):
+        for i in range(1, 201):
             cust_id = random.randint(1, 40)
             prod_id = random.randint(1, 10)
             prod_price = products_data[prod_id - 1][2]
             quantity = random.randint(1, 5)
             total_price = prod_price * quantity
-            days_ago = random.randint(1, 180)
+            days_ago = random.randint(1, 650)
             sale_date = now - timedelta(days=days_ago, hours=random.randint(0, 23))
             status = random.choice(statuses)
             region = random.choice(regions)

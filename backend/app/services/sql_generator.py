@@ -256,10 +256,39 @@ JSON Response Format:
                     break
 
         if candidate_browse_tbl:
+            # Check if specific columns were requested
+            tbl_cols = [c["name"] for c in schema_info[candidate_browse_tbl].get("columns", [])]
+            matched_cols = []
+            
+            # Check for primary descriptive name/entity column
+            p_name_col = next((c for c in tbl_cols if c.lower() in ["name", "product_name", "customer_name", "title", "car_model", "emp_name"]), None)
+            if p_name_col:
+                matched_cols.append(f'"{p_name_col}"')
+
+            for col in tbl_cols:
+                col_l = col.lower()
+                if col_l in ["id", "audit_logs"]:
+                    continue
+                if (col_l in q_tokens or col_l in q or col_l.rstrip("s") in q_tokens or col_l.replace("_", " ") in q) and f'"{col}"' not in matched_cols:
+                    matched_cols.append(f'"{col}"')
+
+            select_clause = ", ".join(matched_cols) if len(matched_cols) >= 2 else "*"
             lim_m = re.search(r"\b(\d+)\b", q)
-            lim = int(lim_m.group(1)) if lim_m else 10
-            sql = f'SELECT * FROM "{candidate_browse_tbl}" LIMIT {lim};'
-            explanation = f"Retrieves the first {lim} records from the '{candidate_browse_tbl}' table."
+            has_all = any(k in q for k in ["all", "every", "full"]) and not lim_m
+            if lim_m:
+                lim = int(lim_m.group(1))
+                limit_clause = f" LIMIT {lim}"
+                limit_desc = f"first {lim} "
+            elif has_all:
+                limit_clause = ""
+                limit_desc = "all "
+            else:
+                lim = 10
+                limit_clause = " LIMIT 10"
+                limit_desc = "first 10 "
+
+            sql = f'SELECT {select_clause} FROM "{candidate_browse_tbl}"{limit_clause};'
+            explanation = f"Retrieves {limit_desc}records from the '{candidate_browse_tbl}' table."
             return sql, explanation
 
         # Step A: Table Intent Detection with Semantic Synonyms
@@ -796,21 +825,27 @@ JSON Response Format:
 
         # Pattern: Monthly Sales Trend / Revenue Over Time
         if (
-            self._has_cols(schema_info, "sales", ["sale_date", "total_price", "region", "status"])
+            self._has_cols(schema_info, "sales", ["sale_date", "total_price", "status"])
             and ("month" in q or "monthly" in q or "trend" in q or "time" in q)
             and ("sale" in q or "revenue" in q)
         ):
             is_postgres = (engine is not None and getattr(engine, "dialect", None) is not None and engine.dialect.name == "postgresql")
             month_expr = "TO_CHAR(sale_date, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', sale_date)"
+            has_region = "region" in q and self._has_cols(schema_info, "sales", ["region"])
+            region_select = ", region" if has_region else ""
+            region_group = ", region" if has_region else ""
+            region_order = ", monthly_revenue DESC" if has_region else ""
+            region_desc = " and geographical region" if has_region else ""
+
             sql = (
-                f"SELECT {month_expr} AS sales_month, region, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
+                f"SELECT {month_expr} AS sales_month{region_select}, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
                 "FROM sales "
                 f"WHERE status = 'Completed'{date_where_sales} "
-                "GROUP BY sales_month, region "
-                "ORDER BY sales_month ASC, monthly_revenue DESC;"
+                f"GROUP BY sales_month{region_group} "
+                f"ORDER BY sales_month ASC{region_order};"
             )
             explanation = (
-                "Extracts year and month from 'sale_date' in the 'sales' table, grouping by month and geographical region "
+                f"Extracts year and month from 'sale_date' in the 'sales' table, grouping by month{region_desc} "
                 f"to calculate monthly revenue and transaction volume{date_desc}."
             )
             return sql, explanation
@@ -987,7 +1022,7 @@ JSON Response Format:
                 scores[tbl_name] = score
 
             if not scores or max(scores.values()) <= 0:
-                # Do NOT default to audit_logs! Default to the table matching question domain keywords, or sales
+                # Check domain keywords before determining if query is unsupported
                 business_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
                 safe_fallback = business_tables[0] if business_tables else "products"
 
@@ -999,9 +1034,15 @@ JSON Response Format:
                     target_table = "products" if "products" in schema_info else safe_fallback
                 elif any(k in q for k in ["order", "orders"]):
                     target_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else safe_fallback)
+                elif any(k in q for k in ["sale", "sales", "revenue", "spend", "transaction"]):
+                    target_table = "sales" if "sales" in schema_info else safe_fallback
+                elif any(k in q for k in ["ticket", "support", "complaint"]):
+                    target_table = "support_tickets" if "support_tickets" in schema_info else safe_fallback
+                elif any(k in q for k in ["payment", "paid"]):
+                    target_table = "payments" if "payments" in schema_info else safe_fallback
                 else:
-                    uploaded = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
-                    target_table = uploaded[0] if uploaded else ("sales" if "sales" in schema_info else safe_fallback)
+                    # Query does not match any table, column, or entity domain
+                    return "", f"Unable to map query '{user_question}' to any database tables or columns."
             else:
                 target_table = max(scores, key=scores.get)
 

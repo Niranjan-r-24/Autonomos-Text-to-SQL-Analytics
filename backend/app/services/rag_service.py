@@ -18,6 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("text2sql.rag")
 
+RAG_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+    "by", "from", "up", "about", "into", "over", "after", "is", "are", "was", "were",
+    "be", "been", "being", "have", "has", "had", "do", "does", "did", "how", "many",
+    "much", "what", "which", "who", "whom", "this", "that", "these", "those", "can",
+    "could", "will", "would", "shall", "should", "may", "might", "must"
+}
+
 BASE_DIR = Path(__file__).resolve().parents[2]
 RAG_DIR = Path(os.getenv("RAG_STORAGE_DIR", BASE_DIR / "rag_store"))
 RAG_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,13 +158,15 @@ class ProductionRAGService:
     @staticmethod
     def recursive_chunks(text: str, size: int = 800, overlap: int = 150) -> List[str]:
         """Splits raw text into cohesive overlapping chunks respecting sentence boundaries."""
-        clean_text = re.sub(r"\s+", " ", text).strip()
+        clean_text = text.replace("\r\n", "\n").replace("\r", "\n")
+        clean_text = re.sub(r"[ \t]+", " ", clean_text)
+        clean_text = re.sub(r"\n{3,}", "\n\n", clean_text).strip()
         chunks: List[str] = []
         cursor = 0
         while cursor < len(clean_text):
             end = min(cursor + size, len(clean_text))
             if end < len(clean_text):
-                for marker in (". ", "? ", "! ", "\n", "; ", " "):
+                for marker in ("\n\n", ". ", "? ", "! ", "\n", "; ", " "):
                     split = clean_text.rfind(marker, cursor + size // 2, end)
                     if split != -1:
                         end = split + len(marker)
@@ -319,8 +329,10 @@ class ProductionRAGService:
 
     @staticmethod
     def _bm25_search(query: str, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Lightweight, zero-dependency BM25-style lexical ranking."""
-        terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 2]
+        """Lightweight, stopword-filtered BM25-style lexical ranking."""
+        terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 2 and t.lower() not in RAG_STOPWORDS]
+        if not terms:
+            terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 2]
         if not terms:
             return records[:5]
 
@@ -344,11 +356,15 @@ class ProductionRAGService:
         return sorted(scored, key=lambda x: x["score"], reverse=True)[:10]
 
     def _rewrite(self, query: str) -> str:
-        """Enriches conversational context if query is brief."""
+        """Enriches conversational context only if query is anaphoric and references past turn."""
         if not self.memory or len(query.split()) > 7:
             return query
-        last_turn = self.memory[-1]["query"]
-        return f"{query} (referencing: {last_turn})"
+        q_tokens = [w.lower() for w in re.findall(r"\w+", query)]
+        anaphoric = {"it", "its", "they", "them", "their", "this", "that", "these", "those", "same"}
+        if any(w in anaphoric for w in q_tokens):
+            last_turn = self.memory[-1]["query"]
+            return f"{query} (referencing: {last_turn})"
+        return query
 
     def _synthesize_answer(
         self,
@@ -403,13 +419,38 @@ EXECUTIVE ANSWER:"""
             except Exception as e:
                 logger.warning("LLM RAG synthesis failed, using deterministic extractor: %s", e)
 
-        # Deterministic extraction fallback:
-        # Extract leading sentences from the top chunk and cite source
-        primary = ranked_chunks[0]
-        sentences = re.split(r"(?<=[.!?])\s+", primary["text"])
-        summary = " ".join(sentences[:3]).strip()
-        source_note = f" (Referencing: {primary['source']}, Chunk {primary['chunk']})"
-        return f"Summary from Knowledge Base: {summary}{source_note}"
+        # High-precision deterministic extraction:
+        # Score individual sentences across top ranked chunks against query keywords
+        terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 2 and t.lower() not in RAG_STOPWORDS]
+        if not terms:
+            terms = [t.lower() for t in re.findall(r"\w+", query) if len(t) > 2]
+
+        scored_sentences = []
+        for rc in ranked_chunks[:3]:
+            chunk_text = rc["text"]
+            s_list = [s.strip() for s in re.split(r"(?<=[.!?])\s+", chunk_text) if s.strip()]
+            for s in s_list:
+                s_lower = s.lower()
+                match_count = sum(1 for t in terms if t in s_lower)
+                phrase_boost = 3 if any(f"{terms[i]} {terms[i+1]}" in s_lower for i in range(len(terms)-1)) else 0
+                total_s_score = match_count + phrase_boost
+                if total_s_score > 0:
+                    scored_sentences.append((total_s_score, s, rc["source"], rc["chunk"]))
+
+        if scored_sentences:
+            scored_sentences.sort(key=lambda x: x[0], reverse=True)
+            top_score, top_s, best_src, best_chk = scored_sentences[0]
+            selected = [top_s]
+            for sc, s, src, chk in scored_sentences[1:]:
+                if src == best_src and chk == best_chk and s not in selected and len(selected) < 2:
+                    selected.append(s)
+            answer_body = " ".join(selected)
+            return f"According to {best_src} (Chunk {best_chk}): {answer_body}"
+        else:
+            primary = ranked_chunks[0]
+            sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", primary["text"]) if s.strip()]
+            summary = " ".join(sentences[:2]).strip()
+            return f"According to {primary['source']} (Chunk {primary['chunk']}): {summary}"
 
     @staticmethod
     def _extract_text(filename: str, content: bytes) -> str:

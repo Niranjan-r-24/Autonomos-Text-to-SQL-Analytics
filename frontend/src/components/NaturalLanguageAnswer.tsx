@@ -74,7 +74,7 @@ function synthesizeDynamicAnswer(
     const tblMatch = q.match(/(?:from|in|table)\s+[\"']?([a-zA-Z0-9_]+)[\"']?/);
     let tblName = tblMatch ? tblMatch[1] : '';
     if (!tblName) {
-      for (const t of ['products', 'customers', 'orders', 'order_items', 'payments', 'support_tickets', 'sales', 'employees', 'fleet_inventory']) {
+      for (const t of ['products', 'customers', 'orders', 'order_items', 'payments', 'support_tickets', 'sales', 'employees']) {
         if (q.includes(t) || q.includes(t.slice(0, -1))) {
           tblName = t;
           break;
@@ -184,6 +184,24 @@ function synthesizeDynamicAnswer(
     const topName = topItem[nameCol];
     const topVal = formatVal(topItem[metricCol], metricCol);
     const mLabel = metricCol.replace(/_/g, ' ');
+
+    const isBreakdown =
+      nameCol.toLowerCase() === 'status' ||
+      nameCol.toLowerCase() === 'category' ||
+      nameCol.toLowerCase() === 'stage' ||
+      q.includes('by status') ||
+      q.includes('by category');
+
+    if (isBreakdown) {
+      const topName = topItem[nameCol];
+      const topVal = formatVal(topItem[metricCol], metricCol);
+      const mLabel = metricCol.replace(/_/g, ' ');
+      if (rows.length > 1 && rows.length <= 6) {
+        const breakdown = rows.map((r) => `${r[nameCol]}: ${formatVal(r[metricCol], metricCol)}`).join(', ');
+        return `Breakdown by ${nameCol}: ${breakdown}. (Highest is ${topName} with ${topVal} ${mLabel}).`;
+      }
+      return `Breakdown by ${nameCol}: '${topName}' leads with ${topVal} ${mLabel}. Total ${rows.length} groups represented.`;
+    }
 
     let entity = 'item';
     if (q.includes('product') || nameCol.toLowerCase().includes('product')) entity = 'product';

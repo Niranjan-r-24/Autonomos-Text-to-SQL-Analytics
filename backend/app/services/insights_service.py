@@ -394,33 +394,38 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
         text_cols.extend(id_cols)
 
         # Detect Common Query Patterns
-        is_ranking = any(k in q for k in ["top", "highest", "most", "lowest", "least", "bottom", "rank", "best", "worst"]) or "order by" in sql_lower
         is_single_row = row_count == 1
+        is_explicit_rank_word = any(k in q for k in ["top", "highest", "most", "lowest", "least", "bottom", "rank", "best", "worst"])
         is_trend = (
             any(k in q for k in ["trend", "monthly", "over time", "growth", "by month", "by year", "by date", "per month"])
             or any(k in sql_lower for k in ["strftime", "group by month", "sales_month", "to_char", "group by date"])
             or (bool(date_cols) and any(k in q for k in ["timeline", "history", "trend", "over time", "by date", "by month"]))
         )
         is_security = any(k in q for k in ["audit", "security", "fail", "log", "ip", "login"]) or "audit_logs" in sql_lower
-        is_breakdown = bool(text_cols and numeric_cols and not is_single_row)
 
-        # ----------------------------------------------------
         # Pattern 0: Direct Table Browse / Sample Rows Result
-        # ----------------------------------------------------
         is_browse = (
-            any(k in q for k in ["show first", "first 10", "first 5", "browse", "sample rows", "show rows", "all rows", "records from", "from table", "table rows", "show records"])
-            or bool(re.match(r"^select\s+\*\s+from", sql_lower))
-            or ("select *" in sql_lower and not any(k in q for k in ["top", "highest", "lowest", "bottom", "rank", "best", "worst"]))
-        )
+            any(k in q for k in ["show first", "first 10", "first 5", "browse", "sample rows", "show rows", "all rows", "records from", "from table", "table rows", "show records", "list all", "show all", "give me all", "all products", "all customers", "all orders"])
+            or bool(re.match(r"^select\s+(\*|[a-zA-Z0-9_,\s\"']+)\s+from\s+[\"']?[a-zA-Z0-9_]+[\"']?(?:\s+limit\s+\d+)?;\s*$", sql_lower))
+            or ("select *" in sql_lower and not is_explicit_rank_word)
+        ) and not is_explicit_rank_word and not is_trend and "group by" not in sql_lower
+
+        is_breakdown = bool(text_cols and numeric_cols and not is_single_row and not is_browse and (
+            "group by" in sql_lower
+            or any(k in q for k in ["distribution", "breakdown", "per ", "count by", "orders by", "by status", "by category", "by priority", "by department", "by state", "by country", "count orders", "count tickets"])
+            or ("by " in q and any(c.lower() in q for c in text_cols))
+        ))
+        is_ranking = is_explicit_rank_word or ("order by" in sql_lower and not is_breakdown and not is_browse)
         if is_browse and not is_single_row:
             tbl_target = None
             m_from = re.search(r"from\s+[\"']?([a-zA-Z0-9_]+)[\"']?", sql_lower)
             if m_from:
                 tbl_target = m_from.group(1)
             target_name = tbl_target if tbl_target else "dataset"
+            cols_note = f" (columns: {', '.join(columns)})" if columns and len(columns) <= 5 else ""
             return {
-                "direct_answer": f"Retrieved the first {row_count} records from the '{target_name}' table.",
-                "summary": f"Displaying {row_count} sample records from the '{target_name}' table across {len(columns)} attributes.",
+                "direct_answer": f"Retrieved {row_count} records from the '{target_name}' table{cols_note}.",
+                "summary": f"Displaying {row_count} records from the '{target_name}' table across {len(columns)} attributes.",
                 "key_findings": [f"Showing {row_count} records from '{target_name}' across columns: {', '.join(columns[:6])}."],
                 "comparisons": [f"Table columns: {', '.join(columns)}."],
                 "caveats": [f"Displaying up to {row_count} rows as requested."],
@@ -848,10 +853,21 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
                         f"vs {format_value(other_val, val_col)} in {val_col.replace('_', ' ')} (+{pct_lead:.1f}% higher)."
                     )
                 else:
-                    direct_answer = (
-                        f"{top_name} is the top-performing {group_col.replace('_', ' ')} during the selected period with {format_value(top_val, val_col)} in {val_col.replace('_', ' ')} "
-                        f"({top_share:.1f}% share across {distinct_groups_count} {group_col.replace('_', ' ')} segments)."
-                    )
+                    if group_col.lower() in ["status", "state", "priority", "category", "method", "plan", "channel", "action"]:
+                        entity_noun = "records"
+                        for ek, ev in [("order", "orders"), ("ticket", "support tickets"), ("payment", "payments"), ("customer", "customers"), ("sale", "sales")]:
+                            if ek in q or ek in sql_lower:
+                                entity_noun = ev
+                                break
+                        summary_breakdown = ", ".join([f"{r.get(group_col)}: {format_value(r.get(val_col, 0), val_col)}" for r in rows[:4]])
+                        direct_answer = (
+                            f"{entity_noun.capitalize()} distribution across {distinct_groups_count} {group_col.replace('_', ' ')} categories is led by '{top_name}' with {format_value(top_val, val_col)} ({top_share:.1f}% share). Breakdown: {summary_breakdown}."
+                        )
+                    else:
+                        direct_answer = (
+                            f"{top_name} is the leading {group_col.replace('_', ' ')} with {format_value(top_val, val_col)} in {val_col.replace('_', ' ')} "
+                            f"({top_share:.1f}% share across {distinct_groups_count} {group_col.replace('_', ' ')} segments)."
+                        )
             else:
                 top_entity = str(rows[0].get("name", rows[0].get("company", top_name)))
                 direct_answer = (

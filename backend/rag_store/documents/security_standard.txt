@@ -1,0 +1,1 @@
+Enterprise Security Standard: All production database backups must be encrypted with AES-256 and stored offsite for at least 5 years.
