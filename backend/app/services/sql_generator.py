@@ -88,29 +88,40 @@ class SQLGenerator:
         """
         logger.info("Generating SQL for question: '%s' (active_table: %s, provider: %s)", user_question, active_table, self.provider)
 
+        # Security/audit logs are an internal dataset.  Keep them out of the
+        # generation context altogether unless the question explicitly asks
+        # for audit/security activity.  This is stronger than trying to repair
+        # an unrelated SQL statement after a model has already selected it.
+        question_lower = user_question.lower()
+        is_audit_question = any(re.search(rf"\b{re.escape(term)}\b", question_lower) for term in [
+            "audit", "audit_log", "audit_logs", "audit log", "audit logs",
+            "security log", "security logs", "security audit", "security event", "security events",
+            "failed login", "failed logins", "ip address",
+        ])
+        generation_schema = schema_info if is_audit_question else {
+            table: meta for table, meta in schema_info.items() if table.lower() != "audit_logs"
+        }
+
         # Sanitize active_table: Never allow audit_logs lock for non-audit questions
         if active_table:
             atl = active_table.lower()
-            is_audit_q = any(re.search(rf"\b{re.escape(k)}\b", user_question.lower()) for k in [
-                "audit", "audit_log", "audit_logs", "security log", "security audit", "failed login", "failed logins"
-            ])
-            if atl == "audit_logs" and not is_audit_q:
+            if atl == "audit_logs" and not is_audit_question:
                 active_table = None
-            elif schema_info and atl in schema_info:
-                other_tables = [t for t in schema_info.keys() if t.lower() != atl and t.lower() not in ("audit_logs", "sqlite_sequence")]
+            elif generation_schema and atl in generation_schema:
+                other_tables = [t for t in generation_schema.keys() if t.lower() != atl and t.lower() not in ("sqlite_sequence",)]
                 if any(t.lower() in user_question.lower() or t.lower().rstrip("s") in user_question.lower() for t in other_tables):
                     active_table = None
 
         # 1. Attempt LLM generation if API key is present
         if self.api_key and self.provider != "fallback":
             try:
-                llm_sql, llm_explanation = self._generate_with_llm(user_question, schema_info, active_table=active_table)
+                llm_sql, llm_explanation = self._generate_with_llm(user_question, generation_schema, active_table=active_table)
                 if llm_sql:
-                    cleaned_sql = self._clean_sql(llm_sql, schema_info, user_question)
+                    cleaned_sql = self._clean_sql(llm_sql, generation_schema, user_question)
                     # A model must not substitute a different dataset for a
                     # table the user explicitly named.  This uses the current
                     # inspected schema rather than a list of application tables.
-                    mentioned_tables = self._explicit_schema_tables(user_question, schema_info)
+                    mentioned_tables = self._explicit_schema_tables(user_question, generation_schema)
                     if cleaned_sql and all(self._sql_references_table(cleaned_sql, table) for table in mentioned_tables):
                         provider_label = "Gemini 1.5 Flash" if "gemini" in self.provider else "OpenAI GPT-4o"
                         logger.info("Successfully generated SQL via %s: %s", provider_label, cleaned_sql)
@@ -121,7 +132,7 @@ class SQLGenerator:
                 logger.warning("LLM generation failed, falling back to deterministic engine: %s", str(e))
 
         # 2. Deterministic Rule-Based Fallback Engine
-        sql, explanation = self._generate_deterministic(user_question, schema_info, active_table=active_table)
+        sql, explanation = self._generate_deterministic(user_question, generation_schema, active_table=active_table)
         logger.info("Generated SQL via Deterministic Engine: %s", sql)
         return sql, explanation, "Deterministic Analytics Engine"
 
@@ -339,9 +350,10 @@ JSON Response Format:
                 limit_clause = ""
                 limit_desc = "all "
             else:
-                lim = 10
-                limit_clause = " LIMIT 10"
-                limit_desc = "first 10 "
+                # A browse request without a numeric limit should expose the
+                # actual table, not silently become a ten-row sample.
+                limit_clause = ""
+                limit_desc = "all "
 
             tbl_name_str = candidate_browse_tbl if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", candidate_browse_tbl) else f'"{candidate_browse_tbl}"'
             sql = f"SELECT * FROM {tbl_name_str}{limit_clause}"
@@ -1070,14 +1082,15 @@ JSON Response Format:
             return sql, explanation
 
         # Branch D: Browse / Filtered Query
-        browse_limit = "" if requests_all_rows else f" LIMIT {limit_val}"
+        # The result renderer/executor already has a 1,000-row safety cap.
+        # Do not introduce an undocumented ten-row cap for normal questions.
+        browse_limit = ""
         sql = f'SELECT * FROM "{target_table}"{where_clause}{browse_limit};'
         if where_filters:
-            suffix = "all matching records" if requests_all_rows else f"up to {limit_val} records"
+            suffix = "all matching records"
             explanation = f"Retrieves records from '{target_table}' where {', '.join(filter_descriptions)} ({suffix})."
         else:
-            explanation = (f"Retrieves all records from the '{target_table}' table."
-                           if requests_all_rows else f"Retrieves the first {limit_val} records from the '{target_table}' table.")
+            explanation = f"Retrieves all records from the '{target_table}' table."
         return sql, explanation
 
     def _clean_sql(self, raw_sql: str, schema_info: Optional[Dict[str, Any]] = None, user_question: Optional[str] = None) -> str:

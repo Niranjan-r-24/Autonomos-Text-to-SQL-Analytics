@@ -65,3 +65,10 @@ def test_dynamic_all_request_does_not_become_ten_row_preview():
     assert result["success"] is True
     assert result["row_count"] == 30
 
+
+def test_plain_table_browse_is_not_silently_limited_to_ten_rows():
+    result = TextToSqlPipeline(provider="fallback").run("show customers")
+    assert result["success"] is True
+    assert "LIMIT 10" not in result["sql"].upper()
+    assert result["row_count"] == 12
+
