@@ -437,14 +437,16 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
               {uploadResult ? (
                 <button
                   onClick={() => {
-                    if (isDocumentResult && onQueryDocument && selectedFiles.length > 0) {
-                      onQueryDocument(selectedFiles[0].name);
+                    // The selection is intentionally cleared after upload, so
+                    // use the server-confirmed filename from the upload result.
+                    if (isDocumentResult && onQueryDocument && uploadResult?.filename) {
+                      onQueryDocument(uploadResult.filename);
                     }
                     onClose();
                   }}
                   className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-[#10B981] hover:bg-[#059669] text-white text-xs font-bold shadow-md shadow-[#10B981]/20 transition-all cursor-pointer"
                 >
-                  <span>{isDocumentResult ? 'Ask Questions About Document' : 'Query Ingested Dataset'}</span>
+                  <span>{isDocumentResult ? 'Ask Questions About Document' : 'Dataset Ready'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               ) : (

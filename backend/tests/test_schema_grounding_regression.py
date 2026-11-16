@@ -2,7 +2,7 @@
 
 from backend.app.services.pipeline import TextToSqlPipeline
 from backend.app.services.schema_service import get_db_schema_info
-from backend.app.services.sql_executor import validate_sql_against_live_schema
+from backend.app.services.sql_executor import execute_safe_query, validate_sql_against_live_schema
 
 
 def test_llm_sql_omitting_requested_table_is_rejected(monkeypatch):
@@ -54,4 +54,14 @@ def test_required_ecommerce_questions_use_live_rows():
         assert result["row_count"] == row_count
         if scalar is not None:
             assert next(iter(result["rows"][0].values())) == scalar
+
+
+def test_dynamic_all_request_does_not_become_ten_row_preview():
+    pipeline = TextToSqlPipeline(provider="fallback")
+    schema = get_db_schema_info(force_refresh=True)
+    sql, _ = pipeline.generator._synthesize_dynamic_sql("show all orders", schema, target_table="orders")
+    result = pipeline.corrector.heal_and_execute(sql, "show all orders", schema, execute_safe_query)
+    assert "LIMIT" not in sql.upper()
+    assert result["success"] is True
+    assert result["row_count"] == 30
 

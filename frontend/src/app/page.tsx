@@ -102,12 +102,12 @@ export default function Home() {
       }
       setSchemaData(filtered);
     }
-    const targetQuery = tableName === 'knowledge_base'
-      ? 'What information is contained in the uploaded document?'
-      : `Show first 10 rows from ${tableName}`;
-    setQuery(targetQuery);
-    setIsUploadModalOpen(false);
-    handleRunQuery(targetQuery, tableName === 'knowledge_base' ? undefined : tableName);
+    // Uploading only registers a dataset or indexes a document.  Do not issue
+    // a generic SQL request here: document uploads belong to RAG, and a
+    // generic request can be routed to an unrelated table before the user has
+    // asked a question.
+    setQuery('');
+    setPipelineResult(null);
   };
 
   const handleSelectTable = (tableName: string | null) => {

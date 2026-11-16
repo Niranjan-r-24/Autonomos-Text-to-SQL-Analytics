@@ -270,6 +270,10 @@ JSON Response Format:
         """
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
+
+        # "all" is a request for the complete matching result set, not the
+        # default preview.  A numeric limit still takes precedence.
+        requests_all_rows = bool(re.search(r"\b(?:all|every|entire|full)\b", q))
         canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
 
         is_postgres = (engine is not None and getattr(engine, "dialect", None) is not None and getattr(engine.dialect, "name", "") == "postgresql")
@@ -832,6 +836,10 @@ JSON Response Format:
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
 
+        # Preserve an explicit request for the complete result set instead of
+        # silently turning it into the default ten-row preview.
+        requests_all_rows = bool(re.search(r"\b(?:all|every|entire|full)\b", q))
+
         # 1. Ranking Direction & Limits
         is_lowest = any(k in q for k in [
             "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "minimum", "fewest"
@@ -860,6 +868,9 @@ JSON Response Format:
             has_explicit_limit = True
         else:
             limit_val = 10
+            has_explicit_limit = False
+
+        if requests_all_rows and not limit_match:
             has_explicit_limit = False
 
         # 2. Multi-Factor Table Resolution
@@ -1059,11 +1070,14 @@ JSON Response Format:
             return sql, explanation
 
         # Branch D: Browse / Filtered Query
-        sql = f'SELECT * FROM "{target_table}"{where_clause} LIMIT {limit_val};'
+        browse_limit = "" if requests_all_rows else f" LIMIT {limit_val}"
+        sql = f'SELECT * FROM "{target_table}"{where_clause}{browse_limit};'
         if where_filters:
-            explanation = f"Retrieves records from '{target_table}' where {', '.join(filter_descriptions)} (up to {limit_val} records)."
+            suffix = "all matching records" if requests_all_rows else f"up to {limit_val} records"
+            explanation = f"Retrieves records from '{target_table}' where {', '.join(filter_descriptions)} ({suffix})."
         else:
-            explanation = f"Retrieves the first {limit_val} records from the '{target_table}' table."
+            explanation = (f"Retrieves all records from the '{target_table}' table."
+                           if requests_all_rows else f"Retrieves the first {limit_val} records from the '{target_table}' table.")
         return sql, explanation
 
     def _clean_sql(self, raw_sql: str, schema_info: Optional[Dict[str, Any]] = None, user_question: Optional[str] = None) -> str:
