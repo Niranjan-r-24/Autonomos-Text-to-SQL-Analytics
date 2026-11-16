@@ -237,7 +237,7 @@ class TextToSqlPipeline:
             total_duration_sec = round(time.time() - start_time, 3)
             available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
             avail_text = ", ".join(available_tables) if available_tables else "available tables"
-            clarification_msg = explanation or f"Unable to identify target table. Available tables: {avail_text}."
+            clarification_msg = explanation or f"No matching database table or attributes found for your question. Available tables: {avail_text}."
             return {
                 "question": user_question,
                 "success": False,
@@ -246,13 +246,13 @@ class TextToSqlPipeline:
                 "explanation": clarification_msg,
                 "generated_by": generated_by or "Query Router",
                 "insights": {
-                    "direct_answer": f"I could not determine which table to query. Available tables are: {avail_text}. Please specify one of these tables in your question.",
+                    "direct_answer": f"I could not determine which table to query. No matching database table was found. Available tables are: {avail_text}. Please specify one of these tables in your question.",
                     "summary": "Please clarify which table you would like to query.",
                     "key_findings": [f"Available tables: {avail_text}"],
                     "comparisons": [],
                     "caveats": ["Specify a valid table or attribute in your question."],
                     "business_takeaway": f"Available datasets: {avail_text}. Specify one to continue.",
-                    "status": "clarification"
+                    "status": "error"
                 },
                 "rows": [],
                 "columns": [],
@@ -415,6 +415,7 @@ class TextToSqlPipeline:
 
         # Normalize column names by stripping surrounding quotes
         columns = [c.strip('"`') for c in columns]
+        q_lower = user_question.lower()
         sample_row = {k.strip('"`'): v for k, v in rows[0].items()}
         numeric_cols = []
         string_cols = []
@@ -424,7 +425,11 @@ class TextToSqlPipeline:
             val = sample_row.get(col)
             col_lower = col.lower()
 
-            if any(k in col_lower for k in ["date", "time", "month", "year", "day"]):
+            is_date_named = (
+                any(k in col_lower for k in ["date", "time", "month", "year", "day", "timestamp"])
+                and not any(col_lower.endswith(sfx) for sfx in ["_revenue", "_sales", "_count", "_total", "_amount", "_price", "_qty", "_spent"])
+            )
+            if is_date_named and not isinstance(val, (int, float)):
                 date_cols.append(col)
             elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace(".", "", 1).isdigit()):
                 if not col_lower.endswith("_id") and col_lower != "id":
@@ -444,7 +449,23 @@ class TextToSqlPipeline:
         if not x_axis:
             x_axis = string_cols[0] if string_cols else (date_cols[0] if date_cols else columns[0])
 
-        y_axes = numeric_cols if numeric_cols else []
+        # Sort y_axes to prioritize metric relevant to the question (e.g. revenue, sales, amount)
+        if numeric_cols:
+            preferred_metrics = []
+            for kw in ["revenue", "sales", "spent", "spending", "price", "amount", "salary", "quantity", "units", "count", "order"]:
+                if kw in q_lower:
+                    preferred_metrics.extend([c for c in numeric_cols if kw in c.lower()])
+            
+            sorted_numeric = []
+            for c in preferred_metrics:
+                if c not in sorted_numeric:
+                    sorted_numeric.append(c)
+            for c in numeric_cols:
+                if c not in sorted_numeric:
+                    sorted_numeric.append(c)
+            y_axes = sorted_numeric
+        else:
+            y_axes = []
         primary_metric_label = y_axes[0].replace("_", " ").title() if y_axes else "Value"
 
         q_lower = user_question.lower()
@@ -481,14 +502,23 @@ class TextToSqlPipeline:
             and not any(k in q_lower for k in ["top", "bottom", "highest", "lowest", "rank", "sum", "total revenue", "average", "avg", "by status", "by department", "spending"])
         )
 
-        if not numeric_cols or is_browse_query:
+        is_scalar_aggregate = (
+            len(rows) == 1
+            and len(columns) <= 2
+            and not any(k in q_lower for k in ["top", "bottom", "highest", "lowest", "rank", "best", "worst"])
+        )
+
+        if not numeric_cols or is_browse_query or is_scalar_aggregate:
             chart_type = "table"
             title = f"Data Records for: {user_question}"
         elif date_cols and is_time_series:
             x_axis = date_cols[0]
             chart_type = "line"
             title = f"{primary_metric_label} Over Time"
-        elif len(rows) <= 6 and any(k in q_lower for k in ["distribution", "share", "proportion", "breakdown", "by status"]):
+        elif len(rows) <= 6 and (
+            any(k in q_lower for k in ["distribution", "share", "proportion", "breakdown", "by status", "status", "priority", "by category", "by plan"])
+            or (x_axis and x_axis.lower() in ["status", "priority", "plan", "category", "payment_method"])
+        ):
             chart_type = "pie" if len(rows) <= 4 else "bar"
             title = f"{primary_metric_label} Distribution by {x_axis.replace('_', ' ').title()}"
         else:

@@ -1,40 +1,108 @@
+"""
+Enterprise Database Seeding Service.
+Seeds the database with canonical e-commerce datasets:
+- customers (12 real records from sample_data/customers.csv)
+- products (8 real records from sample_data/products.csv)
+- orders (30 real records from sample_data/orders.csv)
+- order_items (55 real records from sample_data/order_items.csv)
+- payments (30 real records from sample_data/payments.csv)
+- support_tickets (8 real records from sample_data/support_tickets.csv)
+- audit_logs (80 realistic security/audit records)
+- employees (16 realistic staff records)
+- sales (150+ completed transactions)
+"""
 import os
 import sys
 import random
 from datetime import datetime, timedelta
+import pandas as pd
+from sqlalchemy import text
 
 # Ensure backend package can be imported
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from sqlalchemy import create_engine, text
 try:
     from backend.app.db.database import DATABASE_URL, engine
 except ImportError:
     from app.db.database import DATABASE_URL, engine
 
+
 def seed_database():
     """
-    Creates and seeds enterprise analytics database with rich sample data:
-    - customers
-    - products
-    - sales
-    - audit_logs
+    Creates and seeds enterprise analytics database with canonical e-commerce data:
+    12 customers, 8 products, 30 orders, 55 order_items, 30 payments, 8 support_tickets,
+    80 audit_logs, 16 employees, and 150+ sales.
     """
-    print("[SEED] Seeding Enterprise Analytics Database...")
+    print("[SEED] Seeding Enterprise Analytics Database with canonical e-commerce data...")
 
     is_postgres = (engine.dialect.name == "postgresql")
     pk_col = "id SERIAL PRIMARY KEY" if is_postgres else "id INTEGER PRIMARY KEY AUTOINCREMENT"
     dt_type = "TIMESTAMP" if is_postgres else "DATETIME"
     cascade = " CASCADE" if is_postgres else ""
 
-    with engine.connect() as conn:
-        # Drop only standard canonical tables when re-seeding to preserve custom uploaded datasets
-        canonical_to_drop = ["sales", "audit_logs", "customers", "products", "employees"]
+    sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_data")
+
+    # 1. Load CSVs from sample_data
+    cust_file = os.path.join(sample_dir, "customers.csv")
+    prod_file = os.path.join(sample_dir, "products.csv")
+    orders_file = os.path.join(sample_dir, "orders.csv")
+    items_file = os.path.join(sample_dir, "order_items.csv")
+    payments_file = os.path.join(sample_dir, "payments.csv")
+    tickets_file = os.path.join(sample_dir, "support_tickets.csv")
+
+    cust_df = pd.read_csv(cust_file)
+    prod_df = pd.read_csv(prod_file)
+    orders_df = pd.read_csv(orders_file)
+    items_df = pd.read_csv(items_file)
+    payments_df = pd.read_csv(payments_file)
+    tickets_df = pd.read_csv(tickets_file)
+
+    # Compute customer total_spent from order_items
+    merged_orders = items_df.merge(orders_df, on="order_id")
+    spent_by_cust = merged_orders.groupby("customer_id")["line_total"].sum().to_dict()
+
+    # Add dual-compatible columns to customers
+    cust_df["id"] = cust_df["customer_id"]
+    cust_df["name"] = cust_df["customer_name"]
+    cust_df["email"] = [f"{str(n).lower().replace(' ', '')}@example.com" for n in cust_df["customer_name"]]
+    cust_df["company"] = ["Apex Enterprises", "TechWave", "Global Logistics", "Quantum Corp", 
+                           "Starlight Labs", "Nexus Fin", "CyberDyn", "Optima Retail", 
+                           "BioGen", "Titan Aero", "Vanguard", "Horizon Media"][:len(cust_df)]
+    cust_df["country"] = ["India"] * len(cust_df)
+    cust_df["plan"] = ["Enterprise", "Professional", "Standard", "Standard",
+                       "Professional", "Enterprise", "Standard", "Starter",
+                       "Professional", "Enterprise", "Standard", "Starter"][:len(cust_df)]
+    cust_df["total_spent"] = cust_df["customer_id"].map(lambda cid: float(spent_by_cust.get(cid, 0.0)))
+    cust_df["created_at"] = cust_df["signup_date"]
+
+    # Add dual-compatible columns to products
+    prod_df["id"] = prod_df["product_id"]
+    prod_df["name"] = prod_df["product_name"]
+    prod_df["price"] = prod_df["unit_price"]
+    prod_df["stock_quantity"] = prod_df["stock_qty"]
+    prod_df["rating"] = [4.8, 4.9, 4.6, 4.7, 4.5, 4.85, 4.4, 4.65][:len(prod_df)]
+
+    # Standardize support_tickets columns
+    expected_ticket_cols = ["ticket_id", "customer_id", "order_id", "issue", "priority", "status", "created_at"]
+    if len(tickets_df.columns) == len(expected_ticket_cols):
+        tickets_df.columns = expected_ticket_cols
+
+    with engine.begin() as conn:
+        # Drop canonical tables
+        canonical_to_drop = ["customers", "products", "orders", "order_items", "payments", 
+                             "support_tickets", "audit_logs", "employees", "sales"]
         for t in canonical_to_drop:
             conn.execute(text(f'DROP TABLE IF EXISTS "{t}"{cascade};'))
-        conn.commit()
 
-        # 1. Create employees table
+        # Write e-commerce tables
+        cust_df.to_sql("customers", con=conn, if_exists="replace", index=False)
+        prod_df.to_sql("products", con=conn, if_exists="replace", index=False)
+        orders_df.to_sql("orders", con=conn, if_exists="replace", index=False)
+        items_df.to_sql("order_items", con=conn, if_exists="replace", index=False)
+        payments_df.to_sql("payments", con=conn, if_exists="replace", index=False)
+        tickets_df.to_sql("support_tickets", con=conn, if_exists="replace", index=False)
+
+        # Create and seed employees
         conn.execute(text(f"""
             CREATE TABLE employees (
                 {pk_col},
@@ -44,162 +112,6 @@ def seed_database():
                 hire_date {dt_type} NOT NULL
             );
         """))
-
-        # 1. Create customers table
-        conn.execute(text(f"""
-            CREATE TABLE customers (
-                {pk_col},
-                name VARCHAR(100) NOT NULL,
-                email VARCHAR(100) UNIQUE NOT NULL,
-                company VARCHAR(100),
-                country VARCHAR(50) NOT NULL,
-                plan VARCHAR(20) DEFAULT 'Standard',
-                total_spent DECIMAL(10, 2) DEFAULT 0.00,
-                created_at {dt_type} NOT NULL
-            );
-        """))
-
-        # 2. Create products table
-        conn.execute(text(f"""
-            CREATE TABLE products (
-                {pk_col},
-                name VARCHAR(100) NOT NULL,
-                category VARCHAR(50) NOT NULL,
-                price DECIMAL(10, 2) NOT NULL,
-                stock_quantity INTEGER DEFAULT 100,
-                rating DECIMAL(3, 2) DEFAULT 4.5
-            );
-        """))
-
-        # 3. Create sales table
-        conn.execute(text(f"""
-            CREATE TABLE sales (
-                {pk_col},
-                customer_id INTEGER NOT NULL,
-                product_id INTEGER NOT NULL,
-                quantity INTEGER NOT NULL,
-                total_price DECIMAL(10, 2) NOT NULL,
-                sale_date {dt_type} NOT NULL,
-                status VARCHAR(20) DEFAULT 'Completed',
-                region VARCHAR(50) NOT NULL,
-                FOREIGN KEY (customer_id) REFERENCES customers(id),
-                FOREIGN KEY (product_id) REFERENCES products(id)
-            );
-        """))
-
-        # 4. Create audit_logs table
-        conn.execute(text(f"""
-            CREATE TABLE audit_logs (
-                {pk_col},
-                user_id INTEGER,
-                action VARCHAR(100) NOT NULL,
-                status VARCHAR(20) NOT NULL,
-                ip_address VARCHAR(45) NOT NULL,
-                timestamp {dt_type} NOT NULL
-            );
-        """))
-
-        conn.commit()
-
-        # Seed Products
-        products_data = [
-            ("Apex Cloud AI Platform", "Enterprise Software", 4999.00, 150, 4.9),
-            ("Quantum Analytics Suite", "Enterprise Software", 2999.00, 200, 4.8),
-            ("CyberShield Pro Security", "Security", 1499.00, 500, 4.7),
-            ("DataPipe ETL Orchestrator", "Developer Tools", 899.00, 350, 4.6),
-            ("Neural Search API", "AI & ML", 1299.00, 400, 4.85),
-            ("Vortex Database Cluster", "Infrastructure", 3499.00, 100, 4.95),
-            ("Echo Real-Time Monitor", "DevOps", 699.00, 600, 4.4),
-            ("HyperScale Storage Node", "Infrastructure", 1999.00, 250, 4.65),
-            ("SmartEdge IoT Gateway", "Hardware & Cloud", 1199.00, 180, 4.3),
-            ("OmniChannel CRM Connector", "Integrations", 799.00, 450, 4.5)
-        ]
-
-        for prod in products_data:
-            conn.execute(
-                text("INSERT INTO products (name, category, price, stock_quantity, rating) VALUES (:n, :c, :p, :s, :r)"),
-                {"n": prod[0], "c": prod[1], "p": prod[2], "s": prod[3], "r": prod[4]}
-            )
-
-        # Seed Customers
-        companies = ["Acme Corp", "TechWave Inc", "GlobalLogistics", "Apex Systems", "Starlight Health", 
-                     "Nexus Financial", "CyberDyn Solutions", "Optima Retail", "BioGen Labs", "Titan Aerospace",
-                     "Vanguard Energy", "Horizon Media", "OmniTech Global", "Alpha Motors", "Synergy Telecom"]
-        countries = ["United States", "United Kingdom", "Germany", "Canada", "Australia", "Japan", "France", "Singapore"]
-        plans = ["Enterprise", "Professional", "Standard", "Starter"]
-
-        customers_data = []
-        now = datetime.now()
-        for i in range(1, 41):
-            comp = random.choice(companies)
-            country = random.choice(countries)
-            plan = random.choice(plans)
-            created_days_ago = random.randint(30, 365)
-            created_at = now - timedelta(days=created_days_ago)
-            name = f"User {i} ({comp})"
-            email = f"contact_{i}@{comp.lower().replace(' ', '')}.com"
-            customers_data.append((name, email, comp, country, plan, 0.0, created_at.strftime("%Y-%m-%d %H:%M:%S")))
-
-        for cust in customers_data:
-            conn.execute(
-                text("INSERT INTO customers (name, email, company, country, plan, total_spent, created_at) VALUES (:n, :e, :c, :co, :p, :t, :cr)"),
-                {"n": cust[0], "e": cust[1], "c": cust[2], "co": cust[3], "p": cust[4], "t": cust[5], "cr": cust[6]}
-            )
-
-        # Seed Sales Transactions
-        regions = ["North America", "Europe", "Asia-Pacific", "Latin America"]
-        statuses = ["Completed", "Completed", "Completed", "Completed", "Pending", "Refunded"]
-
-        sales_records = []
-        customer_totals = {}
-
-        for i in range(1, 201):
-            cust_id = random.randint(1, 40)
-            prod_id = random.randint(1, 10)
-            prod_price = products_data[prod_id - 1][2]
-            quantity = random.randint(1, 5)
-            total_price = prod_price * quantity
-            days_ago = random.randint(1, 650)
-            sale_date = now - timedelta(days=days_ago, hours=random.randint(0, 23))
-            status = random.choice(statuses)
-            region = random.choice(regions)
-
-            sales_records.append((cust_id, prod_id, quantity, total_price, sale_date.strftime("%Y-%m-%d %H:%M:%S"), status, region))
-
-            if status == "Completed":
-                customer_totals[cust_id] = customer_totals.get(cust_id, 0.0) + total_price
-
-        for sale in sales_records:
-            conn.execute(
-                text("INSERT INTO sales (customer_id, product_id, quantity, total_price, sale_date, status, region) VALUES (:c, :p, :q, :t, :d, :s, :r)"),
-                {"c": sale[0], "p": sale[1], "q": sale[2], "t": sale[3], "d": sale[4], "s": sale[5], "r": sale[6]}
-            )
-
-        # Update customer total_spent
-        for cid, spent in customer_totals.items():
-            conn.execute(
-                text("UPDATE customers SET total_spent = :s WHERE id = :i"),
-                {"s": round(spent, 2), "i": cid}
-            )
-
-        # Seed Audit Logs
-        actions = ["USER_LOGIN", "EXPORT_REPORT", "QUERY_EXECUTION", "API_KEY_ROTATION", "SCHEMA_UPDATE", "FAILED_AUTH"]
-        log_statuses = ["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "FAILURE"]
-        ips = ["192.168.1.45", "10.0.4.12", "172.16.0.88", "192.168.2.110"]
-
-        for i in range(1, 81):
-            user_id = random.randint(1, 40)
-            action = random.choice(actions)
-            l_status = "FAILURE" if action == "FAILED_AUTH" else random.choice(log_statuses)
-            ip = random.choice(ips)
-            log_time = now - timedelta(days=random.randint(0, 30), minutes=random.randint(0, 1440))
-
-            conn.execute(
-                text("INSERT INTO audit_logs (user_id, action, status, ip_address, timestamp) VALUES (:u, :a, :s, :ip, :t)"),
-                {"u": user_id, "a": action, "s": l_status, "ip": ip, "t": log_time.strftime("%Y-%m-%d %H:%M:%S")}
-            )
-
-        # Seed Employees
         employees_data = [
             ("Sarah Connor", "Engineering", 145000.00, "2021-03-15"),
             ("James Miller", "Engineering", 132000.00, "2022-06-01"),
@@ -218,34 +130,68 @@ def seed_database():
             ("Alexander Wright", "HR", 92000.00, "2021-04-08"),
             ("Grace Hall", "HR", 89000.00, "2023-05-15")
         ]
-
         for emp in employees_data:
             conn.execute(
                 text("INSERT INTO employees (name, department, salary, hire_date) VALUES (:n, :d, :s, :h)"),
                 {"n": emp[0], "d": emp[1], "s": emp[2], "h": emp[3]}
             )
 
-        # Seed E-Commerce Relational Datasets (orders, order_items, payments, support_tickets)
-        try:
-            import pandas as pd
-            sample_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_data")
-            ecommerce_files = {
-                "orders": "orders.csv",
-                "order_items": "order_items.csv",
-                "payments": "payments.csv",
-                "support_tickets": "support_tickets.csv",
-            }
-            for tbl, fname in ecommerce_files.items():
-                fpath = os.path.join(sample_dir, fname)
-                if os.path.exists(fpath):
-                    df_ecom = pd.read_csv(fpath)
-                    df_ecom.to_sql(tbl, con=conn, if_exists="replace", index=False)
-                    print(f"[SEED] Seeded e-commerce table '{tbl}' with {len(df_ecom)} rows.")
-        except Exception as e_ecom:
-            print(f"[SEED] Optional e-commerce tables not seeded: {e_ecom}")
+        # Create and seed audit_logs (80 realistic records)
+        conn.execute(text(f"""
+            CREATE TABLE audit_logs (
+                {pk_col},
+                user_id INTEGER,
+                action VARCHAR(100) NOT NULL,
+                status VARCHAR(20) NOT NULL,
+                ip_address VARCHAR(45) NOT NULL,
+                timestamp {dt_type} NOT NULL
+            );
+        """))
+        actions = ["USER_LOGIN", "EXPORT_REPORT", "QUERY_EXECUTION", "API_KEY_ROTATION", "SCHEMA_UPDATE", "FAILED_AUTH"]
+        log_statuses = ["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS", "FAILURE"]
+        ips = ["192.168.1.45", "10.0.4.12", "172.16.0.88", "192.168.2.110"]
+        now = datetime.now()
 
-        conn.commit()
-        print("[SEED] Database seeding completed successfully!")
+        for i in range(1, 81):
+            user_id = random.randint(1, 12)
+            action = random.choice(actions)
+            l_status = "FAILURE" if action == "FAILED_AUTH" else random.choice(log_statuses)
+            ip = random.choice(ips)
+            log_time = now - timedelta(days=random.randint(0, 30), minutes=random.randint(0, 1440))
+            conn.execute(
+                text("INSERT INTO audit_logs (user_id, action, status, ip_address, timestamp) VALUES (:u, :a, :s, :ip, :t)"),
+                {"u": user_id, "a": action, "s": l_status, "ip": ip, "t": log_time.strftime("%Y-%m-%d %H:%M:%S")}
+            )
+
+        # Create and seed sales (160 completed transactions for backward compatibility)
+        conn.execute(text(f"""
+            CREATE TABLE sales (
+                {pk_col},
+                customer_id INTEGER NOT NULL,
+                product_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL,
+                total_price DECIMAL(10, 2) NOT NULL,
+                sale_date {dt_type} NOT NULL,
+                status VARCHAR(20) DEFAULT 'Completed',
+                region VARCHAR(50) NOT NULL
+            );
+        """))
+        regions = ["North America", "Europe", "Asia-Pacific", "Latin America"]
+        prod_prices = dict(zip(prod_df["product_id"], prod_df["unit_price"]))
+        for i in range(1, 161):
+            cid = random.randint(1, 12)
+            pid = random.choice(list(prod_prices.keys()))
+            qty = random.randint(1, 5)
+            price = prod_prices[pid] * qty
+            days_ago = random.randint(5, 500)
+            s_date = now - timedelta(days=days_ago, hours=random.randint(0, 23))
+            reg = random.choice(regions)
+            conn.execute(
+                text("INSERT INTO sales (customer_id, product_id, quantity, total_price, sale_date, status, region) VALUES (:c, :p, :q, :t, :d, 'Completed', :r)"),
+                {"c": cid, "p": pid, "q": qty, "t": price, "d": s_date.strftime("%Y-%m-%d %H:%M:%S"), "r": reg}
+            )
+
+        print("[SEED] Successfully seeded: customers (12), products (8), orders (30), order_items (55), payments (30), support_tickets (8), audit_logs (80), employees (16), sales (160).")
 
     try:
         from backend.app.services.schema_service import clear_schema_cache
@@ -256,6 +202,7 @@ def seed_database():
             clear_schema_cache()
         except Exception:
             pass
+
 
 if __name__ == "__main__":
     seed_database()

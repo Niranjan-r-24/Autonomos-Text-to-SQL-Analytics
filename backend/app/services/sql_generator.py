@@ -1,7 +1,7 @@
 """
 SQL and Query Explanation Generation Service.
 Generates valid ANSI/SQLite SQL queries and plain-English explanations using LLMs
-(Google Gemini, OpenAI) with a fast, high-precision, intent-aware deterministic offline engine.
+(Google Gemini, OpenAI) with a schema-first, intent-aware deterministic offline engine.
 Specially optimized for custom uploaded datasets (.CSV, .XLSX, .JSON, .SQLITE) and multi-table schemas.
 """
 import os
@@ -10,11 +10,12 @@ import json
 import logging
 import httpx
 from typing import Dict, Any, Tuple, Optional, List
+
 try:
-    from backend.app.services.schema_service import format_schema_for_llm
+    from backend.app.services.schema_service import format_schema_for_llm, detect_relationships
     from backend.app.db.database import engine
 except ImportError:
-    from app.services.schema_service import format_schema_for_llm
+    from app.services.schema_service import format_schema_for_llm, detect_relationships
     try:
         from app.db.database import engine
     except Exception:
@@ -84,14 +85,6 @@ class SQLGenerator:
     def generate(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[str, str, str]:
         """
         Generates SQL query and explanation for the provided user question.
-        
-        Args:
-            user_question: The plain English question from the user.
-            schema_info: Structured database schema dictionary.
-            active_table: Optional target table to prioritize (e.g. from upload or active context).
-            
-        Returns:
-            Tuple of (sql_query: str, explanation: str, generated_by: str)
         """
         logger.info("Generating SQL for question: '%s' (active_table: %s, provider: %s)", user_question, active_table, self.provider)
 
@@ -104,7 +97,6 @@ class SQLGenerator:
             if atl == "audit_logs" and not is_audit_q:
                 active_table = None
             elif schema_info and atl in schema_info:
-                # If question explicitly mentions another table, unbind active_table
                 other_tables = [t for t in schema_info.keys() if t.lower() != atl and t.lower() not in ("audit_logs", "sqlite_sequence")]
                 if any(t.lower() in user_question.lower() or t.lower().rstrip("s") in user_question.lower() for t in other_tables):
                     active_table = None
@@ -138,13 +130,12 @@ class SQLGenerator:
         system_prompt = f"""You are an expert SQL Developer and Database Architect.
 Generate a standard SQLite/ANSI SQL query and a short, clear plain English explanation for the user question.
 
-DATABASE SCHEMA:
+DATABASE SCHEMA AND RELATIONSHIPS:
 {formatted_schema}
 {active_table_instruction}
 CRITICAL INTENT AND SCHEMA GROUNDING RULES:
 1. STRICT SCHEMA GROUNDING (NEVER GUESS COLUMN NAMES):
    - You MUST ONLY query table names and column names that appear in the DATABASE SCHEMA above.
-   - NEVER assume canonical column names like 'name' or 'id' if the table has 'product_name' or 'product_id' or 'customer_name' or 'customer_id'.
    - If 'products' has 'product_name' and 'product_id', you MUST use 'products.product_name' and 'products.product_id' (NEVER 'p.name' or 'p.id').
    - If 'customers' has 'customer_name' and 'customer_id', use 'customers.customer_name' and 'customers.customer_id'.
 
@@ -157,29 +148,26 @@ CRITICAL INTENT AND SCHEMA GROUNDING RULES:
      GROUP BY p.product_id, p.product_name
      ORDER BY total_revenue DESC LIMIT 5;
    - If 'orders' and 'customers' exist: join on 'orders.customer_id = customers.customer_id'.
-   - If 'payments' exists: payments connect to 'orders' via 'order_id'.
-   - If 'sales' exists (canonical sales table): join 'sales' and 'products' on 'sales.product_id = products.product_id' (or 'products.id' if the column is 'id').
+   - If 'orders' and 'order_items' exist: monthly revenue is:
+     SELECT strftime('%Y-%m', o.order_date) AS sales_month, SUM(oi.line_total) AS monthly_revenue
+     FROM orders o JOIN order_items oi ON o.order_id = oi.order_id
+     GROUP BY sales_month ORDER BY sales_month ASC;
 
 3. DOMAIN & TABLE ROUTING RULES:
-   - Questions about "customers", "users", "clients", "subscribers" (e.g., "How many customers are in the database?") MUST ALWAYS query the 'customers' table (e.g. SELECT COUNT(*) AS customer_count FROM customers;). NEVER query 'audit_logs' or 'sales'.
+   - Questions about "customers", "users", "clients", "subscribers" (e.g., "How many customers are in the database?") MUST ALWAYS query the 'customers' table (e.g. SELECT COUNT(*) AS total_customers FROM customers;). NEVER query 'audit_logs'.
    - 'audit_logs' contains system security logs (actions, IP addresses, failures). NEVER query 'audit_logs' unless the user explicitly asks about audit logs, security events, logins, or IP addresses.
-   - Questions about "products", "catalog", "items", "prices", or "categories" MUST query the 'products' table (or join with 'order_items' or 'sales' for sales volume/revenue).
-   - Questions about "employees", "staff", "departments", or "salaries" MUST query the 'employees' table.
-   - Questions about "orders", "purchases", "order status" MUST query 'orders' (or 'sales').
+   - Questions about "products", "catalog", "items", "prices" MUST query the 'products' table.
+   - Questions about "orders", "purchases", "order status" MUST query 'orders'.
+   - Questions about nonexistent tables: Do NOT substitute another table. Return empty string for sql and clear error.
 
 4. RANKING DIRECTION & LIMITS:
    - For "lowest", "bottom", "least", "cheapest", "worst", "minimum", "ascending", or "ASC": use ORDER BY <metric> ASC.
    - For "top", "highest", "most", "best", "greatest", "maximum", "descending", or "DESC": use ORDER BY <metric> DESC.
-   - NEVER default to DESC when the user asks for lowest, bottom, or ascending rankings.
-   - Respect requested limits: e.g., "Top 5" -> LIMIT 5, "Lowest 10" -> LIMIT 10, "Bottom 3" -> LIMIT 3.
+   - Respect requested limits: e.g., "Top 5" -> LIMIT 5, "first 10 rows" -> LIMIT 10.
 
 5. SECURITY & READ-ONLY SAFETY:
-   - Generate strictly read-only SELECT queries (JOINs, aggregations, GROUP BY, ORDER BY, LIMIT).
-   - Use clear column aliases (e.g., AS total_revenue, AS customer_count, AS total_units_sold).
-   - Always qualify column names with table prefixes (e.g. p.product_name, oi.product_id) to avoid ambiguous column errors.
-
-6. EXPLANATION:
-   - Provide a 1-2 sentence explanation of what the query does (which tables are joined, filters used, ranking metric, and sort direction).
+   - Generate strictly read-only SELECT queries.
+   - Always qualify column names with table prefixes in joins to avoid ambiguous column errors.
 
 JSON Response Format:
 {{
@@ -198,7 +186,7 @@ JSON Response Format:
                     "responseMimeType": "application/json"
                 }
             }
-            with httpx.Client(timeout=6) as client:
+            with httpx.Client(timeout=8) as client:
                 res = client.post(url, json=payload)
                 if res.status_code == 200:
                     data = res.json()
@@ -223,7 +211,7 @@ JSON Response Format:
                 "temperature": 0.1,
                 "response_format": {"type": "json_object"}
             }
-            with httpx.Client(timeout=6) as client:
+            with httpx.Client(timeout=8) as client:
                 res = client.post(url, headers=headers, json=payload)
                 if res.status_code == 200:
                     data = res.json()
@@ -238,15 +226,42 @@ JSON Response Format:
     def _generate_deterministic(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[str, str]:
         """
         Provides high-precision, intent-aware deterministic SQL queries and explanations.
-        Correctly recognizes ranking direction (ASC for lowest/bottom, DESC for top/highest),
-        metrics, filters, and limits.
+        Never defaults to audit_logs for business questions.
+        Accurately generates multi-table queries, aggregations, groupings, and temporal trends.
         """
         q = user_question.lower()
         q_tokens = set(re.findall(r"[a-z0-9_]+", q))
         canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
 
-        # Step 0: Direct Table Browse / First N Rows / Show All
-        # Matches: "Show first 10 rows from <tbl>", "browse <tbl>", "Give me all <tbl>", "Show all <tbl>", "All <tbl>", "list <tbl>"
+        is_postgres = (engine is not None and getattr(engine, "dialect", None) is not None and getattr(engine.dialect, "name", "") == "postgresql")
+
+        # Step 0: Check if question specifically requests a NON-EXISTENT table
+        stopwords = {
+            "the", "a", "an", "all", "each", "this", "that", "these", "my", "our", "database",
+            "data", "db", "here", "current", "active", "system", "first", "last", "top", "bottom",
+            "any", "some", "every", "select", "where", "group", "order", "limit", "records",
+            "rows", "items", "entries", "values", "details", "information", "info", "columns",
+            "fields", "table", "tables", "chart", "graph", "analytics", "insights", "summary",
+            "scratch", "file", "csv", "json", "sample", "view", "show", "display", "get", "fetch", "list", "see"
+        }
+        for pat in [r"\bfrom\s+([a-zA-Z0-9_]+)\b", r"\btable\s+([a-zA-Z0-9_]+)\b", r"\b([a-zA-Z0-9_]+)\s+table\b"]:
+            m = re.search(pat, q)
+            if m:
+                cand = m.group(1).lower()
+                if cand not in stopwords and len(cand) > 1:
+                    exists_in_schema = any(
+                        cand == t.lower() or cand.rstrip("s") == t.lower().rstrip("s")
+                        for t in schema_info.keys()
+                    )
+                    if not exists_in_schema:
+                        avail = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+                        avail_str = ", ".join(avail) if avail else "none"
+                        return (
+                            f'SELECT * FROM "{m.group(1)}" LIMIT 10;',
+                            f"Database Error: Table '{m.group(1)}' does not exist in the database. Connected tables: {avail_str}. Please verify the table name or check your schema."
+                        )
+
+        # Step 1: Direct Table Browse / First N Rows / Show All
         candidate_browse_tbl = None
         tbl_browse_match = re.search(r"(?:from|in|table)\s+[\"']?([a-zA-Z0-9_]+)[\"']?", q)
         if tbl_browse_match:
@@ -255,13 +270,13 @@ JSON Response Format:
                 matching_tbl = next((t for t in schema_info.keys() if t.lower() == candidate_tbl or t.lower().rstrip("s") == candidate_tbl.rstrip("s")), None)
                 if matching_tbl and (
                     any(k in q for k in ["first", "sample", "all rows", "show rows", "show first", "browse", "records from", "rows from", "view", "display"])
-                    or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "how many", "number of", "total number", "how much", "what is the total"])
+                    or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "how many", "number of", "total number", "how much", "what is the total", "trend", "revenue"])
                 ):
                     candidate_browse_tbl = matching_tbl
         elif (
             any(k in q for k in ["give me all", "show all", "list all", "get all", "all ", "browse ", "display "])
             or q.startswith("show ") or q.startswith("list ") or q.startswith("all ") or q in [t.lower() for t in schema_info.keys()]
-        ) and not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "revenue", "sales", "spend", "sold", "how many", "number of", "total number"]):
+        ) and not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "revenue", "sales", "spend", "sold", "how many", "number of", "total number", "prices", "price"]):
             for t in schema_info.keys():
                 tl = t.lower()
                 if tl in ("sqlite_sequence", "audit_logs"):
@@ -271,23 +286,6 @@ JSON Response Format:
                     break
 
         if candidate_browse_tbl:
-            # Check if specific columns were requested
-            tbl_cols = [c["name"] for c in schema_info[candidate_browse_tbl].get("columns", [])]
-            matched_cols = []
-            
-            # Check for primary descriptive name/entity column
-            p_name_col = next((c for c in tbl_cols if c.lower() in ["name", "product_name", "customer_name", "title", "car_model", "emp_name"]), None)
-            if p_name_col:
-                matched_cols.append(p_name_col)
-
-            for col in tbl_cols:
-                col_l = col.lower()
-                if col_l in ["id", "audit_logs"]:
-                    continue
-                if (col_l in q_tokens or col_l in q or col_l.rstrip("s") in q_tokens or col_l.replace("_", " ") in q) and col not in matched_cols:
-                    matched_cols.append(col)
-
-            select_clause = ", ".join(matched_cols) if len(matched_cols) >= 2 else "*"
             lim_m = re.search(r"\b(\d+)\b", q)
             has_all = any(k in q for k in ["all", "every", "full"]) and not lim_m
             if lim_m:
@@ -303,11 +301,11 @@ JSON Response Format:
                 limit_desc = "first 10 "
 
             tbl_name_str = candidate_browse_tbl if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", candidate_browse_tbl) else f'"{candidate_browse_tbl}"'
-            sql = f"SELECT {select_clause} FROM {tbl_name_str}{limit_clause}"
+            sql = f"SELECT * FROM {tbl_name_str}{limit_clause}"
             explanation = f"Retrieves {limit_desc}records from the '{candidate_browse_tbl}' table."
             return sql, explanation
 
-        # Step A: Table Intent Detection with Semantic Synonyms
+        # Step 2: Table Intent Detection with Semantic Synonyms
         table_synonyms = {
             "customers": ["customer", "customers", "client", "clients", "user", "users", "buyer", "buyers", "subscriber", "subscribers", "account", "accounts", "member", "members"],
             "products": ["product", "products", "item", "items", "catalog", "catalogue", "merchandise", "goods"],
@@ -325,14 +323,12 @@ JSON Response Format:
 
         target_table_name = None
 
-        # 1. Match semantic table synonyms FIRST (business tables first, audit_logs strictly last)
         business_tables_syns = {k: v for k, v in table_synonyms.items() if k != "audit_logs"}
         for tbl, syns in business_tables_syns.items():
             if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
                 target_table_name = tbl
                 break
 
-        # 2. Match exact schema table names (e.g. uploaded custom tables like fleet_inventory)
         if not target_table_name:
             for tbl in schema_info.keys():
                 tbl_l = tbl.lower()
@@ -342,33 +338,25 @@ JSON Response Format:
                     target_table_name = tbl
                     break
 
-        # 3. Only match audit_logs if no business table matched AND user explicitly asked for audit/security logs
         if not target_table_name and "audit_logs" in schema_info:
             audit_syns = table_synonyms["audit_logs"]
             if any(s in q_tokens or f" {s} " in f" {q} " for s in audit_syns):
                 target_table_name = "audit_logs"
 
-        # 4. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
         if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
             target_table_name = active_table
-        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q_tokens or f" {k} " in f" {q} " for k in [
-            "audit", "audit_log", "audit_logs", "security"
-        ]):
-            target_table_name = active_table
 
-        # Step A.1: Direct Entity Count Pattern (e.g. "How many customers are in the database?", "How many products?", "Count of employees")
+        # Step 3: Entity Count Pattern ("How many customers are in the database?", "How many products?", "Count of orders")
         is_count_intent = (
             any(k in q for k in ["how many", "count of", "number of", "total number of", "total count of", "how many "])
-            or ("count" in q and not any(k in q for k in ["by", "per", "group", "plan", "country", "status", "department", "category", "where"]))
+            or ("count" in q and not any(k in q for k in ["by", "per", "group", "plan", "country", "status", "department", "category", "where", "order by"]))
         )
         if is_count_intent and not any(k in q for k in ["average", "avg", "highest", "lowest", "top", "bottom", "more than", "greater than", "less than", "between"]):
-            # Special check for security failure/login counts (strictly when no business entity is queried)
-            if any(k in q for k in ["failed login", "failed logins", "security failure", "failed event", "failed events"]) and "audit_logs" in schema_info and not any(b in q for b in ["order", "payment", "transaction", "ticket", "customer", "product"]):
+            if any(k in q for k in ["failed login", "failed logins", "security failure", "failed event"]) and "audit_logs" in schema_info:
                 sql = "SELECT COUNT(*) AS total_failed_logins FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%';"
                 explanation = "Calculates total count of failed login and error events in the 'audit_logs' table."
                 return sql, explanation
 
-            # Determine count table
             count_table = None
             alias = "total_count"
             if any(k in q for k in ["customer", "client", "user", "buyer", "subscriber", "member", "account"]):
@@ -387,10 +375,10 @@ JSON Response Format:
                 count_table = "payments" if "payments" in schema_info else target_table_name
                 alias = "total_payments"
             elif any(k in q for k in ["order"]):
-                count_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else ("sales" if "sales" in schema_info else target_table_name))
+                count_table = "orders" if "orders" in schema_info else target_table_name
                 alias = "total_orders"
             elif any(k in q for k in ["sale", "transaction", "purchase"]):
-                count_table = "sales" if "sales" in schema_info else ("orders" if "orders" in schema_info else target_table_name)
+                count_table = "sales" if "sales" in schema_info else target_table_name
                 alias = "total_sales"
             elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs", "security_log"]):
                 count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
@@ -405,71 +393,17 @@ JSON Response Format:
                 explanation = f"Calculates total count of records in the '{count_table}' table."
                 return sql, explanation
 
-        # Step A.2: Check if user explicitly asked for a table that does NOT exist in the database
-        if not target_table_name:
-            stopwords = {
-                "the", "a", "an", "all", "each", "this", "that", "these", "my", "our", "database",
-                "data", "db", "here", "current", "active", "system", "first", "last", "top", "bottom",
-                "any", "some", "every", "select", "where", "group", "order", "limit", "records",
-                "rows", "items", "entries", "values", "details", "information", "info", "columns",
-                "fields", "table", "tables", "chart", "graph", "analytics", "insights", "summary",
-                "scratch", "file", "csv", "json", "sample", "view",
-                "show", "display", "view", "get", "fetch", "list", "see",
-                "error", "errors", "failed", "failure", "failures", "log", "logs", "status"
-            }
-            explicit_table_requested = None
-            for pat in [r"\bfrom\s+([a-zA-Z0-9_]+)\b", r"\btable\s+([a-zA-Z0-9_]+)\b", r"\b([a-zA-Z0-9_]+)\s+table\b"]:
-                m = re.search(pat, q)
-                if m:
-                    cand = m.group(1).lower()
-                    if cand not in stopwords and len(cand) > 1:
-                        exists_in_schema = any(
-                            cand == t.lower() or cand.rstrip("s") == t.lower().rstrip("s")
-                            for t in schema_info.keys()
-                        )
-                        if not exists_in_schema:
-                            explicit_table_requested = m.group(1)
-                            break
-
-            if explicit_table_requested:
-                return (
-                    f'SELECT * FROM "{explicit_table_requested}" LIMIT 10;',
-                    f"Attempted to query requested table '{explicit_table_requested}'."
-                )
-
-        # Step B: If not mentioned, check active_table (never bind audit_logs for business queries)
-        if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
-            target_table_name = active_table
-        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in [
-            "audit", "security", "fail", "login", "ip", "error", "auth", "log"
-        ]):
-            target_table_name = active_table
-
-        # Step C: If still not set, check if an uploaded (non-canonical) table exists in schema
-        if not target_table_name:
-            non_canonicals = [t for t in schema_info.keys() if t.lower() not in canonical_tables]
-            if len(non_canonicals) == 1:
-                cust_tbl = non_canonicals[0]
-                cust_cols = [c["name"].lower() for c in schema_info[cust_tbl].get("columns", [])]
-                if cust_tbl.lower() in q or cust_tbl.lower().rstrip("s") in q or any(c in q_tokens or c in q for c in cust_cols if c not in ("id", "date", "status")):
-                    target_table_name = cust_tbl
-
-        # If a custom uploaded table is targeted, route directly to dynamic synthesizer
-        if target_table_name and target_table_name.lower() not in canonical_tables:
-            return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_table_name)
-
-        # 1. Parse ranking direction
+        # Step 4: Parse ranking direction and limit
         is_lowest = any(k in q for k in [
             "lowest", "bottom", "least", "worst", "cheapest", "smallest", "ascending", "asc", "minimum", "fewest"
         ]) or bool(re.search(r"\bmin\b", q))
         is_highest = any(k in q for k in [
             "top", "highest", "most", "best", "greatest", "largest", "expensive", "descending", "desc", "maximum"
         ]) or bool(re.search(r"\bmax\b", q))
-        direction = "ASC" if is_lowest and not is_highest else ("DESC" if is_highest else ("ASC" if "ascending" in q or " asc" in q else "DESC"))
+        direction = "ASC" if is_lowest and not is_highest else "DESC"
         direction_word = "ascending" if direction == "ASC" else "descending"
         rank_label = "lowest" if direction == "ASC" else "top"
 
-        # 2. Parse limit count without capturing comparison numbers like > 30000
         limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)\s*(\d+)\b", q)
         if not limit_match:
             limit_match = re.search(r"\b(\d+)\s*(?:rows?|records?|items?|entries|results?|products?|users?|customers?|employees?)\b", q)
@@ -478,7 +412,7 @@ JSON Response Format:
             limit_val = int(limit_match.group(1))
             has_explicit_limit = True
         elif is_highest or is_lowest:
-            limit_val = 1 if any(k in q for k in ["what is", "which is", "who is", "find the", "single", "most", "least"]) else 5
+            limit_val = 5
             has_explicit_limit = True
         else:
             limit_val = 5
@@ -486,202 +420,67 @@ JSON Response Format:
 
         limit_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
 
-        # 3. Parse date / temporal filters if specified
-        date_where_s = ""
-        date_where_sales = ""
-        date_desc = ""
-
-        month_names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
-        month_map = {
-            "january": "01", "february": "02", "march": "03", "april": "04",
-            "may": "05", "june": "06", "july": "07", "august": "08",
-            "september": "09", "october": "10", "november": "11", "december": "12"
-        }
-        month_pat = r"\b(" + "|".join(month_names) + r")(?:\s+(20[12]\d))?\b"
-
-        between_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\s*(?:and|to)\s*(\d{4}-\d{2}-\d{2})\b", q)
-        rel_year_match = re.search(r"\b(after|since|before|earlier than|later than)\s+(20[12]\d)\b", q)
-        month_match = re.search(month_pat, q)
-        year_match = re.search(r"\b(?:in|for|during|year|of)?\s*(20[12]\d)\b", q)
-
-        if between_match:
-            d1, d2 = between_match.group(1), between_match.group(2)
-            date_where_s = f" AND s.sale_date BETWEEN '{d1}' AND '{d2}'"
-            date_where_sales = f" AND sale_date BETWEEN '{d1}' AND '{d2}'"
-            date_desc = f" between {d1} and {d2}"
-        elif rel_year_match:
-            op_w, yr = rel_year_match.group(1), rel_year_match.group(2)
-            if op_w in ["after", "since", "later than"]:
-                date_where_s = f" AND s.sale_date >= '{yr}-01-01'"
-                date_where_sales = f" AND sale_date >= '{yr}-01-01'"
-                date_desc = f" after {yr}"
-            else:
-                date_where_s = f" AND s.sale_date < '{yr}-01-01'"
-                date_where_sales = f" AND sale_date < '{yr}-01-01'"
-                date_desc = f" before {yr}"
-        elif month_match:
-            m_name = month_match.group(1).lower()
-            m_yr = month_match.group(2) or "2026"
-            m_code = month_map[m_name]
-            date_where_s = f" AND s.sale_date LIKE '{m_yr}-{m_code}%'"
-            date_where_sales = f" AND sale_date LIKE '{m_yr}-{m_code}%'"
-            date_desc = f" in {m_name.capitalize()} {m_yr}"
-        elif year_match:
-            yr = year_match.group(1)
-            date_where_s = f" AND s.sale_date LIKE '{yr}%'"
-            date_where_sales = f" AND sale_date LIKE '{yr}%'"
-            date_desc = f" in {yr}"
-
-        # Pattern: Compare Regions
-        if self._has_cols(schema_info, "sales", ["region", "total_price", "status"]) and ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("region" in q or any(r in q for r in ["north", "south", "east", "west", "europe", "asia", "america", "apac", "latam", "emea"])):
-            region_candidates = ["North America", "Latin America", "Asia-Pacific", "Europe", "North", "South", "East", "West"]
-            regions = [r for r in region_candidates if r.lower() in q]
-            if "North America" in regions and "North" in regions:
-                regions.remove("North")
-            if "Latin America" in regions and "Latin" in regions:
-                regions.remove("Latin")
-            if len(regions) >= 2:
-                region_or = " OR ".join([f"(region = '{r}' OR region LIKE '{r}%')" for r in regions])
-                sql = (
-                    f"SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
-                    f"FROM sales WHERE status = 'Completed' AND ({region_or}){date_where_sales} "
-                    f"GROUP BY region ORDER BY total_revenue DESC;"
-                )
-                explanation = f"Compares sales performance between the {', '.join(regions)} regions{date_desc}."
+        # Step 5: Single aggregate KPI ("What is the total revenue?", "how much revenue")
+        if (
+            ("total revenue" in q or "overall revenue" in q or "what is the total revenue" in q or "how much revenue" in q or (("total" in q or "sum" in q or "how much" in q) and ("revenue" in q or "sales" in q)))
+            and not any(k in q for k in ["product", "customer", "region", "month", "by", "plan", "department", "employee", "per"])
+        ):
+            if "order_items" in schema_info and self._resolve_col(schema_info, "order_items", ["line_total"]):
+                sql = "SELECT SUM(line_total) AS total_revenue, COUNT(order_item_id) AS total_sales FROM order_items;"
+                explanation = "Calculates overall total revenue across all transactions."
+                return sql, explanation
+            elif "sales" in schema_info and self._resolve_col(schema_info, "sales", ["total_price"]):
+                sql = "SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales FROM sales WHERE status = 'Completed';"
+                explanation = "Calculates overall total revenue across all completed sales transactions."
                 return sql, explanation
 
-        # Pattern: Compare Departments
-        if self._has_cols(schema_info, "employees", ["department", "salary"]) and ("compare" in q or " vs " in q or "versus" in q or "between" in q) and ("dept" in q or "department" in q or "salary" in q):
-            depts = [d for d in ["Engineering", "Product", "Marketing", "Sales", "Finance", "HR"] if d.lower() in q]
-            if len(depts) >= 2:
-                d_in = ", ".join([f"'{d}'" for d in depts])
-                sql = (
-                    f"SELECT department, AVG(salary) AS avg_salary, COUNT(id) AS employee_count "
-                    f"FROM employees WHERE department IN ({d_in}) "
-                    f"GROUP BY department ORDER BY avg_salary DESC;"
-                )
-                explanation = f"Compares average salary and employee count between the {', '.join(depts)} departments."
-                return sql, explanation
-
-        # Pattern: Single aggregate KPI ("total revenue", "what is total sales", "how much revenue")
-        if self._has_cols(schema_info, "sales", ["total_price", "status"]) and ("total" in q or "overall" in q or "sum" in q or "how much" in q) and ("revenue" in q or "sales" in q) and not any(k in q for k in ["product", "customer", "region", "month", "by"]):
-            sql = (
-                f"SELECT SUM(total_price) AS total_revenue, COUNT(id) AS total_sales "
-                f"FROM sales WHERE status = 'Completed'{date_where_sales};"
-            )
-            explanation = f"Calculates overall total revenue and completed sales count across all transactions{date_desc}."
-            return sql, explanation
-
-        # Resolve dynamic identifiers across core tables
+        # Step 6: Multi-Table Relational E-Commerce Queries
+        has_order_items = "order_items" in schema_info and "products" in schema_info
         p_id = self._resolve_col(schema_info, "products", ["product_id", "id", "item_id"])
-        p_name = self._resolve_col(schema_info, "products", ["product_name", "name", "title", "item_name"]) or p_id
+        p_name = self._resolve_col(schema_info, "products", ["product_name", "name", "title"]) or p_id
         p_cat = self._resolve_col(schema_info, "products", ["category", "dept", "department"])
         p_price = self._resolve_col(schema_info, "products", ["unit_price", "price", "retail_price", "cost"])
 
         c_id = self._resolve_col(schema_info, "customers", ["customer_id", "id", "user_id"])
         c_name = self._resolve_col(schema_info, "customers", ["customer_name", "name", "full_name"]) or c_id
 
-        # Pattern: Completed Sales Detailed Transactions with Customer and Product Names (Multi-Table 3-Way Join)
-        if (
-            self._has_cols(schema_info, "sales", ["id", "customer_id", "product_id", "total_price", "sale_date", "status"])
-            and "customers" in schema_info and c_id
-            and "products" in schema_info and p_id
-            and ("sale" in q or "transaction" in q or "order" in q)
-            and ("customer" in q or "user" in q)
-            and ("product" in q or "item" in q)
-        ):
-            sql = (
-                f"SELECT s.id, c.{c_name} AS customer_name, p.{p_name} AS product_name, s.total_price, s.sale_date "
-                f"FROM sales s "
-                f"JOIN customers c ON s.customer_id = c.{c_id} "
-                f"JOIN products p ON s.product_id = p.{p_id} "
-                f"WHERE s.status = 'Completed'{date_where_s} "
-                f"ORDER BY s.sale_date DESC{limit_clause or ' LIMIT 10'};"
-            )
-            explanation = (
-                f"Performs a three-table join across sales, customers, and products to list completed "
-                f"transaction records with customer and product names{date_desc}."
-            )
-            return sql, explanation
-
-        # Pattern: Customer Spending by Product Category (Multi-Table 3-Way Join)
-        if (
-            self._has_cols(schema_info, "sales", ["id", "customer_id", "product_id", "total_price", "status"])
-            and "customers" in schema_info and c_id
-            and "products" in schema_info and p_id and p_cat
-            and ("customer" in q or "plan" in q)
-            and ("category" in q or "product category" in q)
-            and ("spent" in q or "spending" in q or "revenue" in q or "sales" in q)
-        ):
-            c_plan = self._resolve_col(schema_info, "customers", ["plan", "tier"]) or f"c.{c_name}"
-            sql = (
-                f"SELECT {c_plan}, p.{p_cat}, SUM(s.total_price) AS total_revenue, COUNT(*) AS sales_count "
-                f"FROM sales s "
-                f"JOIN customers c ON s.customer_id = c.{c_id} "
-                f"JOIN products p ON s.product_id = p.{p_id} "
-                f"WHERE s.status = 'Completed'{date_where_s} "
-                f"GROUP BY {c_plan}, p.{p_cat} "
-                f"ORDER BY total_revenue DESC;"
-            )
-            explanation = (
-                f"Performs a three-table join between sales, customers, and products to aggregate "
-                f"total revenue and transaction count by customer segment and product category{date_desc}."
-            )
-            return sql, explanation
-
-        # Pattern: Average Order Value per Customer Plan (Multi-Table Join)
-        if (
-            self._has_cols(schema_info, "sales", ["id", "customer_id", "total_price", "status"])
-            and "customers" in schema_info and c_id and "plan" in [c["name"].lower() for c in schema_info.get("customers", {}).get("columns", [])]
-            and "plan" in q
-            and ("order value" in q or "average order" in q or "avg order" in q or ("order" in q and ("average" in q or "avg" in q)) or "aov" in q)
-        ):
-            sql = (
-                f"SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
-                f"FROM sales s "
-                f"JOIN customers c ON s.customer_id = c.{c_id} "
-                f"WHERE s.status = 'Completed'{date_where_s} "
-                f"GROUP BY c.plan "
-                f"ORDER BY avg_order_value DESC;"
-            )
-            explanation = (
-                f"Joins sales and customers by plan to calculate order count, average order value, "
-                f"and total spending per subscription tier{date_desc}."
-            )
-            return sql, explanation
-
-        # Pattern: Employees ranking by salary or department salary
-        if self._has_cols(schema_info, "employees", ["name", "department", "salary"]) and (
-            any(k in q for k in ["employee", "staff", "worker", "salary", "paid", "compensation", "earn", "earning"])
-        ):
-            if any(k in q for k in ["department", "dept"]) and any(k in q for k in ["avg", "average", "mean"]):
-                sql = "SELECT department, AVG(salary) AS avg_salary, COUNT(id) AS employee_count FROM employees GROUP BY department ORDER BY avg_salary DESC;"
-                explanation = "Groups employees by department to compute average salary and headcount."
-                return sql, explanation
-            else:
-                sql = f"SELECT name, department, salary FROM employees ORDER BY salary {direction}{limit_clause};"
-                explanation = f"Retrieves employees ranked by salary in {direction_word} order."
+        # Pattern: List all products and their prices
+        if any(k in q for k in ["list all products and their prices", "products and their prices", "product prices", "all products and prices"]):
+            if "products" in schema_info:
+                sql = f"SELECT {p_name}, {p_price} FROM products;"
+                explanation = "Lists all products and their corresponding prices from the 'products' table."
                 return sql, explanation
 
-        # Pattern: Products by Revenue / Units Sold via order_items (Multi-Table Relational Join for E-commerce Datasets)
-        has_order_items = "order_items" in schema_info and "products" in schema_info
-        is_revenue_or_qty_query = any(k in q for k in [
-            "revenue", "sales", "sold", "quantity", "units", "qty", "turnover", "volume",
-            "top", "bottom", "highest", "lowest", "best", "worst", "line_total", "rank", "spent", "spending"
-        ])
-        is_ecommerce_csv = (
+        # Pattern: Product Quantity Ranking using sales table (when quantity specifically requested and sales table exists)
+        if (
+            "sales" in schema_info and "products" in schema_info
+            and any(k in q for k in ["product", "item"])
+            and ("quantity" in q or "unit" in q or "sold the highest" in q or "sold the lowest" in q or "sold the most" in q)
+            and not any(k in q for k in ["revenue", "dollar", "$", "price", "line_total", "spending"])
+            and not any(k in q for k in ["customer", "employee", "ticket", "payment", "audit", "plan"])
+        ):
+            s_pid = self._resolve_col(schema_info, "sales", ["product_id", "id"])
+            s_qty = self._resolve_col(schema_info, "sales", ["quantity", "qty"])
+            if s_pid and s_qty and p_id:
+                sql = (
+                    f"SELECT p.{p_name} AS product_name, SUM(s.{s_qty}) AS total_quantity "
+                    f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
+                    f"GROUP BY p.{p_id}, p.{p_name} "
+                    f"ORDER BY total_quantity {direction}{limit_clause or ' LIMIT 3'};"
+                )
+                explanation = f"Joins 'sales' and 'products' to aggregate total quantity for {rank_label} products sorted in {direction_word} order."
+                return sql, explanation
+
+        # Pattern: Product Revenue / Quantity Ranking ("Which product has the highest revenue?", "top 5 revenue products", "Rank products")
+        if (
             has_order_items
-            and is_revenue_or_qty_query
+            and any(k in q for k in ["product", "item"])
             and (
-                "sales" not in schema_info
-                or active_table in ("order_items", "orders", "products")
-                or self._resolve_col(schema_info, "products", ["product_name"]) is not None
-                or any(k in q for k in ["order item", "order items", "order_item", "order_items", "line_total", "line total"])
+                any(k in q for k in ["revenue", "sales", "sold", "quantity", "units", "qty", "turnover", "volume", "highest", "top", "lowest", "best"])
+                or q.strip() in ["rank products", "top products", "product rankings", "best products"]
             )
-            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "highest" in q or "lowest" in q)
-            and not ("inventory" in q or "stock" in q or "customer" in q or "ticket" in q or "employee" in q or "salary" in q or "staff" in q or "worker" in q or "payment" in q or "audit" in q)
-        )
-        if is_ecommerce_csv:
+            and not any(k in q for k in ["customer", "employee", "ticket", "payment", "audit", "plan"])
+        ):
             oi_p_id = self._resolve_col(schema_info, "order_items", ["product_id", "item_id", "id"])
             oi_rev = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount", "revenue"])
             oi_qty = self._resolve_col(schema_info, "order_items", ["quantity", "qty", "units"])
@@ -705,351 +504,282 @@ JSON Response Format:
                     f"FROM order_items oi "
                     f"JOIN products p ON oi.{oi_p_id} = p.{p_id} "
                     f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
-                    f"ORDER BY {order_metric} {direction}{limit_clause};"
+                    f"ORDER BY {order_metric} {direction}{limit_clause or ' LIMIT 5'};"
                 )
+                default_prefix = ""
+                if not is_qty_ranking and not any(k in q for k in ["revenue", "sales", "spending", "price", "line_total", "dollar", "$"]):
+                    default_prefix = "Defaulted to total revenue as primary ranking metric; "
                 explanation = (
-                    f"Joins 'order_items' and 'products' to aggregate {metric_desc} "
+                    f"{default_prefix}Joins 'order_items' and 'products' to aggregate {metric_desc} "
                     f"for {rank_label} products sorted in {direction_word} order."
                 )
                 return sql, explanation
 
-        # Pattern: Products by Units Sold / Quantity via sales
-        s_pid = self._resolve_col(schema_info, "sales", ["product_id", "id"])
-        s_rev = self._resolve_col(schema_info, "sales", ["total_price", "amount", "revenue", "price"])
-        s_qty = self._resolve_col(schema_info, "sales", ["quantity", "qty", "units"])
-        s_status = self._resolve_col(schema_info, "sales", ["status"])
-        s_where = f"WHERE s.{s_status} = 'Completed'{date_where_s} " if s_status else (f"WHERE 1=1{date_where_s} " if date_where_s else "")
-
+        # Pattern: Fallback product revenue via sales table
         if (
-            "sales" in schema_info and s_pid and s_qty
-            and "products" in schema_info and p_id
-            and (("unit" in q and ("sold" in q or "sale" in q)) or "quantity" in q or "volume" in q or "sold" in q)
-            and ("product" in q or "item" in q or "top" in q or "bottom" in q or "lowest" in q or "highest" in q)
-            and not ("inventory" in q or "stock" in q)
-        ):
-            cat_select = f", p.{p_cat}" if p_cat else ""
-            cat_group = f", p.{p_cat}" if p_cat else ""
-            sql = (
-                f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_qty}) AS total_quantity "
-                f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
-                f"{s_where}"
-                f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
-                f"ORDER BY total_quantity {direction}{limit_clause};"
-            )
-            explanation = (
-                f"Joins the 'sales' and 'products' tables{date_desc}, "
-                f"and aggregates total quantity sold for {rank_label} products sorted in {direction_word} order."
-            )
-            return sql, explanation
-
-        # Pattern: Products by Revenue / Sales or Default Benchmark Ranking via sales
-        if (
-            "sales" in schema_info and s_pid and s_rev
-            and "products" in schema_info and p_id
-            and ("product" in q or "item" in q)
+            "sales" in schema_info and "products" in schema_info
+            and any(k in q for k in ["product", "item"])
             and (
-                "revenue" in q or "sales" in q
-                or ("rank" in q and not "price" in q and not "rating" in q and not "stock" in q)
-                or (is_highest and not "price" in q and not "rating" in q and not "stock" in q and not "unit" in q)
-                or (is_lowest and not "price" in q and not "rating" in q and not "stock" in q and not "unit" in q)
+                any(k in q for k in ["revenue", "sales", "sold", "highest", "top", "lowest", "best"])
+                or q.strip() in ["rank products", "top products", "product rankings", "best products"]
             )
+            and not any(k in q for k in ["customer", "employee", "ticket", "payment", "audit", "plan"])
         ):
-            is_unspecified_metric = not any(k in q for k in ["revenue", "sales", "price", "profit", "order"])
-            cat_select = f", p.{p_cat}" if p_cat else ""
-            cat_group = f", p.{p_cat}" if p_cat else ""
-            sql = (
-                f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_rev}) AS total_revenue, COUNT(*) AS total_orders "
-                f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
-                f"{s_where}"
-                f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
-                f"ORDER BY total_revenue {direction}{limit_clause};"
-            )
-            if is_unspecified_metric:
-                explanation = (
-                    f"Defaulted to total revenue as the primary ranking benchmark since no metric was specified; "
-                    f"aggregates completed sales for {rank_label} products in {direction_word} order{date_desc}."
-                )
-            else:
-                explanation = (
-                    f"Joins the 'sales' and 'products' tables{date_desc}, "
-                    f"and aggregates total revenue for {rank_label} products sorted in {direction_word} order."
-                )
-            return sql, explanation
-
-        # Pattern: Customers by Spending / Value (Relational Join for Multi-Table E-Commerce Datasets)
-        has_relational_customers = (
-            "customers" in schema_info and c_id and c_name
-            and "orders" in schema_info
-            and "order_items" in schema_info
-            and ("customer" in q or "user" in q or "client" in q or "buyer" in q)
-            and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q or "value" in q or "order" in q or "purchase" in q)
-            and not ("country" in q or "city" in q or "plan" in q or "active" in q)
-        )
-        if has_relational_customers:
-            o_cid = self._resolve_col(schema_info, "orders", ["customer_id", "c_id", "id"])
-            o_id = self._resolve_col(schema_info, "orders", ["order_id", "id"])
-            oi_oid = self._resolve_col(schema_info, "order_items", ["order_id", "o_id"])
-            oi_total = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount"])
-            if o_cid and o_id and oi_oid and oi_total:
+            s_pid = self._resolve_col(schema_info, "sales", ["product_id", "id"])
+            s_rev = self._resolve_col(schema_info, "sales", ["total_price", "amount", "revenue"])
+            if s_pid and s_rev and p_id:
+                cat_select = f", p.{p_cat}" if p_cat else ""
+                cat_group = f", p.{p_cat}" if p_cat else ""
                 sql = (
-                    f"SELECT c.{c_name} AS customer_name, SUM(oi.{oi_total}) AS total_spent, COUNT(DISTINCT o.{o_id}) AS total_orders "
-                    f"FROM customers c "
-                    f"JOIN orders o ON c.{c_id} = o.{o_cid} "
-                    f"JOIN order_items oi ON o.{o_id} = oi.{oi_oid} "
-                    f"GROUP BY c.{c_id}, c.{c_name} "
-                    f"ORDER BY total_spent {direction}{limit_clause};"
+                    f"SELECT p.{p_name} AS product_name{cat_select}, SUM(s.{s_rev}) AS total_revenue, COUNT(*) AS total_orders "
+                    f"FROM sales s JOIN products p ON s.{s_pid} = p.{p_id} "
+                    f"WHERE s.status = 'Completed' "
+                    f"GROUP BY p.{p_id}, p.{p_name}{cat_group} "
+                    f"ORDER BY total_revenue {direction}{limit_clause or ' LIMIT 5'};"
                 )
-                explanation = f"Joins 'customers', 'orders', and 'order_items' to calculate customer spending in {direction_word} order."
+                explanation = f"Defaulted to total revenue as primary ranking metric; aggregates completed sales for {rank_label} products."
                 return sql, explanation
 
-        # Pattern: Customers by Spending / Value (Canonical Single-Table)
-        if (
-            self._has_cols(schema_info, "customers", ["name", "email", "company", "country", "plan", "total_spent"])
-            and ("customer" in q or "user" in q or "client" in q)
-            and ("spent" in q or "spending" in q or "revenue" in q or "highest" in q or "lowest" in q or "top" in q or "bottom" in q)
-        ):
-            sql = (
-                f"SELECT name AS customer_name, email, company, country, plan, total_spent "
-                f"FROM customers "
-                f"ORDER BY total_spent {direction}{limit_clause};"
-            )
-            explanation = (
-                f"Retrieves customers ranked by total spending in {direction_word} order ({'lowest spenders first' if direction == 'ASC' else 'highest spenders first'})."
-            )
-            return sql, explanation
-
-        # Pattern: Payments Breakdown by Payment Method or Status
-        if "payments" in schema_info and ("payment" in q or "paid" in q or "upi" in q or "card" in q or "method" in q):
-            p_method = self._resolve_col(schema_info, "payments", ["payment_method", "method", "type"])
-            p_amt = self._resolve_col(schema_info, "payments", ["amount", "total", "line_total", "price"])
-            p_status = self._resolve_col(schema_info, "payments", ["payment_status", "status"])
-            
-            if any(k in q for k in ["method", "most used", "frequently", "popular", "breakdown", "by method"]) and p_method:
-                amt_expr = f", SUM({p_amt}) AS total_amount" if p_amt else ""
-                sql = f'SELECT "{p_method}", COUNT(*) AS usage_count{amt_expr} FROM "payments" GROUP BY "{p_method}" ORDER BY usage_count DESC;'
-                explanation = f"Aggregates payment transactions by '{p_method}' to highlight the most popular payment methods."
-                return sql, explanation
-            elif any(k in q for k in ["status", "successful", "failed"]) and p_status:
-                amt_expr = f", SUM({p_amt}) AS total_amount" if p_amt else ""
-                sql = f'SELECT "{p_status}", COUNT(*) AS payment_count{amt_expr} FROM "payments" GROUP BY "{p_status}" ORDER BY payment_count DESC;'
-                explanation = f"Groups payment records by status to monitor transaction outcomes."
-                return sql, explanation
-
-        # Pattern: Support Tickets Breakdown by Priority or Status
-        if "support_tickets" in schema_info and ("ticket" in q or "support" in q or "issue" in q or "complaint" in q):
-            t_prio = self._resolve_col(schema_info, "support_tickets", ["priority", "severity", "level"])
-            t_status = self._resolve_col(schema_info, "support_tickets", ["status", "state"])
-            if ("priority" in q or "severity" in q or not "status" in q) and t_prio:
-                sql = f'SELECT "{t_prio}", COUNT(*) AS ticket_count FROM "support_tickets" GROUP BY "{t_prio}" ORDER BY ticket_count DESC;'
-                explanation = f"Aggregates support tickets by priority level to highlight critical issues."
-                return sql, explanation
-            elif t_status:
-                sql = f'SELECT "{t_status}", COUNT(*) AS ticket_count FROM "support_tickets" GROUP BY "{t_status}" ORDER BY ticket_count DESC;'
-                explanation = f"Aggregates support tickets by status to identify open versus resolved issues."
-                return sql, explanation
-
-        # Pattern: Orders by Status
-        if "orders" in schema_info and ("order" in q or "shipping" in q) and ("status" in q or "state" in q or "by status" in q or "breakdown" in q) and not any(k in q for k in ["product", "revenue", "item", "order_item", "line_total"]):
+        # Pattern: Orders by Status ("Count orders by status", "breakdown of orders by status")
+        if "orders" in schema_info and ("order" in q or "shipping" in q) and ("status" in q or "state" in q or "by status" in q or "breakdown" in q) and not any(k in q for k in ["product", "revenue", "item", "line_total"]):
             o_status = self._resolve_col(schema_info, "orders", ["status", "order_status", "state"])
             if o_status:
                 sql = f'SELECT "{o_status}", COUNT(*) AS order_count FROM "orders" GROUP BY "{o_status}" ORDER BY order_count DESC;'
                 explanation = f"Aggregates order volumes grouped by order status in descending order."
                 return sql, explanation
 
-        # Pattern: Customer Distribution by Plan & Country
-        if (
-            self._has_cols(schema_info, "customers", ["country", "plan", "id", "total_spent"])
-            and "customer" in q
-            and ("plan" in q or "country" in q or "distribution" in q or "count" in q)
-        ):
-            sql = (
-                "SELECT country, plan, COUNT(id) AS customer_count, AVG(total_spent) AS avg_spent "
-                "FROM customers "
-                "GROUP BY country, plan "
-                "ORDER BY customer_count DESC;"
-            )
-            explanation = (
-                "Groups the 'customers' table by country and subscription plan, computing customer counts "
-                "and average spend per segment in descending order."
-            )
-            return sql, explanation
-
-        # Pattern: Monthly Sales Trend / Revenue Over Time
-        if (
-            self._has_cols(schema_info, "sales", ["sale_date", "total_price", "status"])
-            and ("month" in q or "monthly" in q or "trend" in q or "time" in q)
-            and ("sale" in q or "revenue" in q)
-        ):
-            is_postgres = (engine is not None and getattr(engine, "dialect", None) is not None and engine.dialect.name == "postgresql")
-            month_expr = "TO_CHAR(sale_date, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', sale_date)"
-            has_region = "region" in q and self._has_cols(schema_info, "sales", ["region"])
+        # Pattern: Monthly Revenue / Sales Trends ("Show monthly revenue", "Monthly sales trend", "Monthly sales trend by region")
+        has_monthly_cues = any(k in q for k in ["month", "monthly", "trend", "over time", "sales trend", "by month"])
+        if has_monthly_cues and any(k in q for k in ["revenue", "sales", "order", "income", "volume"]):
+            has_region = "region" in q and ("sales" in schema_info or "customers" in schema_info)
             region_select = ", region" if has_region else ""
             region_group = ", region" if has_region else ""
             region_order = ", monthly_revenue DESC" if has_region else ""
             region_desc = " and geographical region" if has_region else ""
 
-            sql = (
-                f"SELECT {month_expr} AS sales_month{region_select}, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
-                "FROM sales "
-                f"WHERE status = 'Completed'{date_where_sales} "
-                f"GROUP BY sales_month{region_group} "
-                f"ORDER BY sales_month ASC{region_order};"
-            )
-            explanation = (
-                f"Extracts year and month from 'sale_date' in the 'sales' table, grouping by month{region_desc} "
-                f"to calculate monthly revenue and transaction volume{date_desc}."
-            )
-            return sql, explanation
+            year_match = re.search(r'\b(20\d\d)\b', q)
+            year_val = year_match.group(1) if year_match else None
 
-        # Pattern: Sales by Region
-        if self._has_cols(schema_info, "sales", ["region", "total_price", "status"]) and "region" in q:
-            sql = (
-                f"SELECT region, SUM(total_price) AS total_revenue, COUNT(id) AS total_sales, AVG(total_price) AS avg_sale_value "
-                f"FROM sales "
-                f"WHERE status = 'Completed'{date_where_sales} "
-                f"GROUP BY region "
-                f"ORDER BY total_revenue {direction};"
-            )
-            explanation = (
-                f"Calculates total revenue, transaction counts, and average order value across geographical regions in {direction_word} order{date_desc}."
-            )
-            return sql, explanation
-
-        # Pattern: Product Categories & Ratings
-        if self._has_cols(schema_info, "products", ["category", "id", "price", "rating", "stock_quantity"]) and ("category" in q or "rating" in q or "stock" in q):
-            sort_metric = "avg_rating" if "rating" in q else ("total_stock" if "stock" in q else "product_count")
-            sql = (
-                f"SELECT category, COUNT(id) AS product_count, AVG(price) AS avg_price, AVG(rating) AS avg_rating, SUM(stock_quantity) AS total_stock "
-                f"FROM products "
-                f"GROUP BY category "
-                f"ORDER BY {sort_metric} {direction};"
-            )
-            explanation = (
-                f"Aggregates the 'products' table by category, computing price, customer rating, "
-                f"and stock levels in {direction_word} order."
-            )
-            return sql, explanation
-
-        # Pattern: Security & Audit logs (strictly grounded, never catches general business questions)
-        is_security_or_audit = self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (
-            target_table_name == "audit_logs"
-            or any(k in q_tokens or f" {k} " in f" {q} " for k in [
-                "audit", "audit_log", "audit_logs", "audit logs",
-                "security event", "security events", "security log", "security logs", "security audit",
-                "failed login", "failed logins"
-            ])
-        )
-
-        if is_security_or_audit:
-            # 1. Action + IP combination breakdown (exact match for "Failed audit log events", "Show failed actions and IP addresses from audit logs")
-            if ("action" in q and ("ip" in q or "address" in q)) or q.strip() == "failed audit log events" or "action and ip" in q:
+            # Check sales table if question explicitly mentions 'sales trend' or if order_items not present
+            if "sales" in schema_info and ("sales trend" in q or "sales" in q or "order_items" not in schema_info):
+                month_expr = "TO_CHAR(sale_date, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', sale_date)"
+                where_clauses = ["status = 'Completed'"]
+                if year_val:
+                    if is_postgres:
+                        where_clauses.append(f"TO_CHAR(sale_date, 'YYYY') = '{year_val}'")
+                    else:
+                        where_clauses.append(f"sale_date LIKE '{year_val}%'")
+                where_str = f"WHERE {' AND '.join(where_clauses)} "
                 sql = (
-                    "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
-                    "FROM audit_logs "
-                    "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    "GROUP BY action, status, ip_address "
-                    "ORDER BY event_count DESC LIMIT 10;"
+                    f"SELECT {month_expr} AS sales_month{region_select}, SUM(total_price) AS monthly_revenue, COUNT(id) AS total_transactions "
+                    "FROM sales "
+                    f"{where_str}"
+                    f"GROUP BY sales_month{region_group} "
+                    f"ORDER BY sales_month ASC{region_order};"
                 )
-                explanation = (
-                    "Queries the 'audit_logs' table for security events with failure status, "
-                    "grouping by action and IP address to highlight recurring issues."
-                )
+                explanation = f"Extracts year and month from 'sale_date' in 'sales', grouping by month{region_desc} to calculate monthly revenue in chronological order."
                 return sql, explanation
 
-            # 2. User-specific failure breakdown (e.g., "Which user has the most failed logins?", "Failures by user")
-            if any(k in q for k in ["user", "user_id", "users", "who", "which user", "account"]):
+            elif "orders" in schema_info and "order_items" in schema_info:
+                month_expr = "TO_CHAR(o.order_date, 'YYYY-MM')" if is_postgres else "strftime('%Y-%m', o.order_date)"
+                where_str = ""
+                if year_val:
+                    if is_postgres:
+                        where_str = f"WHERE TO_CHAR(o.order_date, 'YYYY') = '{year_val}' "
+                    else:
+                        where_str = f"WHERE o.order_date LIKE '{year_val}%' "
                 sql = (
-                    f"SELECT user_id, COUNT(*) AS failure_count "
-                    f"FROM audit_logs "
-                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    f"GROUP BY user_id "
-                    f"ORDER BY failure_count {direction} LIMIT {limit_val};"
+                    f"SELECT {month_expr} AS sales_month, SUM(oi.line_total) AS monthly_revenue, COUNT(DISTINCT o.order_id) AS total_orders "
+                    f"FROM orders o JOIN order_items oi ON o.order_id = oi.order_id "
+                    f"{where_str}"
+                    "GROUP BY sales_month "
+                    "ORDER BY sales_month ASC;"
                 )
-                explanation = (
-                    f"Aggregates failed security and audit log events by user ID, showing users with the "
-                    f"{rank_label} number of failures."
-                )
+                explanation = "Aggregates revenue and order volume by month from 'orders' and 'order_items' in chronological order."
                 return sql, explanation
 
-            # 3. IP address breakdown (e.g., "Which IP address has the most failures?", "Failed logins by IP")
-            if (any(k in q for k in ["which ip", "ip address", "ip_address", "network", "by ip", "per ip", "most failures"]) or "ip" in q) and "action" not in q:
-                sql = (
-                    f"SELECT ip_address, COUNT(id) AS failure_count, MAX(timestamp) AS last_occurred "
-                    f"FROM audit_logs "
-                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    f"GROUP BY ip_address "
-                    f"ORDER BY failure_count {direction} LIMIT {limit_val};"
-                )
-                explanation = (
-                    f"Aggregates failed events by IP address to identify sources with the "
-                    f"{rank_label} failure frequency."
-                )
-                return sql, explanation
-
-            # 4. Action breakdown (e.g., "What actions failed the most?", "Which action has the most failures?")
-            if any(k in q for k in ["action", "actions", "by action", "which action", "what action"]):
-                sql = (
-                    f"SELECT action, status, COUNT(id) AS failure_count, MAX(timestamp) AS last_occurred "
-                    f"FROM audit_logs "
-                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    f"GROUP BY action, status "
-                    f"ORDER BY failure_count {direction} LIMIT {limit_val};"
-                )
-                explanation = (
-                    f"Aggregates failed security events by action type in {direction_word} order."
-                )
-                return sql, explanation
-
-            # 5. Direct browse of full table if explicitly requested (e.g. "Show first 10 rows from audit_logs", "browse audit_logs")
-            if any(k in q for k in ["first", "all rows", "from audit_logs", "table audit_logs", "all audit_logs", "all audit logs"]) and not any(k in q for k in ["fail", "error", "recent"]):
-                sql = f"SELECT * FROM audit_logs LIMIT {limit_val};"
-                explanation = f"Retrieves the first {limit_val} records from the 'audit_logs' table."
-                return sql, explanation
-
-            # 6. Detailed failure records / individual event logs (e.g. "Show recent failed audit log events", "Show recent security audit logs", "Show failed logins", "Show error table", "What are the errors?")
-            if (
-                any(k in q for k in ["record", "recent", "detail", "row", "show failed", "list failed", "failed login", "failed logins", "errors", "error table", "recent failures", "what are the failed", "what are the errors"])
-                or ("show" in q and any(k in q for k in ["audit", "log", "security", "fail", "error"]))
-                or ("audit" in q and not any(k in q for k in ["group", "count", "by"]))
-            ):
-                lim = limit_val if has_explicit_limit else 10
-                sql = (
-                    f"SELECT id, action, status, user_id, ip_address, timestamp "
-                    f"FROM audit_logs "
-                    f"WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                    f"ORDER BY timestamp DESC LIMIT {lim};"
-                )
-                explanation = (
-                    f"Retrieves the {lim} most recent failed security and audit log event records sorted chronologically in descending order."
-                )
-                return sql, explanation
-
-            # 7. Default security aggregation
-            sql = (
-                "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred "
-                "FROM audit_logs "
-                "WHERE status = 'FAILURE' OR action LIKE '%FAIL%' "
-                "GROUP BY action, status, ip_address "
-                "ORDER BY event_count DESC LIMIT 10;"
-            )
-            explanation = (
-                "Queries the 'audit_logs' table for security events with failure status, "
-                "grouping by action and IP address to highlight recurring issues."
-            )
-            return sql, explanation
-
-        # Pattern: First N rows from specific table (e.g. from table chips or direct prompt)
-        first_table_match = re.search(r"(?:from|in|table)\s+([a-zA-Z0-9_]+)", q)
-        target_table_candidate = first_table_match.group(1).lower() if first_table_match else None
-        if target_table_candidate and schema_info and target_table_candidate in schema_info and (
-            any(k in q for k in ["first", "sample", "all rows", "show rows", "browse", "records"])
-            or not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "="])
+        # Pattern: Customer Spending by Product Category (Multi-Table 3-Way Join)
+        if (
+            self._has_cols(schema_info, "sales", ["customer_id", "product_id", "total_price"])
+            and "customers" in schema_info and "products" in schema_info
+            and ("category" in q and ("spend" in q or "revenue" in q or "spent" in q or "plan" in q or "customer" in q))
         ):
-            sql = f'SELECT * FROM "{target_table_candidate}" LIMIT {limit_val};'
-            explanation = f"Retrieves the first {limit_val} records from the '{target_table_candidate}' table."
+            c_plan = self._resolve_col(schema_info, "customers", ["plan", "tier"]) or f"c.{c_name}"
+            sql = (
+                f"SELECT {c_plan}, p.{p_cat}, SUM(s.total_price) AS total_revenue, COUNT(*) AS sales_count "
+                f"FROM sales s "
+                f"JOIN customers c ON s.customer_id = c.{c_id} "
+                f"JOIN products p ON s.product_id = p.{p_id} "
+                f"WHERE s.status = 'Completed' "
+                f"GROUP BY {c_plan}, p.{p_cat} "
+                f"ORDER BY total_revenue DESC;"
+            )
+            explanation = "Performs a three-table join between sales, customers, and products to aggregate total revenue by customer plan and product category."
             return sql, explanation
 
-        # Dynamic Schema Synthesizer: Intelligently handles custom tables, columns, metrics, and filters
+        # Pattern: Average Order Value per Customer Plan (Multi-Table Join)
+        if (
+            self._has_cols(schema_info, "sales", ["customer_id", "total_price"])
+            and "customers" in schema_info
+            and "plan" in q
+            and ("order value" in q or "aov" in q or ("order" in q and "avg" in q) or "average order" in q)
+        ):
+            sql = (
+                f"SELECT c.plan, COUNT(s.id) AS order_count, AVG(s.total_price) AS avg_order_value, SUM(s.total_price) AS total_spent "
+                f"FROM sales s "
+                f"JOIN customers c ON s.customer_id = c.{c_id} "
+                f"WHERE s.status = 'Completed' "
+                f"GROUP BY c.plan "
+                f"ORDER BY avg_order_value DESC;"
+            )
+            explanation = "Joins sales and customers by plan to calculate order count, average order value, and total spending per subscription tier."
+            return sql, explanation
+
+        # Pattern: Detailed Completed Sales with Customer and Product Names (Multi-Table 3-Way Join)
+        if (
+            self._has_cols(schema_info, "sales", ["customer_id", "product_id", "total_price", "sale_date"])
+            and "customers" in schema_info and "products" in schema_info
+            and ("completed sales" in q or "completed transactions" in q)
+            and ("customer" in q and "product" in q)
+        ):
+            s_cid = self._resolve_col(schema_info, "sales", ["customer_id", "id"]) or "customer_id"
+            s_pid = self._resolve_col(schema_info, "sales", ["product_id", "id"]) or "product_id"
+            sql = (
+                f"SELECT s.id, c.{c_name} AS customer_name, p.{p_name} AS product_name, s.total_price, s.sale_date "
+                f"FROM sales s "
+                f"JOIN customers c ON s.{s_cid} = c.{c_id} "
+                f"JOIN products p ON s.{s_pid} = p.{p_id} "
+                f"WHERE s.status = 'Completed' "
+                f"ORDER BY s.sale_date DESC LIMIT 10;"
+            )
+            explanation = "Performs a three-table join across sales, customers, and products to list completed transactions with customer and product names."
+            return sql, explanation
+
+        # Pattern: Customer Orders / Spending Ranking ("Which customers placed the most orders?", "Top customers by total spending")
+        is_cust_order_q = (
+            "customers" in schema_info
+            and ("customer" in q or "client" in q or "user" in q)
+            and ("order" in q or "purchase" in q or "spent" in q or "spending" in q or "placed" in q or "most orders" in q)
+            and not any(k in q for k in ["country", "plan", "status", "distribution"])
+        )
+        if is_cust_order_q:
+            is_order_count_metric = any(k in q for k in ["most orders", "placed the most", "order count", "number of orders", "frequent", "highest orders"])
+            if "orders" in schema_info:
+                o_cid = self._resolve_col(schema_info, "orders", ["customer_id", "c_id", "id"])
+                o_id = self._resolve_col(schema_info, "orders", ["order_id", "id"])
+                has_items = "order_items" in schema_info
+                oi_oid = self._resolve_col(schema_info, "order_items", ["order_id", "o_id"]) if has_items else None
+                oi_total = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount"]) if has_items else None
+
+                if o_cid and o_id and has_items and oi_oid and oi_total and not is_order_count_metric:
+                    sql = (
+                        f"SELECT c.{c_name} AS customer_name, SUM(oi.{oi_total}) AS total_spent, COUNT(DISTINCT o.{o_id}) AS total_orders "
+                        f"FROM customers c "
+                        f"JOIN orders o ON c.{c_id} = o.{o_cid} "
+                        f"JOIN order_items oi ON o.{o_id} = oi.{oi_oid} "
+                        f"GROUP BY c.{c_id}, c.{c_name} "
+                        f"ORDER BY total_spent {direction}{limit_clause or ' LIMIT 5'};"
+                    )
+                    explanation = f"Joins 'customers', 'orders', and 'order_items' to rank customers by total spending in {direction_word} order."
+                    return sql, explanation
+                elif o_cid and o_id:
+                    sql = (
+                        f"SELECT c.{c_name} AS customer_name, COUNT(DISTINCT o.{o_id}) AS total_orders "
+                        f"FROM customers c "
+                        f"JOIN orders o ON c.{c_id} = o.{o_cid} "
+                        f"GROUP BY c.{c_id}, c.{c_name} "
+                        f"ORDER BY total_orders {direction}{limit_clause or ' LIMIT 5'};"
+                    )
+                    explanation = f"Joins 'customers' and 'orders' to identify customers who placed the most orders in {direction_word} order."
+                    return sql, explanation
+
+            c_spent = self._resolve_col(schema_info, "customers", ["total_spent", "spent", "spending"])
+            if c_spent:
+                sql = f"SELECT {c_name} AS customer_name, {c_spent} FROM customers ORDER BY {c_spent} {direction}{limit_clause or ' LIMIT 5'};"
+                explanation = f"Retrieves customers ranked by {c_spent} in {direction_word} order."
+                return sql, explanation
+
+        # Pattern: Compare Revenue by Region ("Compare revenue by region", "Sales by region")
+        if any(k in q for k in ["region", "by region"]) and any(k in q for k in ["revenue", "sales", "compare", "performance"]):
+            c_reg = self._resolve_col(schema_info, "customers", ["region", "state", "city"])
+            if c_reg and "orders" in schema_info and "order_items" in schema_info:
+                o_cid = self._resolve_col(schema_info, "orders", ["customer_id", "c_id", "id"])
+                o_id = self._resolve_col(schema_info, "orders", ["order_id", "id"])
+                oi_oid = self._resolve_col(schema_info, "order_items", ["order_id", "o_id"])
+                oi_total = self._resolve_col(schema_info, "order_items", ["line_total", "total_price", "amount"])
+                if o_cid and o_id and oi_oid and oi_total:
+                    sql = (
+                        f"SELECT c.{c_reg} AS region, SUM(oi.{oi_total}) AS total_revenue, COUNT(DISTINCT o.{o_id}) AS total_orders "
+                        f"FROM customers c "
+                        f"JOIN orders o ON c.{c_id} = o.{o_cid} "
+                        f"JOIN order_items oi ON o.{o_id} = oi.{oi_oid} "
+                        f"GROUP BY c.{c_reg} "
+                        f"ORDER BY total_revenue DESC;"
+                    )
+                    explanation = "Joins 'customers', 'orders', and 'order_items' to aggregate total revenue by customer region in descending order."
+                    return sql, explanation
+
+            if "sales" in schema_info:
+                s_reg = self._resolve_col(schema_info, "sales", ["region", "country"])
+                s_rev = self._resolve_col(schema_info, "sales", ["total_price", "amount", "revenue"])
+                if s_reg and s_rev:
+                    sql = (
+                        f"SELECT {s_reg} AS region, SUM({s_rev}) AS total_revenue, COUNT(*) AS total_sales "
+                        f"FROM sales "
+                        f"WHERE status = 'Completed' "
+                        f"GROUP BY {s_reg} "
+                        f"ORDER BY total_revenue DESC;"
+                    )
+                    explanation = "Aggregates completed sales revenue across geographical regions in descending order."
+                    return sql, explanation
+
+        # Pattern: Compare Departments
+        if self._has_cols(schema_info, "employees", ["department", "salary"]) and ("compare" in q or " vs " in q or "between" in q) and ("dept" in q or "department" in q or "salary" in q):
+            depts = [d for d in ["Engineering", "Product", "Marketing", "Sales", "Finance", "HR"] if d.lower() in q]
+            if len(depts) >= 2:
+                d_in = ", ".join([f"'{d}'" for d in depts])
+                sql = (
+                    f"SELECT department, AVG(salary) AS avg_salary, COUNT(id) AS employee_count "
+                    f"FROM employees WHERE department IN ({d_in}) "
+                    f"GROUP BY department ORDER BY avg_salary DESC;"
+                )
+                explanation = f"Compares average salary and employee count between the {', '.join(depts)} departments."
+                return sql, explanation
+
+        # Pattern: Audit Logs ("Show audit logs", "Show security logs", "Failed audit log events")
+        is_explicit_audit = any(k in q_tokens or f" {k} " in f" {q} " for k in [
+            "audit", "audit_log", "audit_logs", "audit logs",
+            "security log", "security logs", "security event", "security events", "security audit"
+        ])
+        if is_explicit_audit and "audit_logs" in schema_info:
+            has_fail_intent = any(k in q for k in ["fail", "failed", "error", "errors", "issue"])
+            lim = limit_val if has_explicit_limit else 10
+            if has_fail_intent:
+                if ("action" in q and ("ip" in q or "address" in q)) or q.strip() == "failed audit log events":
+                    sql = "SELECT action, status, ip_address, COUNT(id) AS event_count, MAX(timestamp) AS last_occurred FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' GROUP BY action, status, ip_address ORDER BY event_count DESC LIMIT 10;"
+                    explanation = "Queries the 'audit_logs' table for security events with failure status, grouping by action and IP address."
+                else:
+                    sql = f"SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%' ORDER BY timestamp DESC LIMIT {lim};"
+                    explanation = f"Retrieves the {lim} most recent failed audit and security event records."
+            else:
+                sql = f"SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs ORDER BY timestamp DESC LIMIT {lim};"
+                explanation = f"Retrieves the {lim} most recent audit log event records from the 'audit_logs' table."
+            return sql, explanation
+
+        # Pattern: Employees ranking by salary or department salary
+        if self._has_cols(schema_info, "employees", ["name", "department", "salary"]) and (
+            any(k in q for k in ["employee", "staff", "worker", "salary", "paid", "compensation", "earn", "earning"])
+        ):
+            if any(k in q for k in ["department", "dept"]) and any(k in q for k in ["avg", "average", "mean"]):
+                sql = "SELECT department, AVG(salary) AS avg_salary, COUNT(id) AS employee_count FROM employees GROUP BY department ORDER BY avg_salary DESC;"
+                explanation = "Groups employees by department to compute average salary and headcount."
+                return sql, explanation
+            else:
+                sql = f"SELECT name, department, salary FROM employees ORDER BY salary {direction}{limit_clause};"
+                explanation = f"Retrieves employees ranked by salary in {direction_word} order."
+                return sql, explanation
+
+        # Step 7: Dynamic Schema Synthesizer for arbitrary databases and custom tables
         return self._synthesize_dynamic_sql(user_question, schema_info, target_table=target_table_name)
 
     def _synthesize_dynamic_sql(self, user_question: str, schema_info: Dict[str, Any], target_table: Optional[str] = None) -> Tuple[str, str]:
@@ -1072,16 +802,13 @@ JSON Response Format:
         ]) or bool(re.search(r"\bmax\b", q))
         direction = "ASC" if is_lowest and not is_highest else "DESC"
         direction_word = "ascending" if direction == "ASC" else "descending"
-        rank_label = "lowest" if direction == "ASC" else "top"
 
-        # Explicit limit parsing (guarded so comparison numbers like > 30000 or years 2024 are never captured)
         limit_match = re.search(r"\b(?:top|bottom|lowest|highest|first|last|limit)\s*(\d+)\b", q)
         if not limit_match:
             limit_match = re.search(r"\b(\d+)\s*(?:rows?|records?|items?|entries|results?|products?|cars?|students?|employees?|users?)\b", q)
 
         if limit_match:
             num = int(limit_match.group(1))
-            # Make sure it's not a comparison value like > 30000
             comp_match = re.search(r"(?:>=|<=|>|<|=|!=|greater than|less than|above|below|over|under)\s*" + str(num), q)
             if not comp_match and num < 5000 and num not in [2020, 2021, 2022, 2023, 2024, 2025, 2026]:
                 limit_val = num
@@ -1090,14 +817,13 @@ JSON Response Format:
                 limit_val = 5 if (is_highest or is_lowest) else 10
                 has_explicit_limit = False
         elif is_highest or is_lowest:
-            limit_val = 1 if any(k in q for k in ["what is", "which is", "who is", "find the", "single", "most", "least"]) else 5
+            limit_val = 5
             has_explicit_limit = True
         else:
             limit_val = 10
             has_explicit_limit = False
 
-        # 2. Multi-Factor Table Resolution (if target_table is not explicitly locked, or if audit_logs was passed for a business query)
-        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
+        # 2. Multi-Factor Table Resolution
         stopwords_score = {
             "the", "a", "an", "all", "each", "this", "that", "these", "my", "our", "database",
             "data", "db", "here", "current", "active", "system", "first", "last", "top", "bottom",
@@ -1109,7 +835,7 @@ JSON Response Format:
         if (
             not target_table
             or target_table not in schema_info
-            or (target_table.lower() == "audit_logs" and not any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs", "security log", "security audit"]))
+            or (target_table.lower() == "audit_logs" and not any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs"]))
         ):
             scores = {}
             for tbl_name, meta in schema_info.items():
@@ -1126,7 +852,7 @@ JSON Response Format:
                 elif any(part in q_tokens for part in tbl_clean.split("_") if len(part) > 2 and part not in ("all", "table", "data", "db", "log", "logs")):
                     score += 100
 
-                # Match column names (strictly non-numeric, length >= 2, non-stopwords)
+                # Match column names
                 cols = meta.get("columns", [])
                 for c in cols:
                     c_name = c["name"].lower()
@@ -1137,55 +863,22 @@ JSON Response Format:
                     elif "_" in c_name and f" {c_name.replace('_', ' ')} " in f" {q} ":
                         score += 45
 
-                # Boost non-canonical uploaded tables if they match columns
-                if tbl_clean not in canonical_tables and score > 0:
-                    score += 120
-
                 if tbl_clean == "audit_logs":
                     score = -999999 if not any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs"]) else score
 
                 scores[tbl_name] = score
 
             if not scores or max(scores.values()) <= 0:
-                # Check domain keywords before determining if query is unsupported
-                if any(k in q_tokens or f" {k} " in f" {q} " for k in ["customer", "customers", "client", "clients", "user", "users", "buyer", "buyers", "people", "account", "subscriber"]):
-                    target_table = "customers" if "customers" in schema_info else None
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["employee", "employees", "staff", "salary", "salaries", "department", "departments", "hire"]):
-                    target_table = "employees" if "employees" in schema_info else None
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["product", "products", "item", "items", "stock", "price", "category", "rating"]):
-                    target_table = "products" if "products" in schema_info else None
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["order", "orders", "shipment"]):
-                    target_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else None)
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["sale", "sales", "revenue", "spend", "transaction", "transactions"]):
-                    target_table = "sales" if "sales" in schema_info else None
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["ticket", "tickets", "support", "complaint"]):
-                    target_table = "support_tickets" if "support_tickets" in schema_info else None
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["payment", "payments", "paid", "upi", "card"]):
-                    target_table = "payments" if "payments" in schema_info else None
-                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs"]):
-                    target_table = "audit_logs" if "audit_logs" in schema_info else None
-                else:
-                    target_table = None
-
-                if not target_table:
-                    # Query does not match any table, column, or entity domain: clarify with available tables
-                    available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
-                    avail_str = ", ".join(available_tables) if available_tables else "available tables"
-                    return "", f"Please specify which table you would like to query. Available tables: {avail_str}."
+                available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+                avail_str = ", ".join(available_tables) if available_tables else "available tables"
+                return "", f"No matching database table or attributes found for your question. Available tables: {avail_str}."
             else:
                 target_table = max(scores, key=scores.get)
-
-        if target_table and target_table.lower() == "audit_logs" and not any(k in q_tokens or f" {k} " in f" {q} " for k in [
-            "audit", "audit_log", "audit_logs", "security log", "security audit"
-        ]):
-            available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
-            avail_str = ", ".join(available_tables) if available_tables else "available tables"
-            return "", f"Please specify which table you would like to query. Available tables: {avail_str}."
 
         if not target_table or target_table not in schema_info:
             available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
             avail_str = ", ".join(available_tables) if available_tables else "available tables"
-            return "", f"Please specify which table you would like to query. Available tables: {avail_str}."
+            return "", f"No matching database table or attributes found for your question. Available tables: {avail_str}."
 
         table_meta = schema_info.get(target_table, {})
         cols_meta = table_meta.get("columns", [])
@@ -1221,52 +914,15 @@ JSON Response Format:
             else:
                 text_cols.append(c_name)
 
-        # 4. Metric Column Selection with Semantic Synonyms
+        # 4. Metric Column Selection
         mentioned_num = [c for c in numeric_cols if c.lower() in q or c.lower().replace("_", " ") in q]
         if mentioned_num:
             metric_col = mentioned_num[0]
         else:
-            if any(k in q for k in ["revenue", "sales", "spending", "amount", "income", "turnover", "total", "spent"]):
-                pref = ["total_amount", "amount", "line_total", "revenue", "sales", "total_price", "total_spent", "price", "unit_price", "value", "total"]
-            elif any(k in q for k in ["quantity", "units", "volume", "sold", "stock"]):
-                pref = ["quantity", "units_sold", "units", "qty", "volume", "stock_quantity", "stock"]
-            elif any(k in q for k in ["price", "cost", "cheap", "expensive"]):
-                pref = ["price", "unit_price", "cost", "retail_price"]
-            elif any(k in q for k in ["salary", "pay", "wage", "compensation"]):
-                pref = ["salary", "compensation", "pay"]
-            elif any(k in q for k in ["rating", "score", "stars", "grade", "performance"]):
-                pref = ["rating", "score", "performance_score", "grade"]
-            elif any(k in q for k in ["age", "years old"]):
-                pref = ["age", "years"]
-            elif any(k in q for k in ["mileage", "distance", "miles"]):
-                pref = ["mileage", "miles"]
-            else:
-                pref = ["total_amount", "salary", "total_price", "price", "revenue", "amount", "total_spent", "spent", "quantity", "stock_quantity", "stock", "rating", "score", "units", "cost", "value"]
+            pref = ["total_amount", "amount", "line_total", "revenue", "sales", "total_price", "total_spent", "price", "unit_price", "value", "salary", "stock_quantity", "rating", "mileage"]
             metric_col = next((c for p in pref for c in numeric_cols if p in c.lower()), (numeric_cols[0] if numeric_cols else None))
 
-        # 5. Entity / Dimension Column Detection
-        entity_col = None
-        for cand in ["name", "title", "item_name", "product_name", "car_name", "student_name", "emp_name", "customer_name"]:
-            match = next((c for c in text_cols if c.lower() == cand), None)
-            if match:
-                entity_col = match
-                break
-        if not entity_col:
-            entity_col = next((c for c in text_cols if "name" in c.lower()), (text_cols[0] if text_cols else None))
-
-        # Check explicit ordering column (e.g. "ordered by price descending", "sorted by mileage")
-        order_by_col = None
-        order_match = re.search(r"\b(?:order(?:ed)?\s+by|sort(?:ed)?\s+by|ranked\s+by)\s+([a-zA-Z0-9_]+)", q)
-        if order_match:
-            candidate_ord = order_match.group(1).lower().replace(" ", "_")
-            for c in all_cols:
-                if c.lower() == candidate_ord or c.lower().rstrip("s") == candidate_ord.rstrip("s"):
-                    order_by_col = c
-                    metric_col = c
-                    break
-
-        # Explicit Group By parsing (e.g. "by brand", "per department", "by category", "for each fuel type")
-        # Ensure we do NOT treat "ordered by", "sorted by", "ranked by" as a group by!
+        # 5. Group By / Dimension Column Detection
         group_col = None
         by_matches = list(re.finditer(r"\b(?:by|per|for each|in each|across|grouped by)\s+([a-zA-Z0-9_ ]+)", q))
         valid_by_match = None
@@ -1288,17 +944,10 @@ JSON Response Format:
                     group_col = c
                     break
 
-        if not group_col and entity_col and (
-            any(k in q for k in ["distribution", "breakdown"])
-            or (any(k in q for k in ["top", "bottom", "highest", "lowest", "rank", "best", "worst"]) and any(k in q for k in ["product", "customer", "department", "user", "item", "category", "brand", "role"]))
-        ) and not order_by_col:
-            group_col = entity_col
-
-        # 6. Filter (WHERE Clause) Detection
+        # 6. Filters (WHERE clause)
         where_filters = []
         filter_descriptions = []
 
-        # 6a. Numeric comparison filters (e.g. price > 30000, salary >= 80000, mileage < 20000)
         for num_c in numeric_cols + date_cols:
             pat = rf"\b{re.escape(num_c.lower())}\s*(>=|<=|>|<|=|!=|greater than|more than|above|over|less than|below|under)\s*(\d+(?:\.\d+)?)\b"
             m = re.search(pat, q)
@@ -1313,11 +962,8 @@ JSON Response Format:
                 where_filters.append(f'"{num_c}" {op} {n_val}')
                 filter_descriptions.append(f"{num_c} {op} {n_val}")
 
-        # 6b. Text distinct value matching across text columns in target table
-        matched_text_cols = set()
         for c in text_cols:
             distinct_vals = _get_column_distinct_values(target_table, c)
-            # Combine cached distinct values with sample rows
             for r in table_meta.get("sample_rows", []):
                 val = r.get(c)
                 if val and isinstance(val, str) and str(val).strip() not in distinct_vals:
@@ -1329,59 +975,21 @@ JSON Response Format:
                     clean_val = val.replace("'", "''")
                     where_filters.append(f'LOWER("{c}") = \'{clean_val.lower()}\'')
                     filter_descriptions.append(f"{c} is '{val}'")
-                    matched_text_cols.add(c)
                     break
-
-        # 6c. Explicit column = value expressions (e.g. brand is Honda, role = Developer)
-        for c in text_cols:
-            if c in matched_text_cols:
-                continue
-            c_l = c.lower()
-            m_col = re.search(rf"\b{re.escape(c_l)}\s*(?:is|=|equals|like)\s*['\"]?([a-zA-Z0-9_\s-]+?)['\"]?(?:\s+(?:and|or|\b)|\Z)", q)
-            if m_col:
-                v = m_col.group(1).strip()
-                if v and v not in ["the", "a", "an"]:
-                    clean_v = v.replace("'", "''")
-                    where_filters.append(f'LOWER("{c}") = \'{clean_v.lower()}\'')
-                    filter_descriptions.append(f"{c} is '{v}'")
-                    matched_text_cols.add(c)
-
-        # 6d. Status keywords
-        if "status" in [c.lower() for c in all_cols] and "status" not in matched_text_cols:
-            if "completed" in q:
-                where_filters.append('"status" = \'Completed\'')
-                filter_descriptions.append("status is 'Completed'")
-            elif "fail" in q:
-                where_filters.append('("status" = \'FAILURE\' OR "status" LIKE \'%FAIL%\')')
-                filter_descriptions.append("status indicates failure")
-            elif "active" in q:
-                where_filters.append('"status" = \'Active\'')
-                filter_descriptions.append("status is 'Active'")
 
         where_clause = f" WHERE {' AND '.join(where_filters)}" if where_filters else ""
 
         # 7. Aggregation Intent Analysis
         is_avg = any(k in q for k in ["average", "avg", "mean"])
-        is_sum = any(k in q for k in ["total", "sum", "overall", "how much", "revenue", "spending", "spent", "budget"])
-        is_count = any(k in q for k in ["count", "how many", "number of", "for each", "by"])
-        is_max = (any(k in q for k in ["highest", "maximum", "greatest"]) or bool(re.search(r"\bmax\b", q))) and not has_explicit_limit
-        is_min = (any(k in q for k in ["lowest", "minimum", "least", "cheapest"]) or bool(re.search(r"\bmin\b", q))) and not has_explicit_limit
+        is_sum = any(k in q for k in ["total", "sum", "overall", "how much", "revenue", "spending", "spent"])
+        is_count = any(k in q for k in ["count", "how many", "number of"])
 
-        needs_group_by = bool(group_col and (
-            valid_by_match
-            or any(k in q for k in ["average", "avg", "mean", "total", "sum", "distribution", "breakdown", "count", "how many"])
-        ))
-
-        # Branch 1: Group By Aggregation Query
-        if needs_group_by and group_col:
+        # Branch A: Group By Query
+        if group_col:
             if is_avg and metric_col:
                 agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
             elif is_sum and metric_col:
                 agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
-            elif is_max and metric_col:
-                agg_fn, agg_alias = f'MAX("{metric_col}")', f'max_{metric_col}'
-            elif is_min and metric_col:
-                agg_fn, agg_alias = f'MIN("{metric_col}")', f'min_{metric_col}'
             elif metric_col and not is_count:
                 agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
             else:
@@ -1389,20 +997,14 @@ JSON Response Format:
 
             l_clause = f" LIMIT {limit_val}" if has_explicit_limit else ""
             sql = f'SELECT "{group_col}", {agg_fn} AS {agg_alias} FROM "{target_table}"{where_clause} GROUP BY "{group_col}" ORDER BY {agg_alias} {direction}{l_clause};'
-            explanation = f"Groups the '{target_table}' table by '{group_col}', computing {agg_alias.replace('_', ' ')} sorted in {direction_word} order."
+            explanation = f"Groups the '{target_table}' table by '{group_col}', computing {agg_alias.replace('_', ' ')} in {direction_word} order."
             return sql, explanation
 
-        # Branch 2: Single Scalar Aggregate (No Group By, No explicit limit > 1)
-        if (is_avg or is_sum or (is_count and not has_explicit_limit) or is_max or is_min or any(k in q for k in ["how much", "how many", "overall total"])) and not (has_explicit_limit and limit_val > 1):
+        # Branch B: Single Scalar Aggregate
+        if (is_avg or is_sum or (is_count and not has_explicit_limit)) and not (has_explicit_limit and limit_val > 1):
             if is_avg and metric_col:
                 agg_fn, agg_alias = f'AVG("{metric_col}")', f'avg_{metric_col}'
             elif is_sum and metric_col:
-                agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
-            elif is_max and metric_col:
-                agg_fn, agg_alias = f'MAX("{metric_col}")', f'highest_{metric_col}'
-            elif is_min and metric_col:
-                agg_fn, agg_alias = f'MIN("{metric_col}")', f'lowest_{metric_col}'
-            elif metric_col and not is_count:
                 agg_fn, agg_alias = f'SUM("{metric_col}")', f'total_{metric_col}'
             else:
                 agg_fn, agg_alias = 'COUNT(*)', 'total_count'
@@ -1411,24 +1013,13 @@ JSON Response Format:
             explanation = f"Calculates overall {agg_alias.replace('_', ' ')} across records in the '{target_table}' table."
             return sql, explanation
 
-        # Branch 3: Ranked Ordering (Highest / Lowest / Top N / Order By)
-        is_order_intent = (
-            is_highest or is_lowest or "top" in q or "bottom" in q or "rank" in q or "sort" in q
-            or bool(re.search(r"\border(?:ed)?\s+by\b", q)) or "desc" in q or "asc" in q or bool(order_by_col)
-        )
-        if is_order_intent and metric_col:
+        # Branch C: Ranked Ordering
+        if (is_highest or is_lowest or "top" in q or "bottom" in q) and metric_col:
             sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
             explanation = f"Retrieves records from '{target_table}' ordered by '{metric_col}' in {direction_word} order."
             return sql, explanation
 
-        # Branch 4: Chronological / Recent Query
-        if date_cols and any(k in q for k in ["recent", "latest", "newest", "last"]):
-            d_col = date_cols[0]
-            sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{d_col}" DESC LIMIT {limit_val};'
-            explanation = f"Retrieves the most recent records from '{target_table}' sorted chronologically by '{d_col}' in descending order."
-            return sql, explanation
-
-        # Branch 5: Filtered or Browse Query
+        # Branch D: Browse / Filtered Query
         sql = f'SELECT * FROM "{target_table}"{where_clause} LIMIT {limit_val};'
         if where_filters:
             explanation = f"Retrieves records from '{target_table}' where {', '.join(filter_descriptions)} (up to {limit_val} records)."
@@ -1458,10 +1049,10 @@ JSON Response Format:
                 logger.warning("Blocked LLM from querying audit_logs for question '%s'", user_question)
                 return ""
 
-        # 2. Schema Column Normalization: rewrite aliased columns to actual schema column names
+        # 2. Schema Column Normalization
         if "products" in schema_info:
             p_cols = {c["name"].lower(): c["name"] for c in schema_info["products"].get("columns", [])}
-            actual_name = next((p_cols[k] for k in ["product_name", "name", "title", "item_name"] if k in p_cols), None)
+            actual_name = next((p_cols[k] for k in ["product_name", "name", "title"] if k in p_cols), None)
             if actual_name and "name" not in p_cols:
                 sql = re.sub(r"\b(?:p|products)\.name\b", f"p.{actual_name}", sql, flags=re.IGNORECASE)
             actual_id = next((p_cols[k] for k in ["product_id", "id", "item_id"] if k in p_cols), None)
@@ -1476,20 +1067,5 @@ JSON Response Format:
             actual_c_id = next((c_cols[k] for k in ["customer_id", "id", "user_id"] if k in c_cols), None)
             if actual_c_id and "id" not in c_cols:
                 sql = re.sub(r"\b(?:c|customers)\.id\b", f"c.{actual_c_id}", sql, flags=re.IGNORECASE)
-
-        if "orders" in schema_info:
-            o_cols = {c["name"].lower(): c["name"] for c in schema_info["orders"].get("columns", [])}
-            actual_o_id = next((o_cols[k] for k in ["order_id", "id"] if k in o_cols), None)
-            if actual_o_id and "id" not in o_cols:
-                sql = re.sub(r"\b(?:o|orders)\.id\b", f"o.{actual_o_id}", sql, flags=re.IGNORECASE)
-
-        if "order_items" in schema_info:
-            oi_cols = {c["name"].lower(): c["name"] for c in schema_info["order_items"].get("columns", [])}
-            actual_oi_id = next((oi_cols[k] for k in ["order_item_id", "id"] if k in oi_cols), None)
-            if actual_oi_id and "id" not in oi_cols:
-                sql = re.sub(r"\b(?:oi|order_items)\.id\b", f"oi.{actual_oi_id}", sql, flags=re.IGNORECASE)
-
-        # 3. Fix COUNT(s.id) to COUNT(*)
-        sql = re.sub(r"COUNT\s*\(\s*s\.id\s*\)", "COUNT(*)", sql, flags=re.IGNORECASE)
 
         return sql.strip()

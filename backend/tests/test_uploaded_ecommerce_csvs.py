@@ -16,13 +16,14 @@ from backend.app.db.database import engine
 @pytest.fixture(scope="module", autouse=True)
 def setup_ecommerce_tables():
     """Ensures uploaded e-commerce datasets are loaded into the database."""
-    base = r"C:\Users\sindhu\.gemini\antigravity\brain\c1278eb5-9de5-4c62-91c2-aa0787e4c390\.user_uploaded"
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "db", "sample_data")
     mapping = {
-        "customers": "media_1794740204311_c2dbe2da.csv",
-        "products": "media_1794740204333_28abc795.csv",
-        "order_items": "media_1794740204350_ace4f008.csv",
-        "payments": "media_1794740204352_3c5f2f78.csv",
-        "orders": "media_1794740204356_49b5def4.csv",
+        "customers": "customers.csv",
+        "products": "products.csv",
+        "order_items": "order_items.csv",
+        "payments": "payments.csv",
+        "orders": "orders.csv",
+        "support_tickets": "support_tickets.csv",
     }
     with engine.begin() as conn:
         for tbl, fname in mapping.items():

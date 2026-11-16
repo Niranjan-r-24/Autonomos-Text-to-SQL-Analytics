@@ -33,6 +33,13 @@ if PROJECT_ROOT not in sys.path:
 if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+    load_dotenv(os.path.join(BACKEND_DIR, ".env"))
+except ImportError:
+    pass
+
 from sqlalchemy import text
 
 try:

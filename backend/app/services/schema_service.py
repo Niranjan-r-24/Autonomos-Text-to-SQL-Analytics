@@ -1,10 +1,12 @@
 """
-Schema Retrieval and Inspection Service.
-Extracts table schemas, column data types, row counts, and sample records from the active database with in-memory caching.
+Schema Retrieval, Relational Linking, and Inspection Service.
+Extracts table schemas, column data types, foreign key relationships, row counts,
+and sample records from the active database with high-performance in-memory caching.
 """
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy import inspect, text
+
 try:
     from backend.app.db.database import engine
 except ImportError:
@@ -13,12 +15,14 @@ except ImportError:
 logger = logging.getLogger("text2sql.schema")
 
 _SCHEMA_CACHE: Optional[Dict[str, Any]] = None
+_RELATIONSHIPS_CACHE: Optional[List[Dict[str, str]]] = None
 
 
 def clear_schema_cache() -> None:
-    """Clears the in-memory schema cache to force fresh inspection upon next query."""
-    global _SCHEMA_CACHE
+    """Clears in-memory schema and relationship caches to force fresh reads on next request."""
+    global _SCHEMA_CACHE, _RELATIONSHIPS_CACHE
     _SCHEMA_CACHE = None
+    _RELATIONSHIPS_CACHE = None
     try:
         from backend.app.services.sql_generator import clear_distinct_cache
         clear_distinct_cache()
@@ -28,7 +32,99 @@ def clear_schema_cache() -> None:
             clear_distinct_cache()
         except Exception:
             pass
-    logger.info("Schema cache cleared.")
+    logger.info("Schema and distinct values cache cleared.")
+
+
+def detect_relationships(schema_info: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    Discovers verified relational relationships and join paths across tables in schema_info.
+    Combines formal database foreign keys with inferred entity identifier linkages.
+    
+    Returns:
+        List of relationship dictionaries with:
+        - from_table: str
+        - from_column: str
+        - to_table: str
+        - to_column: str
+        - join_clause: str
+    """
+    global _RELATIONSHIPS_CACHE
+    if _RELATIONSHIPS_CACHE is not None:
+        return _RELATIONSHIPS_CACHE
+
+    relationships: List[Dict[str, str]] = []
+    registered_pairs = set()
+
+    # 1. Formal Foreign Keys from Database Inspector
+    try:
+        inspector = inspect(engine)
+        for tbl in schema_info.keys():
+            if tbl.lower() in ("sqlite_sequence", "audit_logs"):
+                continue
+            try:
+                fks = inspector.get_foreign_keys(tbl)
+                for fk in fks:
+                    referred_table = fk.get("referred_table")
+                    constrained_cols = fk.get("constrained_columns", [])
+                    referred_cols = fk.get("referred_columns", [])
+                    if referred_table and referred_table in schema_info and constrained_cols and referred_cols:
+                        fc = constrained_cols[0]
+                        tc = referred_cols[0]
+                        pair_key = (tbl.lower(), fc.lower(), referred_table.lower(), tc.lower())
+                        if pair_key not in registered_pairs:
+                            registered_pairs.add(pair_key)
+                            relationships.append({
+                                "from_table": tbl,
+                                "from_column": fc,
+                                "to_table": referred_table,
+                                "to_column": tc,
+                                "join_clause": f"{tbl}.{fc} = {referred_table}.{tc}"
+                            })
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 2. Inferred Relationships based on relational column conventions
+    business_tables = [t for t in schema_info.keys() if t.lower() not in ("sqlite_sequence", "audit_logs")]
+    for t1 in business_tables:
+        cols1 = {c["name"].lower(): c["name"] for c in schema_info[t1].get("columns", [])}
+        for col1_l, col1_orig in cols1.items():
+            if col1_l.endswith("_id") and col1_l != "id":
+                entity = col1_l[:-3]
+                for t2 in business_tables:
+                    if t1 == t2:
+                        continue
+                    t2_l = t2.lower()
+                    # Match target table: customer -> customers, product -> products, order -> orders
+                    is_match = (
+                        t2_l == entity
+                        or t2_l == f"{entity}s"
+                        or t2_l == f"{entity}es"
+                        or (entity in t2_l and not t2_l.startswith("order_item"))
+                    )
+                    if is_match:
+                        cols2 = {c["name"].lower(): c["name"] for c in schema_info[t2].get("columns", [])}
+                        target_col = None
+                        if col1_l in cols2:
+                            target_col = cols2[col1_l]
+                        elif "id" in cols2:
+                            target_col = cols2["id"]
+                        
+                        if target_col:
+                            pair_key = (t1.lower(), col1_orig.lower(), t2.lower(), target_col.lower())
+                            if pair_key not in registered_pairs:
+                                registered_pairs.add(pair_key)
+                                relationships.append({
+                                    "from_table": t1,
+                                    "from_column": col1_orig,
+                                    "to_table": t2,
+                                    "to_column": target_col,
+                                    "join_clause": f"{t1}.{col1_orig} = {t2}.{target_col}"
+                                })
+
+    _RELATIONSHIPS_CACHE = relationships
+    return relationships
 
 
 def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
@@ -37,7 +133,7 @@ def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
     Uses in-memory caching for sub-millisecond execution on repeated requests.
     
     Returns:
-        Dict mapping table names to column details, row count, and sample records.
+        Dict mapping table names to column details, row count, sample records, and detected foreign keys.
     """
     global _SCHEMA_CACHE
     if _SCHEMA_CACHE is not None and not force_refresh:
@@ -87,8 +183,8 @@ def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
                     "sample_rows": sample_rows
                 }
 
-        # Sort schema_info so audit_logs is strictly last, uploaded tables first, canonical business tables next
-        canonical_order = ["orders", "order_items", "customers", "products", "sales", "employees", "payments", "support_tickets"]
+        # Sort schema_info so uploaded custom tables appear first, canonical business tables next, audit_logs last
+        canonical_order = ["customers", "products", "orders", "order_items", "payments", "support_tickets", "sales", "employees"]
         def _table_priority(tbl: str):
             tl = tbl.lower()
             if tl == "audit_logs":
@@ -99,6 +195,11 @@ def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
 
         sorted_keys = sorted(schema_info.keys(), key=_table_priority)
         ordered_schema_info = {k: schema_info[k] for k in sorted_keys}
+
+        # Attach detected relationships
+        rels = detect_relationships(ordered_schema_info)
+        for tbl, meta in ordered_schema_info.items():
+            meta["relationships"] = [r for r in rels if r["from_table"].lower() == tbl.lower() or r["to_table"].lower() == tbl.lower()]
 
         logger.info("Successfully retrieved schema for %d tables: %s", len(ordered_schema_info), list(ordered_schema_info.keys()))
         _SCHEMA_CACHE = ordered_schema_info
@@ -112,12 +213,11 @@ def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
 def format_schema_for_llm(schema_info: Dict[str, Any], active_table: Optional[str] = None) -> str:
     """
     Formats the schema metadata into a concise, clear prompt representation for the LLM.
-    Puts active_table first if specified.
+    Includes explicit foreign-key relationships and safety boundaries around audit_logs.
     """
     ddl_lines: List[str] = []
     
-    # Sort tables so active_table appears first, then uploaded tables, then core business tables, and audit_logs is strictly last
-    canonical_priority = ["sales", "customers", "products", "employees"]
+    canonical_priority = ["customers", "products", "orders", "order_items", "payments", "support_tickets", "sales", "employees"]
     def table_sort_key(t: str):
         t_l = t.lower()
         if active_table and t_l == active_table.lower():
@@ -135,7 +235,8 @@ def format_schema_for_llm(schema_info: Dict[str, Any], active_table: Optional[st
     for table_name in sorted_tables:
         meta = schema_info[table_name]
         is_active = " [CURRENT ACTIVE/UPLOADED DATASET]" if active_table and table_name.lower() == active_table.lower() else ""
-        ddl_lines.append(f"Table: {table_name}{is_active} (Total Rows: {meta.get('row_count', 0)})")
+        audit_note = " [INTERNAL SYSTEM AUDIT LOGS - NEVER QUERY FOR BUSINESS QUESTIONS]" if table_name.lower() == "audit_logs" else ""
+        ddl_lines.append(f"Table: {table_name}{is_active}{audit_note} (Total Rows: {meta.get('row_count', 0)})")
         ddl_lines.append("Columns:")
         for col in meta.get("columns", []):
             pk = " [PRIMARY KEY]" if col.get("primary_key") else ""
@@ -147,5 +248,13 @@ def format_schema_for_llm(schema_info: Dict[str, Any], active_table: Optional[st
             for idx, row in enumerate(sample_rows[:3]):
                 ddl_lines.append(f"  Row {idx + 1}: {row}")
         ddl_lines.append("")
-        
+
+    # Append Verified Relationships
+    rels = detect_relationships(schema_info)
+    if rels:
+        ddl_lines.append("VERIFIED RELATIONSHIPS & JOIN CONDITIONS:")
+        for r in rels:
+            ddl_lines.append(f"  - {r['join_clause']}")
+        ddl_lines.append("")
+
     return "\n".join(ddl_lines)
