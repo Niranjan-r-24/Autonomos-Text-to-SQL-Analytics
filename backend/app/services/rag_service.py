@@ -395,13 +395,20 @@ USER QUESTION:
 EXECUTIVE ANSWER:"""
 
                 if "gemini" in provider.lower():
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-                    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-                    with httpx.Client(timeout=8) as client:
-                        res = client.post(url, json=payload)
-                        if res.status_code == 200:
-                            data = res.json()
-                            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+                    for m_name in models_to_try:
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={api_key}"
+                        payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+                        try:
+                            with httpx.Client(timeout=15) as client:
+                                res = client.post(url, json=payload)
+                                if res.status_code == 200:
+                                    data = res.json()
+                                    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                                elif res.status_code == 404:
+                                    continue
+                        except Exception:
+                            continue
 
                 elif "openai" in provider.lower():
                     url = "https://api.openai.com/v1/chat/completions"

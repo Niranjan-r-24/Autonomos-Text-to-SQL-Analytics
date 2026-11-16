@@ -196,20 +196,30 @@ def verify_api_key(req: KeyVerifyRequest):
 
     try:
         if "gemini" in provider:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
-            payload = {"contents": [{"parts": [{"text": "Hello"}]}]}
-            with httpx.Client(timeout=8) as client:
-                res = client.post(url, json=payload)
-                if res.status_code == 200:
-                    return {
-                        "valid": True,
-                        "message": "Gemini API key verified successfully! Connected to Gemini 1.5 Flash.",
-                        "provider": "Google Gemini 1.5 Flash"
-                    }
-                else:
-                    err_info = res.json().get("error", {})
-                    err_msg = err_info.get("message", f"HTTP {res.status_code} response.")
-                    return {"valid": False, "message": f"Gemini key verification failed: {err_msg}"}
+            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+            last_err = "Verification failed."
+            for m_name in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={key}"
+                payload = {"contents": [{"parts": [{"text": "Hello"}]}]}
+                try:
+                    with httpx.Client(timeout=15) as client:
+                        res = client.post(url, json=payload)
+                        if res.status_code == 200:
+                            return {
+                                "valid": True,
+                                "message": f"Gemini API key verified successfully! Connected to {m_name}.",
+                                "provider": f"Google Gemini ({m_name})"
+                            }
+                        elif res.status_code == 404:
+                            continue
+                        else:
+                            err_info = res.json().get("error", {})
+                            last_err = err_info.get("message", f"HTTP {res.status_code}")
+                            break
+                except Exception as ex:
+                    last_err = str(ex)
+                    continue
+            return {"valid": False, "message": f"Gemini key verification failed: {last_err}"}
                     
         elif "openai" in provider:
             url = "https://api.openai.com/v1/chat/completions"

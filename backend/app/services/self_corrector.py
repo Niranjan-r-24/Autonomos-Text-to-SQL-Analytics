@@ -351,16 +351,23 @@ RULES:
 3. Do not include markdown commentary, only the SQL query enclosed in ```sql ... ```.
 """
         if "gemini" in self.provider and self.api_key:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.0}
-            }
-            with httpx.Client(timeout=10) as client:
-                res = client.post(url, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    return data["candidates"][0]["content"]["parts"][0]["text"]
+            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+            for m_name in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={self.api_key}"
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.0}
+                }
+                try:
+                    with httpx.Client(timeout=15) as client:
+                        res = client.post(url, json=payload)
+                        if res.status_code == 200:
+                            data = res.json()
+                            return data["candidates"][0]["content"]["parts"][0]["text"]
+                        elif res.status_code == 404:
+                            continue
+                except Exception:
+                    continue
 
         elif "openai" in self.provider and self.api_key:
             url = "https://api.openai.com/v1/chat/completions"

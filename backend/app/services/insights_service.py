@@ -221,25 +221,34 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
 === END UNTRUSTED DATABASE RECORDS ==="""
 
         if "gemini" in self.provider:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [
-                    {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}
-                ],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "responseMimeType": "application/json"
+            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+            for m_name in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={self.api_key}"
+                payload = {
+                    "contents": [
+                        {"role": "user", "parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "responseMimeType": "application/json"
+                    }
                 }
-            }
-            with httpx.Client(timeout=14) as client:
-                res = client.post(url, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    parsed = json.loads(raw_text)
-                    return self._clean_llm_insights(parsed)
-                else:
-                    logger.error("Gemini insights error (%d): %s", res.status_code, res.text)
+                try:
+                    with httpx.Client(timeout=20) as client:
+                        res = client.post(url, json=payload)
+                        if res.status_code == 200:
+                            data = res.json()
+                            raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                            parsed = json.loads(raw_text)
+                            return self._clean_llm_insights(parsed)
+                        elif res.status_code in (404, 429, 503):
+                            continue
+                        else:
+                            logger.error("Gemini insights error (%d): %s", res.status_code, res.text)
+                            break
+                except Exception as ex_gem:
+                    logger.warning("Gemini insights model %s error: %s", m_name, str(ex_gem))
+                    continue
 
         elif "openai" in self.provider:
             url = "https://api.openai.com/v1/chat/completions"

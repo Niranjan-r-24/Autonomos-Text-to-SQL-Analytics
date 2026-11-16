@@ -176,25 +176,34 @@ JSON Response Format:
 }}"""
 
         if "gemini" in self.provider:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [
-                    {"role": "user", "parts": [{"text": f"{system_prompt}\n\nUSER QUESTION: \"{user_question}\""}]}
-                ],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "responseMimeType": "application/json"
+            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
+            for model_name in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+                payload = {
+                    "contents": [
+                        {"role": "user", "parts": [{"text": f"{system_prompt}\n\nUSER QUESTION: \"{user_question}\""}]}
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "responseMimeType": "application/json"
+                    }
                 }
-            }
-            with httpx.Client(timeout=8) as client:
-                res = client.post(url, json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    parsed = json.loads(raw_text)
-                    return parsed.get("sql"), parsed.get("explanation")
-                else:
-                    logger.error("Gemini API error (%d): %s", res.status_code, res.text)
+                try:
+                    with httpx.Client(timeout=20) as client:
+                        res = client.post(url, json=payload)
+                        if res.status_code == 200:
+                            data = res.json()
+                            raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+                            parsed = json.loads(raw_text)
+                            return parsed.get("sql"), parsed.get("explanation")
+                        elif res.status_code in (404, 429, 503):
+                            continue
+                        else:
+                            logger.error("Gemini API error (%d): %s", res.status_code, res.text)
+                            break
+                except Exception as e_gem:
+                    logger.warning("Gemini model %s error: %s", model_name, str(e_gem))
+                    continue
 
         elif "openai" in self.provider:
             url = "https://api.openai.com/v1/chat/completions"
