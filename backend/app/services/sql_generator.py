@@ -107,10 +107,16 @@ class SQLGenerator:
                 llm_sql, llm_explanation = self._generate_with_llm(user_question, schema_info, active_table=active_table)
                 if llm_sql:
                     cleaned_sql = self._clean_sql(llm_sql, schema_info, user_question)
-                    if cleaned_sql:
+                    # A model must not substitute a different dataset for a
+                    # table the user explicitly named.  This uses the current
+                    # inspected schema rather than a list of application tables.
+                    mentioned_tables = self._explicit_schema_tables(user_question, schema_info)
+                    if cleaned_sql and all(self._sql_references_table(cleaned_sql, table) for table in mentioned_tables):
                         provider_label = "Gemini 1.5 Flash" if "gemini" in self.provider else "OpenAI GPT-4o"
                         logger.info("Successfully generated SQL via %s: %s", provider_label, cleaned_sql)
                         return cleaned_sql, llm_explanation, provider_label
+                    if mentioned_tables:
+                        logger.warning("Rejected LLM SQL because it omitted explicitly requested schema table(s): %s", mentioned_tables)
             except Exception as e:
                 logger.warning("LLM generation failed, falling back to deterministic engine: %s", str(e))
 
@@ -118,6 +124,30 @@ class SQLGenerator:
         sql, explanation = self._generate_deterministic(user_question, schema_info, active_table=active_table)
         logger.info("Generated SQL via Deterministic Engine: %s", sql)
         return sql, explanation, "Deterministic Analytics Engine"
+
+    @staticmethod
+    def _explicit_schema_tables(user_question: str, schema_info: Dict[str, Any]) -> List[str]:
+        """Return live-schema tables directly named by the user.
+
+        Singular/plural forms are accepted, while identifiers are matched as
+        tokens so ``order`` does not accidentally match ``preorder``.
+        """
+        tokens = set(re.findall(r"[a-z0-9_]+", user_question.lower()))
+        matches: List[str] = []
+        for table in schema_info:
+            normalized = table.lower()
+            forms = {normalized, normalized.rstrip("s")}
+            if normalized.endswith("ies"):
+                forms.add(normalized[:-3] + "y")
+            if any(form and form in tokens for form in forms):
+                matches.append(table)
+        return matches
+
+    @staticmethod
+    def _sql_references_table(sql: str, table: str) -> bool:
+        """Check a SQL FROM/JOIN reference without confusing column names."""
+        quoted = re.escape(table)
+        return bool(re.search(rf"\b(?:FROM|JOIN)\s+(?:[\"`\[]?{quoted}[\"`\]]?)\b", sql, re.IGNORECASE))
 
     def _generate_with_llm(self, user_question: str, schema_info: Dict[str, Any], active_table: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
         """Invokes LLM API to generate JSON containing both SQL and explanation with strict ranking direction rules."""

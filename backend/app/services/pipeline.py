@@ -16,14 +16,14 @@ from typing import Optional, Dict, Any, List
 try:
     from backend.app.services.schema_service import get_db_schema_info
     from backend.app.services.sql_generator import SQLGenerator
-    from backend.app.services.sql_executor import execute_safe_query, validate_safe_sql
+    from backend.app.services.sql_executor import execute_safe_query, validate_safe_sql, validate_sql_against_live_schema
     from backend.app.services.insights_service import BusinessInsightsInterpreter
     from backend.app.services.self_corrector import SelfCorrectionService
     from backend.app.services.rag_service import rag_service
 except ImportError:
     from app.services.schema_service import get_db_schema_info
     from app.services.sql_generator import SQLGenerator
-    from app.services.sql_executor import execute_safe_query, validate_safe_sql
+    from app.services.sql_executor import execute_safe_query, validate_safe_sql, validate_sql_against_live_schema
     from app.services.insights_service import BusinessInsightsInterpreter
     from app.services.self_corrector import SelfCorrectionService
     from app.services.rag_service import rag_service
@@ -280,6 +280,43 @@ class TextToSqlPipeline:
                 available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
                 avail_text = ", ".join(available_tables) if available_tables else "available tables"
                 explanation = f"Please specify which table you would like to query. Available tables: {avail_text}."
+
+        # Generated SQL is preflighted against the same live schema that was
+        # inspected above.  Manual SQL follows this validation in the executor.
+        if sql_query and generated_by != "Direct User SQL":
+            schema_valid, schema_error = validate_sql_against_live_schema(sql_query)
+            if not schema_valid:
+                logger.warning("Generated SQL failed live-schema preflight: %s", schema_error)
+                sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info)
+                generated_by = "Deterministic Analytics Engine"
+                # Do not pass an empty repair attempt to the executor: that
+                # would replace the useful live-schema diagnostic with a
+                # generic "Query string is empty" error.
+                if not sql_query:
+                    total_duration_sec = round(time.time() - start_time, 3)
+                    error_message = schema_error or explanation
+                    return {
+                        "question": user_question,
+                        "success": False,
+                        "route": "sql",
+                        "sql": "",
+                        "explanation": error_message,
+                        "generated_by": generated_by,
+                        "insights": {
+                            "direct_answer": error_message,
+                            "summary": "The requested table or column is not present in the live database schema.",
+                            "key_findings": [], "comparisons": [],
+                            "caveats": ["Use a table and columns shown in the schema viewer."],
+                            "business_takeaway": "No unrelated table was queried.",
+                            "status": "error",
+                        },
+                        "rows": [], "columns": [], "row_count": 0,
+                        "execution_time_sec": total_duration_sec,
+                        "sql_execution_time_ms": 0.0,
+                        "visualization": {"chart_type": "table", "title": "Schema Validation Error"},
+                        "attempts": 0, "correction_history": [], "agent_steps": agent_steps,
+                        "error": error_message,
+                    }
 
         gen_time = round(time.time() - t_gen, 3)
 

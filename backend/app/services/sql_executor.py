@@ -65,6 +65,26 @@ def validate_safe_sql(sql_query: str) -> Tuple[bool, Optional[str]]:
     return True, None
 
 
+def validate_sql_against_live_schema(sql_query: str) -> Tuple[bool, Optional[str]]:
+    """Preflight a read-only statement against the connected database.
+
+    ``EXPLAIN QUERY PLAN`` makes SQLite resolve every referenced table and
+    column without reading result rows.  This is deliberately shared by the
+    generated and manually edited SQL paths so an uploaded schema is always
+    the source of truth.
+    """
+    is_valid, validation_error = validate_safe_sql(sql_query)
+    if not is_valid:
+        return False, validation_error
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(f"EXPLAIN QUERY PLAN {sql_query.strip().rstrip(';')}"))
+        return True, None
+    except Exception as exc:
+        return False, _format_friendly_db_error(str(exc), sql_query)
+
+
 def _readonly_authorizer(action: int, arg1: Any, arg2: Any, db_name: Any, trigger_name: Any) -> int:
     """Enforces SQLite engine-level read-only permissions by denying any data-modifying action."""
     import sqlite3
@@ -103,7 +123,22 @@ def execute_safe_query(sql_query: str) -> Dict[str, Any]:
             "error": validation_error
         }
 
-    # 2. Execute against SQLAlchemy engine with read-only authorizer
+    # 2. Resolve tables and columns on the live connection before execution.
+    # This catches stale/hallucinated schema references without ever returning
+    # data from an unrelated fallback query.
+    schema_valid, schema_error = validate_sql_against_live_schema(sql_query)
+    if not schema_valid:
+        exec_duration_ms = round((time.time() - start_time) * 1000, 2)
+        return {
+            "success": False,
+            "rows": [],
+            "columns": [],
+            "row_count": 0,
+            "execution_time_ms": exec_duration_ms,
+            "error": schema_error,
+        }
+
+    # 3. Execute against SQLAlchemy engine with read-only authorizer
     try:
         with engine.connect() as conn:
             raw_conn = getattr(getattr(conn, "connection", None), "dbapi_connection", None)
