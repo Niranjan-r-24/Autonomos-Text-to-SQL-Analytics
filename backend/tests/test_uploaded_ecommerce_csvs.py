@@ -122,7 +122,8 @@ class TestUploadedEcommerceCSVs:
         from backend.app.main import resolve_clean_table_name
         assert resolve_clean_table_name("customers (1).csv") == "customers"
         assert resolve_clean_table_name("customers_1.csv") == "customers"
-        assert resolve_clean_table_name("my_customers.csv") == "customers"
+        assert resolve_clean_table_name("my_customers.csv") == "my_customers"
+        assert resolve_clean_table_name("customer_test.csv") == "customer_test"
         assert resolve_clean_table_name("products (2).csv") == "products"
         assert resolve_clean_table_name("orders (1).csv") == "orders"
         assert resolve_clean_table_name("order_items (1).csv") == "order_items"

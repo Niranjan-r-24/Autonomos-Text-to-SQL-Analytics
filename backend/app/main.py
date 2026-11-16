@@ -260,6 +260,8 @@ def process_nl_query(req: QueryRequest):
     """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Query prompt cannot be empty.")
+    if re.search(r"\b(?:audit|audit_logs?|security\s+logs?)\b", req.query, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="Audit logs are internal and are not available in the analytics application.")
 
     try:
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider)
@@ -278,6 +280,8 @@ def execute_custom_sql(req: ExecuteSqlRequest):
     """
     if not req.sql.strip():
         raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
+    if re.search(r"\b(?:audit_logs?|security_logs?)\b", req.sql, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="Audit logs are internal and are not available in the analytics application.")
 
     result = execute_safe_query(req.sql.strip())
     if result.get("success"):
@@ -306,31 +310,30 @@ def resolve_clean_table_name(filename: str) -> str:
     """
     Normalizes dataset filenames into clean, standard SQL table names.
     Automatically handles browser duplicate suffixes like (1), _1, copy, etc.,
-    and maps common entity datasets to standard relational tables.
+    and maps only exact canonical sample-dataset names to standard relational
+    tables. User-defined names such as ``customer_test`` are preserved.
     """
     base_name = os.path.splitext(filename)[0]
     raw = re.sub(r"[\s_\-\(\)]+\d+[\)\_]?$", "", base_name, flags=re.IGNORECASE).strip()
     raw = re.sub(r"[\s_\-]+copy\b", "", raw, flags=re.IGNORECASE).strip()
     raw_lower = raw.lower().replace("-", "_").replace(" ", "_")
 
-    if "customer" in raw_lower and "order" not in raw_lower:
+    if raw_lower in ("customer", "customers"):
         return "customers"
-    if "product" in raw_lower or ("item" in raw_lower and "order" not in raw_lower):
+    if raw_lower in ("product", "products"):
         return "products"
-    if "order_item" in raw_lower or "orderitem" in raw_lower or ("order" in raw_lower and "item" in raw_lower):
+    if raw_lower in ("order_item", "order_items", "orderitem", "orderitems"):
         return "order_items"
-    if "order" in raw_lower:
+    if raw_lower in ("order", "orders"):
         return "orders"
-    if "payment" in raw_lower:
+    if raw_lower in ("payment", "payments"):
         return "payments"
-    if "ticket" in raw_lower or "support" in raw_lower or "complaint" in raw_lower:
+    if raw_lower in ("ticket", "tickets", "support_ticket", "support_tickets"):
         return "support_tickets"
-    if "employee" in raw_lower or "staff" in raw_lower:
+    if raw_lower in ("employee", "employees"):
         return "employees"
-    if "sale" in raw_lower and "order" not in raw_lower:
+    if raw_lower in ("sale", "sales"):
         return "sales"
-    if "audit" in raw_lower:
-        return "uploaded_audit_logs"
 
     clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw).strip("_").lower()
     if not clean or clean[0].isdigit():

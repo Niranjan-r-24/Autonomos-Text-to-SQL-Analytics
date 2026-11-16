@@ -3,6 +3,7 @@
 from backend.app.services.pipeline import TextToSqlPipeline
 from backend.app.services.schema_service import get_db_schema_info
 from backend.app.services.sql_executor import execute_safe_query, validate_sql_against_live_schema
+from backend.app.main import resolve_clean_table_name
 
 
 def test_llm_sql_omitting_requested_table_is_rejected(monkeypatch):
@@ -71,4 +72,8 @@ def test_plain_table_browse_is_not_silently_limited_to_ten_rows():
     assert result["success"] is True
     assert "LIMIT 10" not in result["sql"].upper()
     assert result["row_count"] == 12
+
+
+def test_uploaded_filename_is_preserved_as_queryable_table_name():
+    assert resolve_clean_table_name("customer_test.csv") == "customer_test"
 

@@ -20,7 +20,7 @@
     "file_type": ".txt",
     "size_bytes": 97,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T15:41:34.835180+00:00",
+    "indexed_at": "2026-11-16T16:03:50.283131+00:00",
     "status": "ready"
   },
   "travel_policy.docx": {
@@ -28,7 +28,7 @@
     "file_type": ".docx",
     "size_bytes": 35375,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T15:41:35.529794+00:00",
+    "indexed_at": "2026-11-16T16:03:51.075688+00:00",
     "status": "ready"
   },
   "retention_policy.pdf": {
@@ -36,7 +36,7 @@
     "file_type": ".pdf",
     "size_bytes": 647,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T15:41:37.027598+00:00",
+    "indexed_at": "2026-11-16T16:03:53.416764+00:00",
     "status": "ready"
   },
   "test_architecture_guide.txt": {
