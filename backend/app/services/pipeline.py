@@ -51,6 +51,7 @@ class TextToSqlPipeline:
 
         # 0. Intent Routing: Route document/knowledge queries to RAG
         q_lower = user_question.lower()
+        q_tokens = set(re.findall(r"[a-z0-9_]+", q_lower))
         doc_cues = (
             "document", "policy", "pdf", "docx", "guide", "portfolio", "resume",
             "according to", "knowledge base", "what is the step", "steps to",
@@ -79,7 +80,10 @@ class TextToSqlPipeline:
 
         # Proactive RAG Probe: If documents exist, check if question has strong match in document records
         if not is_doc_query and rag_service.has_documents:
-            is_explicit_sql = any(q_lower.startswith(k) for k in ["select ", "with ", "show first", "how many", "count ", "average ", "avg ", "sum ", "total revenue"])
+            is_explicit_sql = any(q_lower.startswith(k) for k in [
+                "select ", "with ", "show first", "how many", "count ", "average ", "avg ", "sum ", "total revenue",
+                "show all", "list all", "give me all", "browse ", "display "
+            ])
             if not is_explicit_sql:
                 top_hits = rag_service._hybrid_search(user_question)
                 if top_hits and top_hits[0].get("score", 0) >= 4.0:
@@ -208,9 +212,10 @@ class TextToSqlPipeline:
         # Sanitize active_table: Never allow audit_logs lock for non-audit questions
         if active_table:
             atl = active_table.lower()
-            if atl == "audit_logs" and not any(k in q_lower for k in [
-                "audit", "security", "fail", "login", "ip", "error", "auth", "log"
-            ]):
+            is_audit_q = any(re.search(rf"\b{re.escape(k)}\b", q_lower) for k in [
+                "audit", "audit_log", "audit_logs", "security log", "security audit", "failed login", "failed logins"
+            ])
+            if atl == "audit_logs" and not is_audit_q:
                 active_table = None
             elif atl in schema_info:
                 # If question explicitly mentions another table, unbind active_table
@@ -227,46 +232,54 @@ class TextToSqlPipeline:
         else:
             sql_query, explanation, generated_by = self.generator.generate(user_question, schema_info, active_table=active_table)
 
-        # Handle unsupported query where no matching tables/columns could be mapped
+        # Handle query where no matching tables/columns could be mapped: Return a clear clarification
         if not sql_query or not sql_query.strip():
             total_duration_sec = round(time.time() - start_time, 3)
+            available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+            avail_text = ", ".join(available_tables) if available_tables else "available tables"
+            clarification_msg = explanation or f"Unable to identify target table. Available tables: {avail_text}."
             return {
                 "question": user_question,
                 "success": False,
                 "route": "sql",
                 "sql": "",
-                "explanation": explanation or "Unable to map question to active database schema.",
+                "explanation": clarification_msg,
                 "generated_by": generated_by or "Query Router",
                 "insights": {
-                    "direct_answer": "I could not find any relevant tables or columns in the database to answer this question. Please verify available datasets in the Schema explorer.",
-                    "summary": "Unsupported query: no matching database tables or columns found.",
-                    "key_findings": ["No tables or attributes in the active database matched the query."],
+                    "direct_answer": f"I could not determine which table to query. Available tables are: {avail_text}. Please specify one of these tables in your question.",
+                    "summary": "Please clarify which table you would like to query.",
+                    "key_findings": [f"Available tables: {avail_text}"],
                     "comparisons": [],
-                    "caveats": ["Verify that the required dataset has been uploaded or check the schema viewer."],
-                    "business_takeaway": "Rephrase your query or upload the appropriate dataset to perform this analysis.",
-                    "status": "error"
+                    "caveats": ["Specify a valid table or attribute in your question."],
+                    "business_takeaway": f"Available datasets: {avail_text}. Specify one to continue.",
+                    "status": "clarification"
                 },
                 "rows": [],
                 "columns": [],
                 "row_count": 0,
                 "execution_time_sec": total_duration_sec,
                 "sql_execution_time_ms": 0.0,
-                "visualization": {"chart_type": "table", "title": "Unsupported Query"},
+                "visualization": {"chart_type": "table", "title": "Clarification Required"},
                 "attempts": 1,
                 "correction_history": [],
                 "agent_steps": agent_steps,
-                "error": "No matching database table or columns found for this question."
+                "error": clarification_msg
             }
 
         # Strict security guard: Block audit_logs from ever being queried for non-audit questions
-        is_security_q = any(k in user_question.lower() for k in [
-            "audit", "security", "fail", "login", "ip_address", "ip", "event",
-            "auth", "error", "log"
+        is_explicit_audit = any(k in q_tokens or f" {k} " in f" {q_lower} " for k in [
+            "audit", "audit_log", "audit_logs", "security log", "security logs", "security audit",
+            "failed login", "failed logins"
         ])
-        if "audit_logs" in sql_query.lower() and not is_security_q:
+        if "audit_logs" in sql_query.lower() and not is_explicit_audit:
             logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for business tables.", user_question)
             sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info, target_table=None)
             generated_by = "Deterministic Analytics Engine"
+            if "audit_logs" in sql_query.lower():
+                sql_query = ""
+                available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+                avail_text = ", ".join(available_tables) if available_tables else "available tables"
+                explanation = f"Please specify which table you would like to query. Available tables: {avail_text}."
 
         gen_time = round(time.time() - t_gen, 3)
 

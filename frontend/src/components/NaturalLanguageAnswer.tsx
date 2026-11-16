@@ -144,7 +144,10 @@ function synthesizeDynamicAnswer(
       if (q.includes('employee') || q.includes('staff') || targetCol.toLowerCase().includes('employee')) {
         return `There are ${countVal} employees in the database.`;
       }
-      if (q.includes('audit') || q.includes('log') || targetCol.toLowerCase().includes('audit')) {
+      if (q.includes('sale') || q.includes('transaction') || targetCol.toLowerCase().includes('sale')) {
+        return `There are ${countVal} sales transactions in the database.`;
+      }
+      if (/\b(audit|audit_log|audit_logs)\b/i.test(q) || targetCol.toLowerCase().includes('audit')) {
         return `There are ${countVal} audit log records in the database.`;
       }
       return `There are ${countVal} records in the database for this query.`;

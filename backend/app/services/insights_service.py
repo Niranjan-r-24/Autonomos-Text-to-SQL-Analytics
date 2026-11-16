@@ -401,7 +401,11 @@ TOTAL ROWS RETURNED: {row_count}{truncated_note}
             or any(k in sql_lower for k in ["strftime", "group by month", "sales_month", "to_char", "group by date"])
             or (bool(date_cols) and any(k in q for k in ["timeline", "history", "trend", "over time", "by date", "by month"]))
         )
-        is_security = any(k in q for k in ["audit", "security", "fail", "log", "ip", "login"]) or "audit_logs" in sql_lower
+        is_security = "audit_logs" in sql_lower or (
+            any(re.search(rf"\b{re.escape(k)}\b", q) for k in [
+                "audit", "audit_log", "audit_logs", "security log", "security logs", "security event", "failed login"
+            ]) and any(c.lower() in ("action", "ip_address") for c in columns)
+        )
 
         # Pattern 0: Direct Table Browse / Sample Rows Result
         is_browse = (

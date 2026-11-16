@@ -98,9 +98,10 @@ class SQLGenerator:
         # Sanitize active_table: Never allow audit_logs lock for non-audit questions
         if active_table:
             atl = active_table.lower()
-            if atl == "audit_logs" and not any(k in user_question.lower() for k in [
-                "audit", "security", "fail", "login", "ip", "error", "auth", "log"
-            ]):
+            is_audit_q = any(re.search(rf"\b{re.escape(k)}\b", user_question.lower()) for k in [
+                "audit", "audit_log", "audit_logs", "security log", "security audit", "failed login", "failed logins"
+            ])
+            if atl == "audit_logs" and not is_audit_q:
                 active_table = None
             elif schema_info and atl in schema_info:
                 # If question explicitly mentions another table, unbind active_table
@@ -318,16 +319,15 @@ JSON Response Format:
             "sales": ["sale", "sales", "transaction", "transactions", "purchase", "purchases"],
             "audit_logs": [
                 "audit", "audits", "audit_log", "audit_logs", "audit log", "audit logs",
-                "error", "errors", "error log", "error logs", "error table", "security log",
-                "security logs", "failed login", "failed logins", "failure", "failures",
-                "failed event", "failed events", "security event", "security events"
+                "security log", "security logs", "security audit"
             ]
         }
 
         target_table_name = None
 
-        # 1. Match semantic table synonyms FIRST so explicit question intent always wins
-        for tbl, syns in table_synonyms.items():
+        # 1. Match semantic table synonyms FIRST (business tables first, audit_logs strictly last)
+        business_tables_syns = {k: v for k, v in table_synonyms.items() if k != "audit_logs"}
+        for tbl, syns in business_tables_syns.items():
             if tbl in schema_info and any(s in q_tokens or f" {s} " in f" {q} " for s in syns):
                 target_table_name = tbl
                 break
@@ -342,11 +342,17 @@ JSON Response Format:
                     target_table_name = tbl
                     break
 
-        # 3. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
+        # 3. Only match audit_logs if no business table matched AND user explicitly asked for audit/security logs
+        if not target_table_name and "audit_logs" in schema_info:
+            audit_syns = table_synonyms["audit_logs"]
+            if any(s in q_tokens or f" {s} " in f" {q} " for s in audit_syns):
+                target_table_name = "audit_logs"
+
+        # 4. Only if query does not match any table, prioritize active_table (never default to audit_logs for business queries)
         if not target_table_name and active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
             target_table_name = active_table
-        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q for k in [
-            "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+        elif not target_table_name and active_table and active_table.lower() == "audit_logs" and any(k in q_tokens or f" {k} " in f" {q} " for k in [
+            "audit", "audit_log", "audit_logs", "security"
         ]):
             target_table_name = active_table
 
@@ -356,8 +362,8 @@ JSON Response Format:
             or ("count" in q and not any(k in q for k in ["by", "per", "group", "plan", "country", "status", "department", "category", "where"]))
         )
         if is_count_intent and not any(k in q for k in ["average", "avg", "highest", "lowest", "top", "bottom", "more than", "greater than", "less than", "between"]):
-            # Special check for security failure/login counts
-            if any(k in q for k in ["failed login", "failed logins", "failure", "failures", "error", "errors", "failed event", "failed events"]) and "audit_logs" in schema_info:
+            # Special check for security failure/login counts (strictly when no business entity is queried)
+            if any(k in q for k in ["failed login", "failed logins", "security failure", "failed event", "failed events"]) and "audit_logs" in schema_info and not any(b in q for b in ["order", "payment", "transaction", "ticket", "customer", "product"]):
                 sql = "SELECT COUNT(*) AS total_failed_logins FROM audit_logs WHERE status = 'FAILURE' OR action LIKE '%FAIL%';"
                 explanation = "Calculates total count of failed login and error events in the 'audit_logs' table."
                 return sql, explanation
@@ -368,7 +374,7 @@ JSON Response Format:
             if any(k in q for k in ["customer", "client", "user", "buyer", "subscriber", "member", "account"]):
                 count_table = "customers" if "customers" in schema_info else target_table_name
                 alias = "total_customers"
-            elif any(k in q for k in ["employee", "staff", "worker", "personnel", "headcount"]):
+            elif any(k in q for k in ["employee", "staff", "worker", "personnel", "headcount", "salary", "salaries"]):
                 count_table = "employees" if "employees" in schema_info else target_table_name
                 alias = "total_employees"
             elif any(k in q for k in ["product", "item", "catalog"]):
@@ -386,7 +392,7 @@ JSON Response Format:
             elif any(k in q for k in ["sale", "transaction", "purchase"]):
                 count_table = "sales" if "sales" in schema_info else ("orders" if "orders" in schema_info else target_table_name)
                 alias = "total_sales"
-            elif any(k in q for k in ["audit", "audit_log", "audit_logs", "log", "logs"]):
+            elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs", "security_log"]):
                 count_table = "audit_logs" if "audit_logs" in schema_info else target_table_name
                 alias = "total_audit_logs"
             elif target_table_name and target_table_name.lower() != "audit_logs":
@@ -924,17 +930,14 @@ JSON Response Format:
             )
             return sql, explanation
 
-        # Pattern: Security & Audit logs
+        # Pattern: Security & Audit logs (strictly grounded, never catches general business questions)
         is_security_or_audit = self._has_cols(schema_info, "audit_logs", ["action", "status", "ip_address"]) and (
             target_table_name == "audit_logs"
-            or any(k in q for k in [
-                "audit", "audit_log", "audit_logs", "security event", "security log", "security logs",
-                "failed login", "failed logins", "ip_address", "error log", "error logs", "error table",
-                "failed event", "failed events", "security audit"
+            or any(k in q_tokens or f" {k} " in f" {q} " for k in [
+                "audit", "audit_log", "audit_logs", "audit logs",
+                "security event", "security events", "security log", "security logs", "security audit",
+                "failed login", "failed logins"
             ])
-            or ("fail" in q and any(k in q for k in ["event", "audit", "login", "auth", "action", "ip", "user", "most", "count", "who"]))
-            or (any(k in q for k in ["security", "audit"]) and any(k in q for k in ["log", "event", "failure", "fail", "ip", "action"]))
-            or (any(k in q for k in ["error", "errors"]) and any(k in q for k in ["table", "log", "logs", "show", "list", "recent", "what", "which", "are the"]))
         )
 
         if is_security_or_audit:
@@ -1095,10 +1098,18 @@ JSON Response Format:
 
         # 2. Multi-Factor Table Resolution (if target_table is not explicitly locked, or if audit_logs was passed for a business query)
         canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
+        stopwords_score = {
+            "the", "a", "an", "all", "each", "this", "that", "these", "my", "our", "database",
+            "data", "db", "here", "current", "active", "system", "first", "last", "top", "bottom",
+            "any", "some", "every", "select", "where", "group", "order", "limit", "records",
+            "rows", "items", "entries", "values", "details", "information", "info", "columns",
+            "fields", "table", "tables", "show", "display", "view", "get", "fetch", "list", "see",
+            "id", "status"
+        }
         if (
             not target_table
             or target_table not in schema_info
-            or (target_table.lower() == "audit_logs" and not any(k in q for k in ["audit", "log", "security", "ip", "fail"]))
+            or (target_table.lower() == "audit_logs" and not any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs", "security log", "security audit"]))
         ):
             scores = {}
             for tbl_name, meta in schema_info.items():
@@ -1108,20 +1119,22 @@ JSON Response Format:
                 score = 0
 
                 # Match table name
-                if tbl_clean in q_tokens or tbl_clean in q:
+                if tbl_clean in q_tokens or f" {tbl_clean} " in f" {q} ":
                     score += 300
                 elif tbl_clean.rstrip("s") in q_tokens or (tbl_clean + "s") in q_tokens:
                     score += 200
-                elif any(part in q_tokens for part in tbl_clean.split("_") if len(part) > 2):
+                elif any(part in q_tokens for part in tbl_clean.split("_") if len(part) > 2 and part not in ("all", "table", "data", "db", "log", "logs")):
                     score += 100
 
-                # Match column names
+                # Match column names (strictly non-numeric, length >= 2, non-stopwords)
                 cols = meta.get("columns", [])
                 for c in cols:
                     c_name = c["name"].lower()
+                    if len(c_name) < 2 or c_name in stopwords_score or c_name.isdigit() or c_name == "id":
+                        continue
                     if c_name in q_tokens:
                         score += 50
-                    elif c_name.replace("_", " ") in q:
+                    elif "_" in c_name and f" {c_name.replace('_', ' ')} " in f" {q} ":
                         score += 45
 
                 # Boost non-canonical uploaded tables if they match columns
@@ -1129,42 +1142,50 @@ JSON Response Format:
                     score += 120
 
                 if tbl_clean == "audit_logs":
-                    score = -999999 if "audit" not in q else score
+                    score = -999999 if not any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs"]) else score
 
                 scores[tbl_name] = score
 
             if not scores or max(scores.values()) <= 0:
                 # Check domain keywords before determining if query is unsupported
-                if any(k in q for k in ["customer", "client", "user", "buyer", "people", "account", "subscriber"]):
+                if any(k in q_tokens or f" {k} " in f" {q} " for k in ["customer", "customers", "client", "clients", "user", "users", "buyer", "buyers", "people", "account", "subscriber"]):
                     target_table = "customers" if "customers" in schema_info else None
-                elif any(k in q for k in ["employee", "staff", "salary", "department", "hire"]):
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["employee", "employees", "staff", "salary", "salaries", "department", "departments", "hire"]):
                     target_table = "employees" if "employees" in schema_info else None
-                elif any(k in q for k in ["product", "item", "stock", "price", "category", "rating"]):
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["product", "products", "item", "items", "stock", "price", "category", "rating"]):
                     target_table = "products" if "products" in schema_info else None
-                elif any(k in q for k in ["order", "orders"]):
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["order", "orders", "shipment"]):
                     target_table = "orders" if "orders" in schema_info else ("backup_orders" if "backup_orders" in schema_info else None)
-                elif any(k in q for k in ["sale", "sales", "revenue", "spend", "transaction"]):
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["sale", "sales", "revenue", "spend", "transaction", "transactions"]):
                     target_table = "sales" if "sales" in schema_info else None
-                elif any(k in q for k in ["ticket", "support", "complaint"]):
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["ticket", "tickets", "support", "complaint"]):
                     target_table = "support_tickets" if "support_tickets" in schema_info else None
-                elif any(k in q for k in ["payment", "paid"]):
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["payment", "payments", "paid", "upi", "card"]):
                     target_table = "payments" if "payments" in schema_info else None
+                elif any(k in q_tokens or f" {k} " in f" {q} " for k in ["audit", "audit_log", "audit_logs"]):
+                    target_table = "audit_logs" if "audit_logs" in schema_info else None
                 else:
                     target_table = None
 
                 if not target_table:
-                    # Query does not match any table, column, or entity domain
-                    return "", f"Unable to map query '{user_question}' to any database tables or columns."
+                    # Query does not match any table, column, or entity domain: clarify with available tables
+                    available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+                    avail_str = ", ".join(available_tables) if available_tables else "available tables"
+                    return "", f"Please specify which table you would like to query. Available tables: {avail_str}."
             else:
                 target_table = max(scores, key=scores.get)
 
-        if target_table and target_table.lower() == "audit_logs" and not any(k in q for k in [
-            "audit", "security", "fail", "login", "ip", "error", "auth", "log"
+        if target_table and target_table.lower() == "audit_logs" and not any(k in q_tokens or f" {k} " in f" {q} " for k in [
+            "audit", "audit_log", "audit_logs", "security log", "security audit"
         ]):
-            return "", f"Query does not match any business tables in the database schema."
+            available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+            avail_str = ", ".join(available_tables) if available_tables else "available tables"
+            return "", f"Please specify which table you would like to query. Available tables: {avail_str}."
 
         if not target_table or target_table not in schema_info:
-            return "", f"Unable to map query '{user_question}' to any database table."
+            available_tables = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
+            avail_str = ", ".join(available_tables) if available_tables else "available tables"
+            return "", f"Please specify which table you would like to query. Available tables: {avail_str}."
 
         table_meta = schema_info.get(target_table, {})
         cols_meta = table_meta.get("columns", [])
@@ -1426,12 +1447,14 @@ JSON Response Format:
         if not schema_info:
             return sql
 
-        # 1. Block audit_logs if user question didn't ask for it
+        # 1. Block audit_logs if user question didn't explicitly ask for audit logs
         if user_question:
             q_low = user_question.lower()
-            if "audit_logs" in sql.lower() and not any(k in q_low for k in [
-                "audit", "security", "fail", "login", "ip", "error", "auth", "log"
-            ]):
+            is_audit_intent = any(re.search(rf"\b{re.escape(k)}\b", q_low) for k in [
+                "audit", "audit_log", "audit_logs", "security log", "security logs", "security audit",
+                "failed login", "failed logins"
+            ])
+            if "audit_logs" in sql.lower() and not is_audit_intent:
                 logger.warning("Blocked LLM from querying audit_logs for question '%s'", user_question)
                 return ""
 
