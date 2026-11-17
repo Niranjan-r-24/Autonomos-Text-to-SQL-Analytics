@@ -57,12 +57,19 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/rag/documents`);
+      const res = await axios.get(`${API_BASE}/api/documents`);
       if (res.data && res.data.documents) {
         setAvailableDocs(res.data.documents);
       }
     } catch (err) {
-      console.error('Failed to load documents list:', err);
+      try {
+        const res2 = await axios.get(`${API_BASE}/api/rag/documents`);
+        if (res2.data && res2.data.documents) {
+          setAvailableDocs(res2.data.documents);
+        }
+      } catch (err2) {
+        console.warn('Failed to load documents list:', err2);
+      }
     } finally {
       setIsLoadingDocs(false);
     }
@@ -155,8 +162,9 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
 
         if (res.data && res.data.success) {
           lastUploadData = res.data;
-          if (res.data.table_name && res.data.table_name !== 'knowledge_base') {
-            importedTables.push(res.data.table_name);
+          const canonical = res.data.tableName || res.data.table_name;
+          if (canonical && canonical !== 'knowledge_base') {
+            importedTables.push(canonical);
           }
           if (res.data.schema) {
             latestSchema = res.data.schema;
@@ -172,6 +180,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
         fileInputRef.current.value = '';
       }
 
+      const primaryTable = lastUploadData?.tableName || lastUploadData?.table_name || importedTables[0] || 'knowledge_base';
       const summaryResult = {
         ...lastUploadData,
         message:
@@ -179,11 +188,12 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
             ? `Successfully imported ${importedTables.length} datasets: ${importedTables.join(', ')}.`
             : lastUploadData?.message || 'File uploaded successfully.',
         imported_tables: importedTables,
+        table_name: primaryTable,
+        tableName: primaryTable,
         schema: latestSchema,
       };
       setUploadResult(summaryResult);
 
-      const primaryTable = importedTables[0] || lastUploadData?.table_name || 'knowledge_base';
       if (onUploadSuccess) {
         onUploadSuccess(primaryTable, latestSchema);
       }

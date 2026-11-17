@@ -110,6 +110,8 @@ class QueryRequest(BaseModel):
     api_key: Optional[str] = Field(None, description="Optional LLM API Key (Gemini or OpenAI)")
     provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
     active_table: Optional[str] = Field(None, description="Optional active table name to prioritize")
+    tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
+    table_name: Optional[str] = Field(None, description="Optional table name identifier")
 
 
 class ExecuteSqlRequest(BaseModel):
@@ -117,6 +119,9 @@ class ExecuteSqlRequest(BaseModel):
     question: Optional[str] = Field("Custom SQL Execution", description="Optional natural language question or description")
     api_key: Optional[str] = Field(None, description="Optional LLM API Key")
     provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
+    active_table: Optional[str] = Field(None, description="Optional active table name identifier")
+    tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
+    table_name: Optional[str] = Field(None, description="Optional table name identifier")
 
 
 
@@ -155,13 +160,50 @@ def health_check():
 
 
 @app.get("/api/schema")
-def get_schema():
-    """Returns structured schema definitions (tables, columns, types, sample data) for all database tables."""
+def get_schema(
+    active_table: Optional[str] = None,
+    tableName: Optional[str] = None,
+    table_name: Optional[str] = None,
+):
+    """Returns structured schema definitions for database tables, optionally validating the requested table."""
     try:
         schema = get_db_schema_info()
-        # Filter out internal audit_logs and sqlite system tables from API response
         clean_schema = {k: v for k, v in schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-        return {"success": True, "schema": clean_schema}
+        available_tables = list(clean_schema.keys())
+
+        requested_table = active_table or tableName or table_name
+        canonical_name = None
+        if requested_table:
+            req_lower = requested_table.strip().lower()
+            if req_lower in ("audit_logs", "sqlite_sequence"):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Internal audit log tables cannot be selected as active datasets.",
+                        "requested_table": requested_table,
+                        "available_tables": available_tables
+                    }
+                )
+            matched = next((k for k in clean_schema.keys() if k.lower() == req_lower), None)
+            if not matched:
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "message": f"Requested table '{requested_table}' does not exist in the database.",
+                        "requested_table": requested_table,
+                        "available_tables": available_tables
+                    }
+                )
+            canonical_name = matched
+
+        resp = {"success": True, "schema": clean_schema}
+        if canonical_name:
+            resp["tableName"] = canonical_name
+            resp["active_table"] = canonical_name
+            resp["table_name"] = canonical_name
+        return resp
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to retrieve schema: %s", str(e), exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -260,16 +302,56 @@ def process_nl_query(req: QueryRequest):
     """
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Query prompt cannot be empty.")
-    if re.search(r"\b(?:audit|audit_logs?|security\s+logs?)\b", req.query, re.IGNORECASE):
-        raise HTTPException(status_code=400, detail="Audit logs are internal and are not available in the analytics application.")
+
+    requested_table = req.active_table or req.tableName or req.table_name
+    canonical_table = None
+
+    schema_info = get_db_schema_info()
+    available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
+
+    if requested_table:
+        req_clean = requested_table.strip()
+        req_lower = req_clean.lower()
+        if req_lower in ("audit_logs", "sqlite_sequence"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Internal audit log tables cannot be queried as active datasets.",
+                    "requested_table": requested_table,
+                    "available_tables": available_tables
+                }
+            )
+        matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
+        if not matched:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": f"Requested table '{requested_table}' does not exist in the database.",
+                    "requested_table": requested_table,
+                    "available_tables": available_tables
+                }
+            )
+        canonical_table = matched
 
     try:
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider)
-        result = pipeline.run(req.query.strip(), active_table=req.active_table)
+        result = pipeline.run(req.query.strip(), active_table=canonical_table)
+        if not result.get("success") and result.get("error"):
+            result["requested_table"] = canonical_table
+            result["available_tables"] = available_tables
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Pipeline execution error: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Pipeline error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": f"Pipeline error: {str(e)}",
+                "requested_table": canonical_table,
+                "available_tables": available_tables
+            }
+        )
 
 
 @app.post("/api/execute-sql")
@@ -280,8 +362,47 @@ def execute_custom_sql(req: ExecuteSqlRequest):
     """
     if not req.sql.strip():
         raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
-    if re.search(r"\b(?:audit_logs?|security_logs?)\b", req.sql, re.IGNORECASE):
-        raise HTTPException(status_code=400, detail="Audit logs are internal and are not available in the analytics application.")
+
+    requested_table = req.active_table or req.tableName or req.table_name
+    canonical_table = None
+
+    schema_info = get_db_schema_info()
+    available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
+
+    if requested_table:
+        req_clean = requested_table.strip()
+        req_lower = req_clean.lower()
+        if req_lower in ("audit_logs", "sqlite_sequence"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Internal audit log tables cannot be queried as active datasets.",
+                    "requested_table": requested_table,
+                    "available_tables": available_tables
+                }
+            )
+        matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
+        if not matched:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "message": f"Requested table '{requested_table}' does not exist in the database.",
+                    "requested_table": requested_table,
+                    "available_tables": available_tables
+                }
+            )
+        canonical_table = matched
+
+        from backend.app.services.sql_generator import SQLGenerator
+        if not SQLGenerator._sql_references_table(req.sql.strip(), canonical_table):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": f"Executed SQL must reference the active table '{canonical_table}'.",
+                    "requested_table": canonical_table,
+                    "available_tables": available_tables
+                }
+            )
 
     result = execute_safe_query(req.sql.strip())
     if result.get("success"):
@@ -302,6 +423,9 @@ def execute_custom_sql(req: ExecuteSqlRequest):
             error=result.get("error")
         )
         result["insights"] = insights
+    else:
+        result["requested_table"] = canonical_table
+        result["available_tables"] = available_tables
     return result
 
 
@@ -335,8 +459,13 @@ def resolve_clean_table_name(filename: str) -> str:
     if raw_lower in ("sale", "sales"):
         return "sales"
 
-    clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw).strip("_").lower()
-    if not clean or clean[0].isdigit():
+    clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw_lower).strip("_")
+    sql_keywords = {
+        "select", "table", "group", "order", "where", "from", "limit", "join",
+        "index", "values", "check", "default", "primary", "key", "create",
+        "insert", "update", "delete", "drop", "alter", "with", "as", "by", "all"
+    }
+    if not clean or clean[0].isdigit() or clean in sql_keywords:
         clean = f"dataset_{clean}"
     return clean
 
@@ -398,6 +527,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "success": True,
                 "message": f"Successfully imported database with table(s): {', '.join(imported_tables)}.",
                 "table_name": primary_table,
+                "tableName": primary_table,
                 "tables_imported": imported_tables,
                 "schema": updated_schema
             }
@@ -423,6 +553,7 @@ async def upload_dataset(file: UploadFile = File(...)):
                 "success": True,
                 "message": f"Successfully executed SQL script '{filename}'.",
                 "table_name": clean_table_name,
+                "tableName": clean_table_name,
                 "schema": updated_schema
             }
 
@@ -545,6 +676,7 @@ async def upload_dataset(file: UploadFile = File(...)):
             "success": True,
             "message": f"Successfully created database table '{clean_table_name}' with {len(df)} rows and {len(df.columns)} columns.",
             "table_name": clean_table_name,
+            "tableName": clean_table_name,
             "row_count": len(df),
             "columns": list(df.columns),
             "schema": updated_schema
@@ -604,6 +736,8 @@ def query_rag_knowledge(req: RagQueryRequest):
 
 
 @app.get("/api/rag/documents")
+@app.get("/documents")
+@app.get("/api/documents")
 def list_rag_documents():
     """Lists indexed documents and chunk statistics."""
     try:

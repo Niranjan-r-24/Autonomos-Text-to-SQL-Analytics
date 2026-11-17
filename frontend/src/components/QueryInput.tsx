@@ -12,6 +12,8 @@ interface QueryInputProps {
   tables?: string[];
   tableColumns?: string[];
   onSelectTable?: (tbl: string | null) => void;
+  isTableSchemaReady?: boolean;
+  isSchemaLoading?: boolean;
 }
 
 export const QueryInput: React.FC<QueryInputProps> = ({
@@ -23,6 +25,8 @@ export const QueryInput: React.FC<QueryInputProps> = ({
   tables = [],
   tableColumns = [],
   onSelectTable,
+  isTableSchemaReady = true,
+  isSchemaLoading = false,
 }) => {
   // Compute dynamic sample queries tailored to the active table's actual columns
   const samplePrompts = useMemo(() => {
@@ -167,13 +171,19 @@ export const QueryInput: React.FC<QueryInputProps> = ({
           {/* Execute Query Button */}
           <button
             onClick={() => onSubmit()}
-            disabled={isExecuting || !query.trim()}
+            disabled={isExecuting || !query.trim() || !isTableSchemaReady}
+            title={!isTableSchemaReady ? 'Waiting for table schema to load...' : undefined}
             className="bg-[#10B981] hover:bg-[#059669] disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] text-white font-bold px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl flex items-center gap-2 text-xs transition-all cursor-pointer shrink-0 shadow-md shadow-[#10B981]/20 border border-[#10B981]/30 active:scale-95 disabled:shadow-none disabled:border-transparent"
           >
             {isExecuting ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 <span className="hidden sm:inline">Executing...</span>
+              </>
+            ) : isSchemaLoading ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span className="hidden sm:inline">Loading Schema...</span>
               </>
             ) : (
               <>

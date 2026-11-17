@@ -26,6 +26,10 @@ export default function Home() {
   // Data & Execution states
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
   const [activeTable, setActiveTable] = useState<string | null>(null);
+  const activeTableRef = useRef<string | null>(null);
+  activeTableRef.current = activeTable;
+
+  const [isSchemaLoading, setIsSchemaLoading] = useState(false);
   const [availableDocuments, setAvailableDocuments] = useState<any[]>([]);
   const [pipelineResult, setPipelineResult] = useState<any>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -39,9 +43,16 @@ export default function Home() {
     fetchDocuments();
   }, []);
 
-  const fetchSchema = async () => {
+  const fetchSchema = async (selectedTable?: string | null) => {
+    setIsSchemaLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/api/schema`);
+      const params: Record<string, string> = {};
+      const targetTable = selectedTable !== undefined ? selectedTable : activeTableRef.current;
+      if (targetTable) {
+        params.active_table = targetTable;
+        params.tableName = targetTable;
+      }
+      const res = await axios.get(`${API_BASE}/api/schema`, { params });
       if (res.data && res.data.schema) {
         const filtered: Record<string, any> = {};
         for (const [k, v] of Object.entries(res.data.schema)) {
@@ -51,19 +62,31 @@ export default function Home() {
         }
         setSchemaData(filtered);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load schema:', err);
+      const data = err.response?.data;
+      const msg = (data && (data.detail?.message || data.detail || data.message)) || 'Failed to load schema.';
+      setErrorMessage(msg);
+    } finally {
+      setIsSchemaLoading(false);
     }
   };
 
   const fetchDocuments = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/api/rag/documents`);
+      const res = await axios.get(`${API_BASE}/api/documents`);
       if (res.data && res.data.documents) {
         setAvailableDocuments(res.data.documents);
       }
     } catch (err) {
-      console.error('Failed to load available documents:', err);
+      try {
+        const res2 = await axios.get(`${API_BASE}/api/rag/documents`);
+        if (res2.data && res2.data.documents) {
+          setAvailableDocuments(res2.data.documents);
+        }
+      } catch (err2) {
+        console.warn('Documents feature unavailable:', err2);
+      }
     }
   };
 
@@ -80,6 +103,9 @@ export default function Home() {
       if (res.data && res.data.schema) {
         setSchemaData(res.data.schema);
         setActiveTable(null);
+        activeTableRef.current = null;
+        setPipelineResult(null);
+        setErrorMessage(null);
       }
     } catch (err) {
       console.error('Failed to re-seed database:', err);
@@ -88,11 +114,17 @@ export default function Home() {
 
   const handleUploadSuccess = (tableName: string, updatedSchema: Record<string, any>) => {
     fetchDocuments();
-    if (tableName !== 'knowledge_base' && !['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
-      setActiveTable(tableName);
-    } else {
-      setActiveTable(null);
-    }
+    setPipelineResult(null);
+    setErrorMessage(null);
+    setQuery('');
+
+    const canonicalName = (tableName && tableName !== 'knowledge_base' && !['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase()))
+      ? tableName
+      : null;
+
+    setActiveTable(canonicalName);
+    activeTableRef.current = canonicalName;
+
     if (updatedSchema && Object.keys(updatedSchema).length > 0) {
       const filtered: Record<string, any> = {};
       for (const [k, v] of Object.entries(updatedSchema)) {
@@ -102,76 +134,80 @@ export default function Home() {
       }
       setSchemaData(filtered);
     }
-    // Uploading only registers a dataset or indexes a document.  Do not issue
-    // a generic SQL request here: document uploads belong to RAG, and a
-    // generic request can be routed to an unrelated table before the user has
-    // asked a question.
-    setQuery('');
-    setPipelineResult(null);
   };
 
-  const handleSelectTable = (tableName: string | null) => {
+  const handleSelectTable = async (tableName: string | null) => {
+    setPipelineResult(null);
+    setErrorMessage(null);
+    setQuery('');
+
     if (tableName && ['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
       setActiveTable(null);
+      activeTableRef.current = null;
       return;
     }
     setActiveTable(tableName);
+    activeTableRef.current = tableName;
     if (tableName) {
-      const targetQuery = `Show first 10 rows from ${tableName}`;
-      setQuery(targetQuery);
-      handleRunQuery(targetQuery, tableName);
+      await fetchSchema(tableName);
     }
   };
+
+  const isTableSchemaReady = !activeTable || (Boolean(schemaData[activeTable]?.columns?.length) && !isSchemaLoading);
 
   const handleRunQuery = async (overrideQuery?: string, overrideTable?: string) => {
     const targetQuery = overrideQuery || query;
     if (!targetQuery.trim()) return;
     if (isExecuting && !overrideQuery) return;
 
+    const currentTable = overrideTable !== undefined ? (overrideTable || null) : activeTableRef.current;
+    if (currentTable && (!schemaData[currentTable] || isSchemaLoading)) {
+      return;
+    }
+
     const currentRequestId = ++activeRequestIdRef.current;
     setIsExecuting(true);
     setErrorMessage(null);
     setPipelineResult(null);
-
-    let effectiveTable = overrideTable !== undefined ? (overrideTable || undefined) : (activeTable || undefined);
-    if (effectiveTable && ['audit_logs', 'sqlite_sequence'].includes(effectiveTable.toLowerCase())) {
-      effectiveTable = undefined;
-      setActiveTable(null);
-    } else if (effectiveTable && !overrideTable) {
-      const qLower = targetQuery.toLowerCase();
-      // If activeTable is locked to a table, but user typed a question mentioning another table or count query, release lock
-      const otherTables = Object.keys(schemaData).filter(
-        (t) => t.toLowerCase() !== effectiveTable?.toLowerCase() && !['audit_logs', 'sqlite_sequence'].includes(t.toLowerCase())
-      );
-      const mentionsOther = otherTables.some(
-        (t) => qLower.includes(t.toLowerCase()) || qLower.includes(t.toLowerCase().replace(/s$/, ''))
-      );
-      if (mentionsOther) {
-        effectiveTable = undefined;
-      }
-    }
 
     try {
       const res = await axios.post(`${API_BASE}/api/query`, {
         query: targetQuery.trim(),
         api_key: apiKey,
         provider: provider,
-        active_table: effectiveTable,
+        active_table: currentTable || undefined,
+        tableName: currentTable || undefined,
+        table_name: currentTable || undefined,
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;
 
       if (res.data) {
-        setPipelineResult({ ...res.data, _reqId: currentRequestId });
         if (!res.data.success && res.data.error) {
           setErrorMessage(res.data.error);
+          setPipelineResult(null);
         } else {
+          setPipelineResult({ ...res.data, _reqId: currentRequestId });
           setErrorMessage(null);
         }
       }
     } catch (err: any) {
       if (currentRequestId !== activeRequestIdRef.current) return;
-      const msg = err.response?.data?.detail || err.message || 'Query execution failed.';
+      const data = err.response?.data;
+      let msg = 'Query execution failed.';
+      if (data) {
+        if (typeof data.detail === 'object' && data.detail !== null) {
+          msg = data.detail.message || JSON.stringify(data.detail);
+        } else if (typeof data.detail === 'string') {
+          msg = data.detail;
+        } else if (data.message) {
+          msg = data.message;
+        } else if (data.error) {
+          msg = data.error;
+        }
+      } else if (err.message) {
+        msg = err.message;
+      }
       setErrorMessage(msg);
       setPipelineResult(null);
     } finally {
@@ -188,12 +224,17 @@ export default function Home() {
     setIsExecuting(true);
     setErrorMessage(null);
 
+    const currentTable = activeTableRef.current;
+
     try {
       const res = await axios.post(`${API_BASE}/api/execute-sql`, {
         sql: customSql.trim(),
         question: query || 'Custom SQL Execution',
         api_key: apiKey,
         provider: provider,
+        active_table: currentTable || undefined,
+        tableName: currentTable || undefined,
+        table_name: currentTable || undefined,
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;
@@ -212,13 +253,28 @@ export default function Home() {
             insights: res.data.insights || prev?.insights,
             visualization: res.data.visualization || prev?.visualization,
           }));
+          setErrorMessage(null);
         } else {
           setErrorMessage(res.data.error || 'Execution failed.');
         }
       }
     } catch (err: any) {
       if (currentRequestId !== activeRequestIdRef.current) return;
-      const msg = err.response?.data?.detail || err.message || 'Execution failed.';
+      const data = err.response?.data;
+      let msg = 'Execution failed.';
+      if (data) {
+        if (typeof data.detail === 'object' && data.detail !== null) {
+          msg = data.detail.message || JSON.stringify(data.detail);
+        } else if (typeof data.detail === 'string') {
+          msg = data.detail;
+        } else if (data.message) {
+          msg = data.message;
+        } else if (data.error) {
+          msg = data.error;
+        }
+      } else if (err.message) {
+        msg = err.message;
+      }
       setErrorMessage(msg);
     } finally {
       if (currentRequestId === activeRequestIdRef.current) {
@@ -259,6 +315,8 @@ export default function Home() {
             tables={tableList}
             tableColumns={activeTable && schemaData[activeTable]?.columns ? schemaData[activeTable].columns.map((c: any) => c.name) : []}
             onSelectTable={handleSelectTable}
+            isTableSchemaReady={isTableSchemaReady}
+            isSchemaLoading={isSchemaLoading}
           />
         </section>
 

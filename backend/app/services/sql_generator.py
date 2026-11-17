@@ -102,15 +102,27 @@ class SQLGenerator:
             table: meta for table, meta in schema_info.items() if table.lower() != "audit_logs"
         }
 
-        # Sanitize active_table: Never allow audit_logs lock for non-audit questions
+        # Determine permitted tables and schema for generation
+        permitted_tables: Optional[set] = None
         if active_table:
             atl = active_table.lower()
-            if atl == "audit_logs" and not is_audit_question:
+            if atl in ("audit_logs", "sqlite_sequence") and not is_audit_question:
                 active_table = None
-            elif generation_schema and atl in generation_schema:
-                other_tables = [t for t in generation_schema.keys() if t.lower() != atl and t.lower() not in ("sqlite_sequence",)]
-                if any(t.lower() in user_question.lower() or t.lower().rstrip("s") in user_question.lower() for t in other_tables):
-                    active_table = None
+            elif atl in [t.lower() for t in schema_info.keys()]:
+                matched_table = next(t for t in schema_info.keys() if t.lower() == atl)
+                active_table = matched_table
+                table_meta = schema_info[matched_table]
+                permitted_tables = {matched_table}
+                for rel in table_meta.get("relationships", []):
+                    t_to = rel.get("to_table")
+                    if t_to and t_to in schema_info and t_to.lower() not in ("audit_logs", "sqlite_sequence"):
+                        permitted_tables.add(t_to)
+                    t_from = rel.get("from_table")
+                    if t_from and t_from in schema_info and t_from.lower() not in ("audit_logs", "sqlite_sequence"):
+                        permitted_tables.add(t_from)
+                generation_schema = {t: schema_info[t] for t in permitted_tables}
+            else:
+                active_table = None
 
         # 1. Attempt LLM generation if API key is present
         if self.api_key and self.provider != "fallback":
@@ -118,16 +130,31 @@ class SQLGenerator:
                 llm_sql, llm_explanation = self._generate_with_llm(user_question, generation_schema, active_table=active_table)
                 if llm_sql:
                     cleaned_sql = self._clean_sql(llm_sql, generation_schema, user_question)
-                    # A model must not substitute a different dataset for a
-                    # table the user explicitly named.  This uses the current
-                    # inspected schema rather than a list of application tables.
-                    mentioned_tables = self._explicit_schema_tables(user_question, generation_schema)
-                    if cleaned_sql and all(self._sql_references_table(cleaned_sql, table) for table in mentioned_tables):
+                    is_valid_sql = bool(cleaned_sql)
+                    if is_valid_sql and active_table and permitted_tables:
+                        # SQL must reference active_table
+                        if not self._sql_references_table(cleaned_sql, active_table):
+                            logger.warning("Rejected LLM SQL because it does not reference active table '%s': %s", active_table, cleaned_sql)
+                            is_valid_sql = False
+                        else:
+                            # Verify no unpermitted tables are queried
+                            ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", cleaned_sql, re.IGNORECASE)
+                            for rt in ref_tables:
+                                if rt.lower() not in [pt.lower() for pt in permitted_tables]:
+                                    logger.warning("Rejected LLM SQL referencing unpermitted table '%s' (active: %s)", rt, active_table)
+                                    is_valid_sql = False
+                                    break
+                    elif is_valid_sql:
+                        mentioned_tables = self._explicit_schema_tables(user_question, generation_schema)
+                        if not all(self._sql_references_table(cleaned_sql, table) for table in mentioned_tables):
+                            is_valid_sql = False
+
+                    if is_valid_sql:
                         provider_label = "Gemini 1.5 Flash" if "gemini" in self.provider else "OpenAI GPT-4o"
                         logger.info("Successfully generated SQL via %s: %s", provider_label, cleaned_sql)
                         return cleaned_sql, llm_explanation, provider_label
-                    if mentioned_tables:
-                        logger.warning("Rejected LLM SQL because it omitted explicitly requested schema table(s): %s", mentioned_tables)
+                    else:
+                        logger.warning("LLM SQL rejected by schema/active-table validator, falling back to deterministic engine.")
             except Exception as e:
                 logger.warning("LLM generation failed, falling back to deterministic engine: %s", str(e))
 
@@ -377,6 +404,13 @@ JSON Response Format:
         }
 
         target_table_name = None
+        canonical_tables = {"sales", "products", "customers", "employees", "audit_logs", "sqlite_sequence", "order_items", "orders", "payments", "support_tickets"}
+
+        if active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
+            target_table_name = active_table
+            # For custom uploaded datasets, route directly to dynamic synthesis for that table
+            if active_table.lower() not in canonical_tables:
+                return self._synthesize_dynamic_sql(user_question, schema_info, target_table=active_table)
 
         business_tables_syns = {k: v for k, v in table_synonyms.items() if k != "audit_logs"}
         for tbl, syns in business_tables_syns.items():

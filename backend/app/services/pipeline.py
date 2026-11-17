@@ -215,13 +215,10 @@ class TextToSqlPipeline:
             is_audit_q = any(re.search(rf"\b{re.escape(k)}\b", q_lower) for k in [
                 "audit", "audit_log", "audit_logs", "security log", "security audit", "failed login", "failed logins"
             ])
-            if atl == "audit_logs" and not is_audit_q:
+            if atl in ("audit_logs", "sqlite_sequence") and not is_audit_q:
                 active_table = None
-            elif atl in schema_info:
-                # If question explicitly mentions another table, unbind active_table
-                other_tables = [t for t in schema_info.keys() if t.lower() != atl and t.lower() not in ("audit_logs", "sqlite_sequence")]
-                if any(t.lower() in q_lower or t.lower().rstrip("s") in q_lower for t in other_tables):
-                    active_table = None
+            elif atl not in [t.lower() for t in schema_info.keys()]:
+                active_table = None
 
         # Step 2: SQL Generator Agent (or Direct SQL Handler)
         t_gen = time.time()
@@ -273,7 +270,7 @@ class TextToSqlPipeline:
         ])
         if "audit_logs" in sql_query.lower() and not is_explicit_audit:
             logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for business tables.", user_question)
-            sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info, target_table=None)
+            sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info, target_table=active_table)
             generated_by = "Deterministic Analytics Engine"
             if "audit_logs" in sql_query.lower():
                 sql_query = ""
