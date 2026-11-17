@@ -20,7 +20,7 @@
     "file_type": ".txt",
     "size_bytes": 97,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T16:03:50.283131+00:00",
+    "indexed_at": "2026-11-17T08:54:02.746809+00:00",
     "status": "ready"
   },
   "travel_policy.docx": {
@@ -28,7 +28,7 @@
     "file_type": ".docx",
     "size_bytes": 35375,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T16:03:51.075688+00:00",
+    "indexed_at": "2026-11-17T08:54:03.539757+00:00",
     "status": "ready"
   },
   "retention_policy.pdf": {
@@ -36,7 +36,7 @@
     "file_type": ".pdf",
     "size_bytes": 647,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T16:03:53.416764+00:00",
+    "indexed_at": "2026-11-17T08:54:05.321412+00:00",
     "status": "ready"
   },
   "test_architecture_guide.txt": {
@@ -44,7 +44,7 @@
     "file_type": ".txt",
     "size_bytes": 902,
     "chunks_count": 2,
-    "indexed_at": "2026-11-16T14:50:00.382355+00:00",
+    "indexed_at": "2026-11-17T08:53:37.751053+00:00",
     "status": "ready"
   },
   "operations_manual.txt": {
@@ -52,7 +52,7 @@
     "file_type": ".txt",
     "size_bytes": 86,
     "chunks_count": 1,
-    "indexed_at": "2026-11-16T14:50:07.699363+00:00",
+    "indexed_at": "2026-11-17T08:53:45.427281+00:00",
     "status": "ready"
   },
   "corporate_travel_policy.txt": {
@@ -68,7 +68,7 @@
     "file_type": ".txt",
     "size_bytes": 133,
     "chunks_count": 1,
-    "indexed_at": "2026-11-17T05:59:58.136057+00:00",
+    "indexed_at": "2026-11-17T08:54:28.558591+00:00",
     "status": "ready"
   }
 }
