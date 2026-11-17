@@ -5,9 +5,7 @@ const nextConfig = {
     let backendUrl =
       process.env.NEXT_PUBLIC_API_URL ||
       process.env.BACKEND_URL ||
-      (process.env.NODE_ENV === 'production'
-        ? 'https://autonomos-text2sql-api.onrender.com'
-        : (process.env.API_HOSTPORT ? `http://${process.env.API_HOSTPORT}` : 'http://127.0.0.1:8000'));
+      (process.env.API_HOSTPORT ? `http://${process.env.API_HOSTPORT}` : 'https://autonomos-text2sql-api.onrender.com');
 
     if (backendUrl) {
       backendUrl = backendUrl.replace(/\/+$/, '');

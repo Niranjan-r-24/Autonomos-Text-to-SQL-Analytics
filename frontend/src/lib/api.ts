@@ -5,26 +5,26 @@ const getApiBase = () => {
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
   }
-  if (typeof window !== 'undefined') {
-    // If running in browser and NOT on local machine, connect directly to production API
-    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-      return 'https://autonomos-text2sql-api.onrender.com';
-    }
-  }
-  return '';
+  // Connect directly to the live production API so all features work reliably
+  return 'https://autonomos-text2sql-api.onrender.com';
 };
 
 const client = axios.create({
   baseURL: getApiBase(),
-  timeout: 30000,
+  timeout: 45000,
 });
 
 export function formatErrorMessage(err: any, fallback: string = 'An unexpected error occurred.'): string {
   if (!err) return fallback;
   if (typeof err === 'string') return err;
 
-  // Extract FastAPI or Axios detail
-  const detail = err?.response?.data?.detail ?? err?.detail;
+  // Extract FastAPI or Axios detail or error
+  const detail =
+    err?.response?.data?.detail ??
+    err?.response?.data?.error ??
+    err?.detail ??
+    err?.error;
+
   if (detail) {
     if (typeof detail === 'string') return detail;
     if (Array.isArray(detail)) {
@@ -35,6 +35,10 @@ export function formatErrorMessage(err: any, fallback: string = 'An unexpected e
     if (typeof detail === 'object') {
       return detail.msg || detail.message || JSON.stringify(detail);
     }
+  }
+
+  if (err?.response?.status) {
+    return `Server responded with HTTP ${err.response.status} (${err.response.statusText || 'Error'}).`;
   }
 
   if (err?.message && typeof err.message === 'string') {

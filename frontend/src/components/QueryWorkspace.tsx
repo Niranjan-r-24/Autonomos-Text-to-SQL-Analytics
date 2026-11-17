@@ -191,7 +191,7 @@ export function QueryWorkspace({
                 <p className="text-xs text-red-300/80 mt-1">
                   {result.error
                     ? String(result.error)
-                    : 'The database reported an execution issue. Please verify table references or click "Cancel Edit" / re-run.'}
+                    : 'The backend encountered an issue executing this query. Please check that the server is online or try another question.'}
                 </p>
               </div>
             </div>
