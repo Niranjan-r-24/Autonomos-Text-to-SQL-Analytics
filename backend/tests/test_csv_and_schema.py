@@ -78,3 +78,36 @@ def test_empty_results_handling(client):
     assert data["row_count"] == 0
     assert len(data["rows"]) == 0
     assert "0 results" in data["answer"].lower() or "0" in data["answer"]
+
+def test_json_and_tsv_dataset_upload(client):
+    """Verify JSON and TSV uploads create database tables and appear in schema explorer."""
+    # 1. JSON dataset upload
+    json_bytes = b'[{"item_id": 1, "item_name": "Pro Keyboard", "price": 149.99}, {"item_id": 2, "item_name": "Ergo Mouse", "price": 79.50}]'
+    res_json = client.post(
+        "/api/upload",
+        files={"file": ("inventory.json", json_bytes, "application/json")}
+    )
+    assert res_json.status_code == 200
+    j_data = res_json.json()
+    assert j_data["status"] == "success"
+    assert j_data["type"] == "dataset"
+    assert "inventory" in j_data["active_tables"]
+    assert "inventory" in j_data["schema"]["table_names"]
+
+    # 2. TSV dataset upload
+    tsv_bytes = b"country_code\tcountry_name\nUS\tUnited States\nDE\tGermany\nFR\tFrance\n"
+    res_tsv = client.post(
+        "/api/upload",
+        files={"file": ("country_codes.tsv", tsv_bytes, "text/tab-separated-values")}
+    )
+    assert res_tsv.status_code == 200
+    t_data = res_tsv.json()
+    assert t_data["status"] == "success"
+    assert "country_codes" in t_data["active_tables"]
+
+    # Verify schema explorer contains both new tables
+    schema_res = client.get("/api/schema?refresh=true")
+    tables = schema_res.json()["table_names"]
+    assert "inventory" in tables
+    assert "country_codes" in tables
+

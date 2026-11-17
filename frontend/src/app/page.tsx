@@ -138,8 +138,15 @@ export default function Home() {
 
           {activeTab === 'datasets' && (
             <DatasetManager
-              onDatasetUploaded={() => loadSchema(true)}
+              onDatasetUploaded={(newSchema?: SchemaInfo) => {
+                if (newSchema && newSchema.tables) {
+                  setSchema(newSchema);
+                } else {
+                  loadSchema(true);
+                }
+              }}
               onNavigateToQuery={handleNavigateToQuery}
+              onNavigateToSchema={() => setActiveTab('schema')}
             />
           )}
 

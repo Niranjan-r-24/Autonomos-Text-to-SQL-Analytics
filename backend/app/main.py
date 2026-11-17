@@ -159,38 +159,51 @@ async def upload_csv(
     """
     filename = (file.filename or "uploaded_file").lower()
     content = await file.read()
+    base_name = file.filename.rsplit(".", 1)[0] if "." in file.filename else file.filename
+    target_table = table_name or base_name
 
-    # Route document files to RAG store
-    if any(filename.endswith(ext) for ext in [".md", ".json", ".doc", ".docx", ".pdf"]):
-        try:
-            text_content = content.decode("utf-8", errors="replace")
-        except Exception as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File decoding failed: {str(e)}")
-        doc_id = f"doc_{file.filename.split('.')[0]}_{int(time.time())}"
-        res = doc_store.add_document(doc_id, file.filename, text_content)
-        return {
-            "status": "success",
-            "type": "document",
-            "message": f"Document '{file.filename}' indexed for RAG retrieval.",
-            "data": res
-        }
-
-    # Tabular dataset upload (CSV)
-    target_table = table_name or file.filename.rsplit(".", 1)[0]
-
+    # 1. Attempt tabular dataset ingestion first
     try:
-        res = load_csv_to_table(content, target_table, replace_existing=True)
+        res = load_csv_to_table(content, target_table, filename=filename, replace_existing=True)
+        invalidate_schema_cache()
         fresh_schema = get_database_schema(use_cache=False)
         return {
             "status": "success",
             "type": "dataset",
             "message": f"Dataset uploaded and table '{res['table_name']}' created successfully.",
             "dataset": res,
-            "active_tables": fresh_schema.get("table_names", [])
+            "table_name": res["table_name"],
+            "row_count": res["row_count"],
+            "columns": res["columns"],
+            "active_tables": fresh_schema.get("table_names", []),
+            "schema": {
+                "status": "success",
+                "tables": fresh_schema.get("tables", {}),
+                "table_names": fresh_schema.get("table_names", []),
+                "relationships": fresh_schema.get("relationships", [])
+            }
         }
-    except Exception as e:
-        logger.error("Upload error: %s", str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as parse_err:
+        # 2. If tabular parsing fails and it's a document format (PDF, DOCX, MD), route to RAG
+        if any(filename.endswith(ext) for ext in [".pdf", ".doc", ".docx", ".md"]):
+            try:
+                text_content = content.decode("utf-8", errors="replace")
+                doc_id = f"doc_{base_name}_{int(time.time())}"
+                rag_res = doc_store.add_document(doc_id, file.filename, text_content)
+                return {
+                    "status": "success",
+                    "type": "document",
+                    "message": f"Document '{file.filename}' indexed in Document Intelligence (RAG). Note: Documents are queryable in the RAG Workspace, not as tabular database tables.",
+                    "data": rag_res
+                }
+            except Exception as doc_err:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File processing failed: {str(doc_err)}")
+        
+        logger.error("Dataset upload error: %s", str(parse_err))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to ingest dataset '{file.filename}': {str(parse_err)}"
+        )
 
 # ----------------- Text-to-SQL Analytics Pipeline -----------------
 

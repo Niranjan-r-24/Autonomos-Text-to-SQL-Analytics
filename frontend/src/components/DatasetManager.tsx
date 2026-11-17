@@ -5,11 +5,12 @@ import { UploadCloud, CheckCircle2, AlertTriangle, FileSpreadsheet, ArrowRight, 
 import { uploadDatasetCsv, formatErrorMessage } from '@/lib/api';
 
 interface DatasetManagerProps {
-  onDatasetUploaded: () => void;
+  onDatasetUploaded: (schema?: any) => void;
   onNavigateToQuery: (query: string) => void;
+  onNavigateToSchema?: () => void;
 }
 
-export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: DatasetManagerProps) {
+export function DatasetManager({ onDatasetUploaded, onNavigateToQuery, onNavigateToSchema }: DatasetManagerProps) {
   const [file, setFile] = useState<File | null>(null);
   const [tableName, setTableName] = useState('');
   const [uploading, setUploading] = useState(false);
@@ -41,7 +42,7 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
       setSuccessInfo(res);
       setFile(null);
       setTableName('');
-      onDatasetUploaded();
+      onDatasetUploaded(res.schema);
     } catch (err: any) {
       setErrorMessage(formatErrorMessage(err, 'Dataset upload failed.'));
     } finally {
@@ -121,9 +122,12 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
             <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
             <div>
               <p className="text-sm font-semibold text-emerald-300">{successInfo.message}</p>
-              {successInfo.dataset?.row_count !== undefined && (
+              {(successInfo.row_count !== undefined || successInfo.dataset?.row_count !== undefined) && (
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Total Rows Ingested: <span className="font-mono text-slate-200">{successInfo.dataset.row_count}</span>
+                  Total Rows Ingested:{' '}
+                  <span className="font-mono text-slate-200">
+                    {successInfo.row_count ?? successInfo.dataset?.row_count}
+                  </span>
                 </p>
               )}
               {successInfo.data?.total_chunks !== undefined && (
@@ -135,11 +139,11 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
           </div>
 
           {/* Inferred Columns for Datasets */}
-          {successInfo.dataset?.columns && (
+          {(successInfo.columns || successInfo.dataset?.columns) && (
             <div>
               <h4 className="text-xs font-semibold uppercase text-slate-400 mb-2">Inferred Table Schema</h4>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {successInfo.dataset.columns.map((col: any) => (
+                {(successInfo.columns || successInfo.dataset?.columns).map((col: any) => (
                   <div
                     key={col.name}
                     className="p-2 bg-slate-950 border border-slate-800 rounded font-mono text-xs flex justify-between items-center"
@@ -152,14 +156,30 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
             </div>
           )}
 
-          {successInfo.dataset?.table_name && (
-            <button
-              onClick={() => onNavigateToQuery(`Show all ${successInfo.dataset.table_name}`)}
-              className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg border border-emerald-500/20 transition-colors"
-            >
-              <span>Query New Dataset in Workspace</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+          {(successInfo.table_name || successInfo.dataset?.table_name) && (
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onNavigateToSchema) {
+                    onNavigateToSchema();
+                  } else {
+                    onNavigateToQuery(`Show all ${successInfo.table_name || successInfo.dataset?.table_name}`);
+                  }
+                }}
+                className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg border border-emerald-500/20 transition-colors"
+              >
+                <span>View Table in Schema Explorer</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigateToQuery(`Show all ${successInfo.table_name || successInfo.dataset?.table_name}`)}
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 transition-colors"
+              >
+                <span>Query New Dataset in Workspace</span>
+              </button>
+            </div>
           )}
         </div>
       )}
