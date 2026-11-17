@@ -110,36 +110,50 @@ def get_schema(refresh: bool = False):
 
 # ----------------- CSV Upload & Dataset Management -----------------
 
+@app.post("/api/upload")
 @app.post("/api/upload-csv")
 async def upload_csv(
     file: UploadFile = File(...),
     table_name: Optional[str] = Form(None)
 ):
     """
-    Upload a CSV file, dynamically infer types, create a database table,
-    and refresh the schema cache immediately.
+    Universal dataset and document ingestion endpoint.
+    - If .csv / .tsv / .txt (tabular): creates a database table with inferred types and refreshes schema.
+    - If .md / .pdf / .docx / .json: indexes document into independent RAG store.
     """
-    if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only .csv files are supported for dataset upload."
-        )
-
+    filename = (file.filename or "uploaded_file").lower()
     content = await file.read()
+
+    # Route document files to RAG store
+    if any(filename.endswith(ext) for ext in [".md", ".json", ".doc", ".docx", ".pdf"]):
+        try:
+            text_content = content.decode("utf-8", errors="replace")
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File decoding failed: {str(e)}")
+        doc_id = f"doc_{file.filename.split('.')[0]}_{int(time.time())}"
+        res = doc_store.add_document(doc_id, file.filename, text_content)
+        return {
+            "status": "success",
+            "type": "document",
+            "message": f"Document '{file.filename}' indexed for RAG retrieval.",
+            "data": res
+        }
+
+    # Tabular dataset upload (CSV)
     target_table = table_name or file.filename.rsplit(".", 1)[0]
 
     try:
         res = load_csv_to_table(content, target_table, replace_existing=True)
-        # Fetch fresh schema
         fresh_schema = get_database_schema(use_cache=False)
         return {
             "status": "success",
+            "type": "dataset",
             "message": f"Dataset uploaded and table '{res['table_name']}' created successfully.",
             "dataset": res,
             "active_tables": fresh_schema.get("table_names", [])
         }
     except Exception as e:
-        logger.error("CSV upload error: %s", str(e))
+        logger.error("Upload error: %s", str(e))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 # ----------------- Text-to-SQL Analytics Pipeline -----------------
@@ -346,6 +360,7 @@ def clear_history():
 # ----------------- RAG Document Intelligence Endpoints -----------------
 
 @app.post("/api/rag/upload")
+@app.post("/api/upload-document")
 async def upload_rag_document(file: UploadFile = File(...)):
     """Upload document for independent RAG retrieval."""
     content = await file.read()

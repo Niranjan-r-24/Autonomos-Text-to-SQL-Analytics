@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { UploadCloud, CheckCircle2, AlertTriangle, FileSpreadsheet, ArrowRight } from 'lucide-react';
+import { UploadCloud, CheckCircle2, AlertTriangle, FileSpreadsheet, ArrowRight, FileText } from 'lucide-react';
 import { uploadDatasetCsv } from '@/lib/api';
 
 interface DatasetManagerProps {
@@ -54,35 +54,35 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
       <div>
         <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
           <UploadCloud className="w-4 h-4 text-emerald-400" />
-          Dataset Management & Ingestion
+          Dataset & Document Ingestion
         </h2>
         <p className="text-xs text-slate-400">
-          Upload custom CSV datasets. Tables are created dynamically with intelligent schema type inference.
+          Upload CSV datasets for SQL analytics or text documents for semantic RAG intelligence.
         </p>
       </div>
 
       {/* Upload Box Form */}
       <form onSubmit={handleUpload} className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
         <div>
-          <label className="block text-xs font-medium text-slate-300 mb-2">Select CSV File</label>
+          <label className="block text-xs font-medium text-slate-300 mb-2">Select Dataset or Document</label>
           <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500/50 rounded-lg p-6 text-center cursor-pointer transition-colors relative bg-slate-950/40">
             <input
               type="file"
-              accept=".csv"
+              accept=".csv,.tsv,.txt,.json,.md,.docx,.pdf"
               onChange={handleFileChange}
               className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
             />
             <FileSpreadsheet className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
             <p className="text-sm font-medium text-slate-200">
-              {file ? file.name : 'Click or drag a .csv file to upload'}
+              {file ? file.name : 'Click or drag a file to upload'}
             </p>
-            <p className="text-xs text-slate-500 mt-1">UTF-8 or standard CSV formats supported</p>
+            <p className="text-xs text-slate-500 mt-1">.CSV, .TSV, .TXT, .MD, .JSON, .DOCX, .PDF supported</p>
           </div>
         </div>
 
         <div>
           <label className="block text-xs font-medium text-slate-300 mb-1.5">
-            Target Database Table Name (Optional)
+            Target Database Table Name (Optional, for tabular data)
           </label>
           <input
             type="text"
@@ -99,7 +99,7 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
           className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-medium text-sm py-2.5 rounded-lg transition-colors"
         >
           <UploadCloud className={`w-4 h-4 ${uploading ? 'animate-bounce' : ''}`} />
-          <span>{uploading ? 'Ingesting Dataset & Building Schema...' : 'Upload & Create Table'}</span>
+          <span>{uploading ? 'Ingesting File & Processing Schema...' : 'Upload & Ingest'}</span>
         </button>
       </form>
 
@@ -121,35 +121,46 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
             <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
             <div>
               <p className="text-sm font-semibold text-emerald-300">{successInfo.message}</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Total Rows Ingested: <span className="font-mono text-slate-200">{successInfo.dataset.row_count}</span>
-              </p>
+              {successInfo.dataset?.row_count !== undefined && (
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Total Rows Ingested: <span className="font-mono text-slate-200">{successInfo.dataset.row_count}</span>
+                </p>
+              )}
+              {successInfo.data?.total_chunks !== undefined && (
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Total Passages Indexed: <span className="font-mono text-slate-200">{successInfo.data.total_chunks}</span>
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Inferred Columns */}
-          <div>
-            <h4 className="text-xs font-semibold uppercase text-slate-400 mb-2">Inferred Table Schema</h4>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {successInfo.dataset.columns.map((col: any) => (
-                <div
-                  key={col.name}
-                  className="p-2 bg-slate-950 border border-slate-800 rounded font-mono text-xs flex justify-between items-center"
-                >
-                  <span className="text-slate-300">{col.name}</span>
-                  <span className="text-[10px] text-emerald-400 uppercase">{col.type}</span>
-                </div>
-              ))}
+          {/* Inferred Columns for Datasets */}
+          {successInfo.dataset?.columns && (
+            <div>
+              <h4 className="text-xs font-semibold uppercase text-slate-400 mb-2">Inferred Table Schema</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {successInfo.dataset.columns.map((col: any) => (
+                  <div
+                    key={col.name}
+                    className="p-2 bg-slate-950 border border-slate-800 rounded font-mono text-xs flex justify-between items-center"
+                  >
+                    <span className="text-slate-300">{col.name}</span>
+                    <span className="text-[10px] text-emerald-400 uppercase">{col.type}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <button
-            onClick={() => onNavigateToQuery(`Show all ${successInfo.dataset.table_name}`)}
-            className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg border border-emerald-500/20 transition-colors"
-          >
-            <span>Query New Dataset in Workspace</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
+          {successInfo.dataset?.table_name && (
+            <button
+              onClick={() => onNavigateToQuery(`Show all ${successInfo.dataset.table_name}`)}
+              className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg border border-emerald-500/20 transition-colors"
+            >
+              <span>Query New Dataset in Workspace</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       )}
     </div>

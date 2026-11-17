@@ -5,6 +5,11 @@ const getApiBase = () => {
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
   }
+  if (typeof window !== 'undefined') {
+    if (window.location.hostname.includes('render.com')) {
+      return 'https://autonomos-text2sql-api.onrender.com';
+    }
+  }
   return '';
 };
 
@@ -60,10 +65,18 @@ export async function uploadDatasetCsv(file: File, tableName?: string) {
   if (tableName) {
     formData.append('table_name', tableName);
   }
-  const res = await client.post('/api/upload-csv', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return res.data;
+  
+  // Try /api/upload first (universal), fallback to /api/upload-csv
+  try {
+    const res = await client.post('/api/upload', formData);
+    return res.data;
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      const resFallback = await client.post('/api/upload-csv', formData);
+      return resFallback.data;
+    }
+    throw err;
+  }
 }
 
 export async function fetchQueryHistory(limit: number = 50): Promise<HistoryItem[]> {
@@ -87,10 +100,18 @@ export async function clearQueryHistory(): Promise<void> {
 export async function uploadRagDocument(file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await client.post('/api/rag/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  });
-  return res.data;
+
+  // Try /api/rag/upload first, fallback to /api/upload
+  try {
+    const res = await client.post('/api/rag/upload', formData);
+    return res.data;
+  } catch (err: any) {
+    if (err?.response?.status === 404) {
+      const resFallback = await client.post('/api/upload', formData);
+      return resFallback.data;
+    }
+    throw err;
+  }
 }
 
 export async function queryRag(query: string): Promise<RagResult> {
