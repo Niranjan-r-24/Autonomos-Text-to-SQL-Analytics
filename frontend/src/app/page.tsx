@@ -75,10 +75,14 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedProvider = localStorage.getItem('autonomos_provider');
-      const savedKey = localStorage.getItem('autonomos_api_key');
-      if (savedProvider) setProvider(savedProvider);
-      if (savedKey) setApiKey(savedKey);
+      try {
+        const savedProvider = localStorage.getItem('autonomos_provider');
+        const savedKey = localStorage.getItem('autonomos_api_key');
+        if (savedProvider) setProvider(savedProvider);
+        if (savedKey) setApiKey(savedKey);
+      } catch (e) {
+        console.warn('localStorage read error:', e);
+      }
     }
     loadSchema(false);
   }, []);

@@ -1,16 +1,39 @@
 import axios from 'axios';
 import { SchemaInfo, QueryResult, HistoryItem, RagResult } from '@/types';
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
+const getApiBase = () => {
+  if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
+  }
+  return '';
+};
 
 const client = axios.create({
-  baseURL: API_BASE,
+  baseURL: getApiBase(),
   timeout: 30000,
 });
 
 export async function fetchSchema(refresh: boolean = false): Promise<SchemaInfo> {
-  const res = await client.get<SchemaInfo>(`/api/schema?refresh=${refresh}`);
-  return res.data;
+  try {
+    const res = await client.get<SchemaInfo>(`/api/schema?refresh=${refresh}`);
+    if (res.data && typeof res.data === 'object' && res.data.tables) {
+      return res.data;
+    }
+    return {
+      status: 'ok',
+      tables: {},
+      table_names: [],
+      relationships: [],
+    };
+  } catch (err) {
+    console.warn('API fetchSchema failed, using fallback empty schema:', err);
+    return {
+      status: 'offline',
+      tables: {},
+      table_names: [],
+      relationships: [],
+    };
+  }
 }
 
 export async function executeQuery(
@@ -44,12 +67,21 @@ export async function uploadDatasetCsv(file: File, tableName?: string) {
 }
 
 export async function fetchQueryHistory(limit: number = 50): Promise<HistoryItem[]> {
-  const res = await client.get<{ status: string; history: HistoryItem[] }>(`/api/history?limit=${limit}`);
-  return res.data.history;
+  try {
+    const res = await client.get<{ status: string; history: HistoryItem[] }>(`/api/history?limit=${limit}`);
+    return Array.isArray(res.data?.history) ? res.data.history : [];
+  } catch (err) {
+    console.warn('Failed to fetch query history:', err);
+    return [];
+  }
 }
 
 export async function clearQueryHistory(): Promise<void> {
-  await client.delete('/api/history');
+  try {
+    await client.delete('/api/history');
+  } catch (err) {
+    console.warn('Failed to clear history:', err);
+  }
 }
 
 export async function uploadRagDocument(file: File) {

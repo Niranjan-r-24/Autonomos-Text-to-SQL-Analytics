@@ -26,6 +26,20 @@ interface VisualizerProps {
 const COLORS = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899', '#14B8A6'];
 
 export function Visualizer({ config, data }: VisualizerProps) {
+  const [isClient, setIsClient] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  if (!isClient) {
+    return (
+      <div className="h-72 w-full flex items-center justify-center text-slate-500 text-xs">
+        Loading chart visualization...
+      </div>
+    );
+  }
+
   if (!data || data.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center text-slate-500 text-sm">

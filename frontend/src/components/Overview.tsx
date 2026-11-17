@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Database,
   Terminal,
@@ -8,8 +8,6 @@ import {
   FileText,
   ShieldCheck,
   TrendingUp,
-  Users,
-  ShoppingBag,
   Package,
   ArrowRight,
 } from 'lucide-react';
@@ -23,10 +21,19 @@ interface OverviewProps {
 }
 
 export function Overview({ schema, onNavigate, onRunQuickQuery }: OverviewProps) {
-  const tableCount = schema?.table_names?.length || 0;
-  const totalRows = schema?.tables
-    ? Object.values(schema.tables).reduce((acc, t) => acc + (t?.row_count || 0), 0)
-    : 0;
+  const tableCount = Array.isArray(schema?.table_names) ? schema.table_names.length : 0;
+  
+  const totalRows = useMemo(() => {
+    if (!schema?.tables || typeof schema.tables !== 'object') return 0;
+    try {
+      return Object.values(schema.tables).reduce((acc, t) => {
+        const count = t && typeof t === 'object' && typeof t.row_count === 'number' ? t.row_count : 0;
+        return acc + count;
+      }, 0);
+    } catch {
+      return 0;
+    }
+  }, [schema]);
 
   const quickStats = [
     {
@@ -39,7 +46,7 @@ export function Overview({ schema, onNavigate, onRunQuickQuery }: OverviewProps)
     },
     {
       title: 'Total Ingested Records',
-      value: totalRows.toLocaleString(),
+      value: totalRows > 0 ? totalRows.toLocaleString('en-US') : '0',
       icon: TrendingUp,
       color: 'text-blue-400',
       bg: 'bg-blue-500/10',
