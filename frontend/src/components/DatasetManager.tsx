@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { UploadCloud, CheckCircle2, AlertTriangle, FileSpreadsheet, ArrowRight, FileText } from 'lucide-react';
-import { uploadDatasetCsv } from '@/lib/api';
+import { uploadDatasetCsv, formatErrorMessage } from '@/lib/api';
 
 interface DatasetManagerProps {
   onDatasetUploaded: () => void;
@@ -43,7 +43,7 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
       setTableName('');
       onDatasetUploaded();
     } catch (err: any) {
-      setErrorMessage(err?.response?.data?.detail || err.message || 'Dataset upload failed.');
+      setErrorMessage(formatErrorMessage(err, 'Dataset upload failed.'));
     } finally {
       setUploading(false);
     }
@@ -109,7 +109,7 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery }: Dataset
           <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
           <div>
             <p className="font-semibold text-red-300">Upload Rejected</p>
-            <p className="text-xs text-red-300/80 mt-1">{errorMessage}</p>
+            <p className="text-xs text-red-300/80 mt-1">{String(errorMessage)}</p>
           </div>
         </div>
       )}

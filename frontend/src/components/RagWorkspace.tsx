@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { FileText, Upload, Search, BookOpen, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react';
-import { uploadRagDocument, queryRag } from '@/lib/api';
+import { uploadRagDocument, queryRag, formatErrorMessage } from '@/lib/api';
 import { RagResult } from '@/types';
 
 export function RagWorkspace() {
@@ -28,7 +28,7 @@ export function RagWorkspace() {
       setUploadSuccess(res.message);
       setFile(null);
     } catch (err: any) {
-      setError(err?.response?.data?.detail || err.message || 'RAG document upload failed.');
+      setError(formatErrorMessage(err, 'RAG document upload failed.'));
     } finally {
       setUploading(false);
     }
@@ -45,7 +45,7 @@ export function RagWorkspace() {
       const res = await queryRag(ragQueryText.trim());
       setResult(res);
     } catch (err: any) {
-      setError(err?.response?.data?.detail || err.message || 'RAG query failed.');
+      setError(formatErrorMessage(err, 'RAG query failed.'));
     } finally {
       setQuerying(false);
     }
@@ -137,7 +137,7 @@ export function RagWorkspace() {
           {error && (
             <div className="p-3 bg-red-950/40 border border-red-500/40 rounded-lg text-xs text-red-200 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-              <span>{error}</span>
+              <span>{String(error || '')}</span>
             </div>
           )}
 

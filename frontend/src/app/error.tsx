@@ -27,9 +27,9 @@ export default function ErrorBoundary({
           </p>
         </div>
 
-        {error?.message && (
+        {error && (
           <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-red-300 text-left overflow-x-auto max-h-32">
-            {error.message}
+            {String(error.message || error)}
           </div>
         )}
 

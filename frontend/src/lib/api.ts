@@ -18,6 +18,35 @@ const client = axios.create({
   timeout: 30000,
 });
 
+export function formatErrorMessage(err: any, fallback: string = 'An unexpected error occurred.'): string {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+
+  // Extract FastAPI or Axios detail
+  const detail = err?.response?.data?.detail ?? err?.detail;
+  if (detail) {
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((d) => (typeof d === 'string' ? d : d?.msg ? `${d.msg} (${d.loc?.join('.') || ''})` : JSON.stringify(d)))
+        .join(', ');
+    }
+    if (typeof detail === 'object') {
+      return detail.msg || detail.message || JSON.stringify(detail);
+    }
+  }
+
+  if (err?.message && typeof err.message === 'string') {
+    return err.message;
+  }
+
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return fallback;
+  }
+}
+
 export async function fetchSchema(refresh: boolean = false): Promise<SchemaInfo> {
   try {
     const res = await client.get<SchemaInfo>(`/api/schema?refresh=${refresh}`);

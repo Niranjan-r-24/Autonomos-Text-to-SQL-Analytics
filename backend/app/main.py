@@ -8,7 +8,9 @@ import logging
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, status
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, status, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -54,6 +56,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    error_msgs = [
+        f"{e.get('msg', 'Invalid input')} for field '{'.'.join(str(l) for l in e.get('loc', []))}'"
+        for e in errors
+    ]
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"status": "error", "detail": "; ".join(error_msgs)}
+    )
 
 # ----------------- Request / Response Models -----------------
 

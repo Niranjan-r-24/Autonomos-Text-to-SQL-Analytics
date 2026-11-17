@@ -16,7 +16,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { QueryResult } from '@/types';
-import { executeQuery, executeManualSql } from '@/lib/api';
+import { executeQuery, executeManualSql, formatErrorMessage } from '@/lib/api';
 import { Visualizer } from '@/components/Visualizer';
 
 interface QueryWorkspaceProps {
@@ -74,7 +74,7 @@ export function QueryWorkspace({
         status: 'error',
         question: q,
         sql: '',
-        error: err?.response?.data?.detail || err.message || 'Network error occurred.',
+        error: formatErrorMessage(err, 'Network error occurred.'),
       });
     } finally {
       setLoading(false);
@@ -99,7 +99,7 @@ export function QueryWorkspace({
         status: 'error',
         question: 'Manual SQL Execution',
         sql: editableSql,
-        error: err?.response?.data?.detail || err.message || 'Execution error.',
+        error: formatErrorMessage(err, 'Execution error.'),
       });
     } finally {
       setManualLoading(false);
@@ -188,7 +188,7 @@ export function QueryWorkspace({
                     ? 'Security Policy Blocked Query'
                     : 'Query Generation or Execution Error'}
                 </p>
-                <p className="text-xs text-red-300/80 mt-1">{result.error}</p>
+                <p className="text-xs text-red-300/80 mt-1">{String(result.error || '')}</p>
               </div>
             </div>
           )}
