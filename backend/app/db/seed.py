@@ -88,11 +88,25 @@ def seed_database():
         tickets_df.columns = expected_ticket_cols
 
     with engine.begin() as conn:
-        # Drop canonical tables
-        canonical_to_drop = ["customers", "products", "orders", "order_items", "payments", 
-                             "support_tickets", "audit_logs", "employees", "sales"]
-        for t in canonical_to_drop:
-            conn.execute(text(f'DROP TABLE IF EXISTS "{t}"{cascade};'))
+        # A reset must return the database to the documented sample schema.
+        # Previously only canonical tables were dropped, so uploaded/test tables
+        # survived each re-seed and leaked into the production schema explorer
+        # and Text-to-SQL context indefinitely.
+        if is_postgres:
+            table_rows = conn.execute(text(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+            )).fetchall()
+        else:
+            table_rows = conn.execute(text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )).fetchall()
+
+        # Drop every application table, including stale uploaded datasets. This
+        # is deliberate: /api/seed is exposed as a reset, not an incremental
+        # seed operation.
+        for (table_name,) in table_rows:
+            conn.execute(text(f'DROP TABLE IF EXISTS "{table_name}"{cascade};'))
 
         # Write e-commerce tables
         cust_df.to_sql("customers", con=conn, if_exists="replace", index=False)

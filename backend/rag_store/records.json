@@ -1104,12 +1104,6 @@
     "chunk": 1
   },
   {
-    "id": "b4a805f16a78-0",
-    "text": "Enterprise Security Standard: All production database backups must be encrypted with AES-256 and stored offsite for at least 5 years.",
-    "source": "security_standard.txt",
-    "chunk": 1
-  },
-  {
     "id": "9283c0342a48-0",
     "text": "Cybersecurity Directive 2026: Mandatory multi-factor authentication for all cloud infrastructure.",
     "source": "cyber_directive.txt",
@@ -1125,6 +1119,12 @@
     "id": "265b82f49876-0",
     "text": "Data Retention Policy: Customer audit logs must be retained for 7 years.",
     "source": "retention_policy.pdf",
+    "chunk": 1
+  },
+  {
+    "id": "b4a805f16a78-0",
+    "text": "Enterprise Security Standard: All production database backups must be encrypted with AES-256 and stored offsite for at least 5 years.",
+    "source": "security_standard.txt",
     "chunk": 1
   }
 ]
