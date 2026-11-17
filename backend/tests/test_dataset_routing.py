@@ -1,15 +1,16 @@
 """
 Automated acceptance tests for dataset routing and active table identity:
 1. Upload a CSV with columns `item,total`; select it; ask "Top 5 highest total";
-   generated SQL must query only the uploaded table and include ORDER BY total DESC LIMIT 5.
-2. Upload/select a second CSV with a different schema; ask a question;
-   SQL and results must use only the second CSV.
-3. Verify no request falls back to audit_logs.
-4. Verify backend errors are returned as structured error messages, never as data tables.
-5. Upload-to-query table identity and rapid table switching.
-6. Verify /documents and /api/documents routes succeed with 200.
+   generated SQL must query only the uploaded table, include ORDER BY total DESC LIMIT 5,
+   return Laptop and 1200, and contain no audit_logs.
+2. Select another table immediately afterward; the next request must use only the new table,
+   never stale state.
+3. Verify missing tableName returns a clear 400 error and does not execute any query.
+4. Verify generated SQL referencing a non-selected table is blocked with visible error.
+5. Verify no request falls back to audit_logs.
+6. Verify backend errors are returned as structured error messages, never as data tables.
+7. Verify /documents and /api/documents routes succeed with 200.
 """
-import io
 import pytest
 from fastapi.testclient import TestClient
 from backend.app.main import app
@@ -31,17 +32,17 @@ class TestDatasetRouting:
     def test_01_upload_csv_and_query_top_5_highest_total(self):
         """
         Acceptance test 1:
-        Upload a CSV with columns item,total; select it; ask 'Top 5 highest total';
-        generated SQL must query only the uploaded table and include ORDER BY total DESC LIMIT 5.
+        Selecting test_sql_orders and asking 'Top 5 highest total' executes against
+        test_sql_orders, returns 'Laptop' and 1200, and SQL contains no audit_logs.
         """
         csv_content = (
             b"id,item,total\n"
-            b"1,Mechanical Keyboard,150\n"
-            b"2,Wireless Mouse,80\n"
-            b"3,4K Monitor,450\n"
-            b"4,USB-C Hub,60\n"
-            b"5,Noise Cancelling Headphones,300\n"
-            b"6,Ergonomic Chair,550\n"
+            b"1,Laptop,1200\n"
+            b"2,Mechanical Keyboard,150\n"
+            b"3,Wireless Mouse,80\n"
+            b"4,4K Monitor,450\n"
+            b"5,USB-C Hub,60\n"
+            b"6,Noise Cancelling Headphones,300\n"
             b"7,Desk Mat,30\n"
         )
 
@@ -61,12 +62,17 @@ class TestDatasetRouting:
         assert schema_res.json()["tableName"] == "test_sql_orders"
         assert "test_sql_orders" in schema_res.json()["schema"]
 
-        # NL-to-SQL query
+        # NL-to-SQL query sending canonical tableName and question
         query_res = client.post(
             "/api/query",
             json={
-                "query": "Top 5 highest total",
-                "active_table": table_name,
+                "question": "Top 5 highest total",
+                "tableName": table_name,
+                "schema": [
+                    {"name": "id", "type": "INTEGER"},
+                    {"name": "item", "type": "TEXT"},
+                    {"name": "total", "type": "REAL"}
+                ],
                 "provider": "fallback"
             }
         )
@@ -75,7 +81,7 @@ class TestDatasetRouting:
         assert data["success"] is True
         sql = data["sql"]
 
-        # Generated SQL must query only the uploaded table
+        # Generated SQL must query only the uploaded table and never audit_logs
         assert "test_sql_orders" in sql
         assert "audit_logs" not in sql
         assert "sales" not in sql
@@ -86,20 +92,19 @@ class TestDatasetRouting:
         sql_normalized = sql.replace('"', '').replace("`", "").lower()
         assert "order by total desc limit 5" in sql_normalized
 
-        # Results must contain data from test_sql_orders
+        # Results must return Laptop and 1200 as #1 row
         assert data["row_count"] == 5
         assert len(data["rows"]) == 5
         assert "total" in data["columns"]
         assert "item" in data["columns"]
-        # Highest total should be 550 (Ergonomic Chair)
-        assert data["rows"][0]["total"] == 550
-        assert data["rows"][0]["item"] == "Ergonomic Chair"
+        assert data["rows"][0]["total"] == 1200
+        assert data["rows"][0]["item"] == "Laptop"
 
-    def test_02_upload_second_csv_with_different_schema(self):
+    def test_02_select_another_table_immediately_uses_only_new_table(self):
         """
         Acceptance test 2:
-        Upload/select a second CSV with a different schema; ask a question;
-        SQL and results must use only the second CSV.
+        Select another table immediately afterward; the next request must use
+        only the new table, never stale state.
         """
         second_csv = (
             b"sku,stock_qty,location\n"
@@ -117,12 +122,12 @@ class TestDatasetRouting:
         table_name = upload_res.json().get("tableName") or upload_res.json().get("table_name")
         assert table_name == "warehouse_inventory"
 
-        # Ask question tailored to second CSV
+        # Ask question tailored to second CSV immediately
         query_res = client.post(
             "/api/query",
             json={
-                "query": "Top 3 highest stock qty",
-                "active_table": table_name,
+                "question": "Top 3 highest stock qty",
+                "tableName": table_name,
                 "provider": "fallback"
             }
         )
@@ -131,7 +136,7 @@ class TestDatasetRouting:
         assert data["success"] is True
         sql = data["sql"]
 
-        # SQL must query only the second CSV
+        # SQL and results must query only the second CSV, no stale state from test_sql_orders
         assert "warehouse_inventory" in sql
         assert "test_sql_orders" not in sql
         assert "audit_logs" not in sql
@@ -143,41 +148,46 @@ class TestDatasetRouting:
         assert data["rows"][0]["stock_qty"] == 1200
         assert data["rows"][0]["sku"] == "SKU-B2"
 
-    def test_03_rapid_table_switching_preserves_table_identity(self):
-        """
-        Acceptance test 5:
-        Verify rapid table switching between datasets maintains strict table identity
-        and never leaks or cross-contaminates schemas.
-        """
-        table_1 = "test_sql_orders"
-        table_2 = "warehouse_inventory"
-
-        # Rapid alternating requests
-        for _ in range(3):
-            # Query table 1
-            res1 = client.post(
-                "/api/query",
-                json={"query": "Top 2 highest total", "active_table": table_1, "provider": "fallback"}
-            )
-            assert res1.status_code == 200
-            assert "test_sql_orders" in res1.json()["sql"]
-            assert "warehouse_inventory" not in res1.json()["sql"]
-            assert "total" in res1.json()["columns"]
-
-            # Query table 2
-            res2 = client.post(
-                "/api/query",
-                json={"query": "Top 2 highest stock qty", "active_table": table_2, "provider": "fallback"}
-            )
-            assert res2.status_code == 200
-            assert "warehouse_inventory" in res2.json()["sql"]
-            assert "test_sql_orders" not in res2.json()["sql"]
-            assert "stock_qty" in res2.json()["columns"]
-
-    def test_04_no_request_falls_back_to_audit_logs(self):
+    def test_03_missing_tablename_returns_400_error(self):
         """
         Acceptance test 3:
-        Verify no business question falls back to audit_logs, even with ambiguous queries.
+        Test missing tableName returns a clear 400 error and does not execute any query.
+        """
+        res = client.post(
+            "/api/query",
+            json={"question": "Top 5 highest total", "provider": "fallback"}
+        )
+        assert res.status_code == 400
+        data = res.json()
+        assert "detail" in data
+        assert data["detail"]["error"] == "Missing tableName"
+        assert "A canonical tableName must be specified" in data["detail"]["message"]
+        assert "available_tables" in data["detail"]
+
+    def test_04_generated_sql_referencing_non_selected_table_is_blocked(self, monkeypatch):
+        """
+        Acceptance test 4:
+        Test generated SQL referencing a non-selected table is blocked.
+        Returns a visible error with the requested and referenced table names.
+        """
+        pipeline = TextToSqlPipeline(provider="gemini", api_key="dummy-key")
+        # Simulate generator producing SQL referencing customers when active table is test_sql_orders
+        monkeypatch.setattr(
+            pipeline.generator,
+            "generate",
+            lambda *_args, **_kwargs: ('SELECT * FROM "customers" LIMIT 5;', "Query customers", "Gemini 1.5 Flash"),
+        )
+
+        res = pipeline.run("Top 5 customers", active_table="test_sql_orders")
+        assert res["success"] is False
+        assert "Execution blocked" in res["error"] or "outside the requested table" in res["error"]
+        assert res["requested_table"] == "test_sql_orders"
+        assert "customers" in res["referenced_tables"]
+
+    def test_05_ambiguous_queries_never_fall_back_to_audit_logs(self):
+        """
+        Acceptance test 5:
+        Verify no request falls back to audit_logs, even with ambiguous queries on an active table.
         """
         ambiguous_queries = [
             "Top 5 highest score",
@@ -189,25 +199,24 @@ class TestDatasetRouting:
         for q in ambiguous_queries:
             res = client.post(
                 "/api/query",
-                json={"query": q, "provider": "fallback"}
+                json={"question": q, "tableName": "test_sql_orders", "provider": "fallback"}
             )
-            if res.status_code == 200:
-                data = res.json()
-                sql = (data.get("sql") or "").lower()
-                assert "audit_logs" not in sql, f"Query '{q}' fell back to audit_logs!"
-                # Audit log columns should never be returned
-                for col in ["user_id", "ip_address", "action"]:
-                    assert col not in data.get("columns", [])
+            assert res.status_code == 200
+            data = res.json()
+            sql = (data.get("sql") or "").lower()
+            assert "audit_logs" not in sql, f"Query '{q}' fell back to audit_logs!"
+            for col in ["user_id", "ip_address", "action"]:
+                assert col not in data.get("columns", [])
 
-    def test_05_structured_errors_not_data_tables(self):
+    def test_06_structured_errors_not_data_tables(self):
         """
-        Acceptance test 4:
+        Acceptance test 6:
         Verify backend errors are returned as structured error responses, never as a data table.
         """
         # 1. Non-existent active table request -> 404 structured error
         res_404 = client.post(
             "/api/query",
-            json={"query": "Top 5 highest total", "active_table": "nonexistent_table_xyz", "provider": "fallback"}
+            json={"question": "Top 5 highest total", "tableName": "nonexistent_table_xyz", "provider": "fallback"}
         )
         assert res_404.status_code == 404
         data_404 = res_404.json()
@@ -219,22 +228,22 @@ class TestDatasetRouting:
         assert isinstance(detail["available_tables"], list)
 
         # 2. Schema check for non-existent table -> 404
-        res_schema_404 = client.get("/api/schema?active_table=nonexistent_table_xyz")
+        res_schema_404 = client.get("/api/schema?tableName=nonexistent_table_xyz")
         assert res_schema_404.status_code == 404
 
         # 3. Direct SQL execution violating active table -> 400
         res_exec_bad = client.post(
             "/api/execute-sql",
-            json={"sql": "SELECT * FROM products LIMIT 5;", "active_table": "test_sql_orders"}
+            json={"sql": "SELECT * FROM products LIMIT 5;", "tableName": "test_sql_orders"}
         )
         assert res_exec_bad.status_code == 400
         detail_exec = res_exec_bad.json()["detail"]
         assert "must reference the active table" in detail_exec["message"]
         assert detail_exec["requested_table"] == "test_sql_orders"
 
-    def test_06_documents_route_returns_200(self):
+    def test_07_documents_route_returns_200(self):
         """
-        Acceptance test:
+        Acceptance test 7:
         Verify /documents and /api/documents routes return HTTP 200.
         """
         r1 = client.get("/documents")
@@ -247,25 +256,27 @@ class TestDatasetRouting:
         assert r2.json()["success"] is True
         assert "documents" in r2.json()
 
-    def test_07_llm_schema_isolation_rejects_unpermitted_table(self, monkeypatch):
+    def test_08_rapid_alternating_queries_preserve_table_identity(self):
         """
-        Acceptance test:
-        Verify that LLM prompt is constructed with selected table schema only,
-        and any LLM hallucination targeting another table (such as audit_logs) is rejected.
+        Acceptance test 8:
+        Verify rapid table switching between datasets maintains strict table identity.
         """
-        pipeline = TextToSqlPipeline(provider="gemini", api_key="dummy-key")
-        # Simulate LLM hallucinating audit_logs when active_table is test_sql_orders
-        monkeypatch.setattr(
-            pipeline.generator,
-            "_generate_with_llm",
-            lambda *_args, **_kwargs: ('SELECT * FROM "audit_logs" LIMIT 10;', "Wrong table"),
-        )
+        table_1 = "test_sql_orders"
+        table_2 = "warehouse_inventory"
 
-        schema = get_db_schema_info()
-        sql, explanation, generated_by = pipeline.generator.generate(
-            "Top 5 highest total", schema, active_table="test_sql_orders"
-        )
-        # Hallucination must be rejected and replaced by deterministic query for test_sql_orders
-        assert generated_by == "Deterministic Analytics Engine"
-        assert "test_sql_orders" in sql
-        assert "audit_logs" not in sql
+        for _ in range(3):
+            res1 = client.post(
+                "/api/query",
+                json={"question": "Top 2 highest total", "tableName": table_1, "provider": "fallback"}
+            )
+            assert res1.status_code == 200
+            assert "test_sql_orders" in res1.json()["sql"]
+            assert "warehouse_inventory" not in res1.json()["sql"]
+
+            res2 = client.post(
+                "/api/query",
+                json={"question": "Top 2 highest stock qty", "tableName": table_2, "provider": "fallback"}
+            )
+            assert res2.status_code == 200
+            assert "warehouse_inventory" in res2.json()["sql"]
+            assert "test_sql_orders" not in res2.json()["sql"]

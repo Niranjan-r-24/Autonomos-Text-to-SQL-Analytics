@@ -284,7 +284,7 @@ class TextToSqlPipeline:
             schema_valid, schema_error = validate_sql_against_live_schema(sql_query)
             if not schema_valid:
                 logger.warning("Generated SQL failed live-schema preflight: %s", schema_error)
-                sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info)
+                sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info, target_table=active_table)
                 generated_by = "Deterministic Analytics Engine"
                 # Do not pass an empty repair attempt to the executor: that
                 # would replace the useful live-schema diagnostic with a
@@ -315,6 +315,53 @@ class TextToSqlPipeline:
                         "error": error_message,
                     }
 
+        # Requirement 5 & 8: Validate the generated SQL's table references before execution.
+        # If it references a table other than the requested tableName, reject it and return a visible error.
+        if sql_query:
+            ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_query, re.IGNORECASE)
+            logger.info(
+                "[ROUTING_LOG] Generated SQL: '%s', referenced_tables=%s, active_table='%s'",
+                sql_query, ref_tables, active_table
+            )
+            if active_table:
+                permitted_tables = {active_table.lower()}
+                table_meta = schema_info.get(active_table, {})
+                for rel in table_meta.get("relationships", []):
+                    if rel.get("to_table"):
+                        permitted_tables.add(rel["to_table"].lower())
+                    if rel.get("from_table"):
+                        permitted_tables.add(rel["from_table"].lower())
+                unpermitted = [t for t in ref_tables if t.lower() not in permitted_tables]
+                if unpermitted:
+                    logger.warning("[ROUTING_LOG] Generated SQL referenced unpermitted table(s) %s for active_table '%s'", unpermitted, active_table)
+                    err_msg = f"Generated SQL referenced table(s) {unpermitted} outside the requested table '{active_table}'. Execution blocked."
+                    total_duration_sec = round(time.time() - start_time, 3)
+                    return {
+                        "question": user_question,
+                        "success": False,
+                        "route": "sql",
+                        "sql": "",
+                        "explanation": err_msg,
+                        "generated_by": generated_by or "Security Guard",
+                        "insights": {
+                            "direct_answer": err_msg,
+                            "summary": f"Query blocked: attempt to access unauthorized table(s) {', '.join(unpermitted)}.",
+                            "key_findings": [f"Requested table: {active_table}", f"Referenced tables: {', '.join(unpermitted)}"],
+                            "comparisons": [],
+                            "caveats": ["Queries are strictly constrained to the active table."],
+                            "business_takeaway": f"Queries are constrained strictly to active table '{active_table}'.",
+                            "status": "error"
+                        },
+                        "rows": [], "columns": [], "row_count": 0,
+                        "execution_time_sec": total_duration_sec,
+                        "sql_execution_time_ms": 0.0,
+                        "visualization": {"chart_type": "table", "title": "Access Blocked"},
+                        "attempts": 0, "correction_history": [], "agent_steps": agent_steps,
+                        "error": err_msg,
+                        "requested_table": active_table,
+                        "referenced_tables": ref_tables
+                    }
+
         gen_time = round(time.time() - t_gen, 3)
 
         agent_steps.append({
@@ -331,6 +378,8 @@ class TextToSqlPipeline:
 
         # Step 3: Safe Execution & Self-Correction Agent
         t_exec = time.time()
+        exec_ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_query, re.IGNORECASE)
+        logger.info("[ROUTING_LOG] Executing SQL against table references: %s", exec_ref_tables)
         exec_result = self.corrector.heal_and_execute(
             initial_sql=sql_query,
             user_question=user_question,

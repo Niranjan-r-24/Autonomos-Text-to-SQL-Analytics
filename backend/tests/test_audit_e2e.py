@@ -407,7 +407,7 @@ class TestApiIntegration:
 
     def test_query_endpoint(self):
         """POST /api/query processes natural language query end-to-end."""
-        res = client.post("/api/query", json={"query": "Top 3 products by revenue", "provider": "fallback"})
+        res = client.post("/api/query", json={"query": "Top 3 products by revenue", "tableName": "products", "provider": "fallback"})
         assert res.status_code == 200
         data = res.json()
         assert data["success"] is True
@@ -419,7 +419,7 @@ class TestApiIntegration:
     def test_execute_sql_endpoint(self):
         """POST /api/execute-sql executes safe query and provides insights."""
         custom_sql = "SELECT name, price FROM products ORDER BY price DESC LIMIT 3;"
-        res = client.post("/api/execute-sql", json={"sql": custom_sql, "question": "Top 3 expensive products"})
+        res = client.post("/api/execute-sql", json={"sql": custom_sql, "question": "Top 3 expensive products", "tableName": "products"})
         assert res.status_code == 200
         data = res.json()
         assert data["success"] is True
@@ -494,7 +494,7 @@ class TestEdgeCases:
 
     def test_destructive_query_blocked_at_endpoint(self):
         """Adversarial destructive query blocked via /api/query."""
-        res = client.post("/api/query", json={"query": "DROP TABLE sales;"})
+        res = client.post("/api/query", json={"query": "DROP TABLE sales;", "tableName": "sales"})
         assert res.status_code == 200
         assert res.json()["success"] is False
         assert "Security" in (res.json().get("error") or "")

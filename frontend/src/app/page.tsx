@@ -12,6 +12,16 @@ import { FileUploadModal } from '@/components/FileUploadModal';
 import { AlertCircle, Database } from 'lucide-react';
 import { API_BASE } from '@/config/api';
 
+export interface TableContext {
+  tableName: string;
+  columns: Array<{ name: string; type: string }>;
+  source: 'uploaded' | 'sample';
+}
+
+const SAMPLE_TABLE_SET = new Set([
+  'customers', 'products', 'orders', 'order_items', 'payments', 'support_tickets', 'sales', 'employees'
+]);
+
 export default function Home() {
   const [query, setQuery] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -22,6 +32,10 @@ export default function Home() {
   const [isSchemaModalOpen, setIsSchemaModalOpen] = useState(false);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+
+  // Canonical table-context state & ref
+  const [tableContext, setTableContext] = useState<TableContext | null>(null);
+  const tableContextRef = useRef<TableContext | null>(null);
 
   // Data & Execution states
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
@@ -43,16 +57,46 @@ export default function Home() {
     fetchDocuments();
   }, []);
 
+  const fetchTableContext = async (tableName: string): Promise<TableContext | null> => {
+    setIsSchemaLoading(true);
+    try {
+      const res = await axios.get(`${API_BASE}/api/schema`, {
+        params: { tableName, active_table: tableName }
+      });
+      const canonicalName = res.data?.tableName || tableName;
+      const schemaEntry = res.data?.schema?.[canonicalName];
+      if (schemaEntry && schemaEntry.columns) {
+        const ctx: TableContext = {
+          tableName: canonicalName,
+          columns: schemaEntry.columns.map((col: any) => ({
+            name: col.name,
+            type: col.type || 'TEXT',
+          })),
+          source: SAMPLE_TABLE_SET.has(canonicalName.toLowerCase()) ? 'sample' : 'uploaded',
+        };
+        setTableContext(ctx);
+        tableContextRef.current = ctx;
+        setActiveTable(canonicalName);
+        activeTableRef.current = canonicalName;
+        setSchemaData((prev) => ({ ...prev, [canonicalName]: schemaEntry }));
+        return ctx;
+      }
+      return null;
+    } catch (err: any) {
+      console.error('Failed to load table context:', err);
+      const data = err.response?.data;
+      const msg = (data && (data.detail?.message || data.detail || data.message)) || `Failed to load schema for ${tableName}.`;
+      setErrorMessage(msg);
+      return null;
+    } finally {
+      setIsSchemaLoading(false);
+    }
+  };
+
   const fetchSchema = async (selectedTable?: string | null) => {
     setIsSchemaLoading(true);
     try {
-      const params: Record<string, string> = {};
-      const targetTable = selectedTable !== undefined ? selectedTable : activeTableRef.current;
-      if (targetTable) {
-        params.active_table = targetTable;
-        params.tableName = targetTable;
-      }
-      const res = await axios.get(`${API_BASE}/api/schema`, { params });
+      const res = await axios.get(`${API_BASE}/api/schema`);
       if (res.data && res.data.schema) {
         const filtered: Record<string, any> = {};
         for (const [k, v] of Object.entries(res.data.schema)) {
@@ -61,6 +105,14 @@ export default function Home() {
           }
         }
         setSchemaData(filtered);
+
+        const target = selectedTable || activeTableRef.current;
+        if (target && filtered[target]) {
+          await fetchTableContext(target);
+        } else if (!tableContextRef.current && Object.keys(filtered).length > 0) {
+          const defaultTable = Object.keys(filtered)[0];
+          await fetchTableContext(defaultTable);
+        }
       }
     } catch (err: any) {
       console.error('Failed to load schema:', err);
@@ -102,37 +154,30 @@ export default function Home() {
       const res = await axios.post(`${API_BASE}/api/seed`);
       if (res.data && res.data.schema) {
         setSchemaData(res.data.schema);
+        setTableContext(null);
+        tableContextRef.current = null;
         setActiveTable(null);
         activeTableRef.current = null;
         setPipelineResult(null);
         setErrorMessage(null);
+        const keys = Object.keys(res.data.schema);
+        if (keys.length > 0) {
+          await fetchTableContext(keys[0]);
+        }
       }
     } catch (err) {
       console.error('Failed to re-seed database:', err);
     }
   };
 
-  const handleUploadSuccess = (tableName: string, updatedSchema: Record<string, any>) => {
+  const handleUploadSuccess = async (tableName: string, updatedSchema: Record<string, any>) => {
     fetchDocuments();
     setPipelineResult(null);
     setErrorMessage(null);
     setQuery('');
 
-    const canonicalName = (tableName && tableName !== 'knowledge_base' && !['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase()))
-      ? tableName
-      : null;
-
-    setActiveTable(canonicalName);
-    activeTableRef.current = canonicalName;
-
-    if (updatedSchema && Object.keys(updatedSchema).length > 0) {
-      const filtered: Record<string, any> = {};
-      for (const [k, v] of Object.entries(updatedSchema)) {
-        if (!['audit_logs', 'sqlite_sequence'].includes(k.toLowerCase())) {
-          filtered[k] = v;
-        }
-      }
-      setSchemaData(filtered);
+    if (tableName && tableName !== 'knowledge_base' && !['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
+      await fetchTableContext(tableName);
     }
   };
 
@@ -141,27 +186,34 @@ export default function Home() {
     setErrorMessage(null);
     setQuery('');
 
-    if (tableName && ['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
+    if (!tableName || ['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
+      setTableContext(null);
+      tableContextRef.current = null;
       setActiveTable(null);
       activeTableRef.current = null;
       return;
     }
-    setActiveTable(tableName);
-    activeTableRef.current = tableName;
-    if (tableName) {
-      await fetchSchema(tableName);
-    }
+    await fetchTableContext(tableName);
   };
 
-  const isTableSchemaReady = !activeTable || (Boolean(schemaData[activeTable]?.columns?.length) && !isSchemaLoading);
+  const isTableSchemaReady = Boolean(tableContext?.columns?.length) && !isSchemaLoading;
 
   const handleRunQuery = async (overrideQuery?: string, overrideTable?: string) => {
     const targetQuery = overrideQuery || query;
     if (!targetQuery.trim()) return;
     if (isExecuting && !overrideQuery) return;
 
-    const currentTable = overrideTable !== undefined ? (overrideTable || null) : activeTableRef.current;
-    if (currentTable && (!schemaData[currentTable] || isSchemaLoading)) {
+    let currentContext = tableContextRef.current;
+    if (overrideTable && (!currentContext || currentContext.tableName !== overrideTable)) {
+      currentContext = await fetchTableContext(overrideTable);
+    }
+
+    if (!currentContext) {
+      setErrorMessage("Please select a table from the dataset bar above to query.");
+      return;
+    }
+
+    if (isSchemaLoading) {
       return;
     }
 
@@ -172,12 +224,14 @@ export default function Home() {
 
     try {
       const res = await axios.post(`${API_BASE}/api/query`, {
+        question: targetQuery.trim(),
         query: targetQuery.trim(),
+        tableName: currentContext.tableName,
+        active_table: currentContext.tableName,
+        table_name: currentContext.tableName,
+        schema: currentContext.columns,
         api_key: apiKey,
         provider: provider,
-        active_table: currentTable || undefined,
-        tableName: currentTable || undefined,
-        table_name: currentTable || undefined,
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;
@@ -220,21 +274,26 @@ export default function Home() {
   const handleRunCustomSql = async (customSql: string) => {
     if (!customSql.trim() || isExecuting) return;
 
+    const currentContext = tableContextRef.current;
+    if (!currentContext) {
+      setErrorMessage("Please select an active table before executing SQL.");
+      return;
+    }
+
     const currentRequestId = ++activeRequestIdRef.current;
     setIsExecuting(true);
     setErrorMessage(null);
-
-    const currentTable = activeTableRef.current;
 
     try {
       const res = await axios.post(`${API_BASE}/api/execute-sql`, {
         sql: customSql.trim(),
         question: query || 'Custom SQL Execution',
+        tableName: currentContext.tableName,
+        active_table: currentContext.tableName,
+        table_name: currentContext.tableName,
+        schema: currentContext.columns,
         api_key: apiKey,
         provider: provider,
-        active_table: currentTable || undefined,
-        tableName: currentTable || undefined,
-        table_name: currentTable || undefined,
       });
 
       if (currentRequestId !== activeRequestIdRef.current) return;
@@ -311,9 +370,9 @@ export default function Home() {
             setQuery={setQuery}
             onSubmit={handleRunQuery}
             isExecuting={isExecuting}
-            activeTable={activeTable}
+            activeTable={tableContext?.tableName || activeTable}
             tables={tableList}
-            tableColumns={activeTable && schemaData[activeTable]?.columns ? schemaData[activeTable].columns.map((c: any) => c.name) : []}
+            tableColumns={tableContext?.columns ? tableContext.columns.map((c) => c.name) : (activeTable && schemaData[activeTable]?.columns ? schemaData[activeTable].columns.map((c: any) => c.name) : [])}
             onSelectTable={handleSelectTable}
             isTableSchemaReady={isTableSchemaReady}
             isSchemaLoading={isSchemaLoading}

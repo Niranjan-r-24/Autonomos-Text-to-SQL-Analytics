@@ -15,7 +15,7 @@ import pandas as pd
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # Configure structured logging
 logging.basicConfig(
@@ -106,12 +106,16 @@ def health():
 
 
 class QueryRequest(BaseModel):
-    query: str = Field(..., description="Natural language question to translate into SQL")
+    query: Optional[str] = Field(None, description="Natural language question to translate into SQL")
+    question: Optional[str] = Field(None, description="Alternative natural language question field")
     api_key: Optional[str] = Field(None, description="Optional LLM API Key (Gemini or OpenAI)")
     provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
     active_table: Optional[str] = Field(None, description="Optional active table name to prioritize")
     tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
     table_name: Optional[str] = Field(None, description="Optional table name identifier")
+    schema_columns: Optional[List[Dict[str, Any]]] = Field(None, alias="schema", description="Client-provided schema columns")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ExecuteSqlRequest(BaseModel):
@@ -122,6 +126,9 @@ class ExecuteSqlRequest(BaseModel):
     active_table: Optional[str] = Field(None, description="Optional active table name identifier")
     tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
     table_name: Optional[str] = Field(None, description="Optional table name identifier")
+    schema_columns: Optional[List[Dict[str, Any]]] = Field(None, alias="schema", description="Client-provided schema columns")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 
@@ -299,46 +306,70 @@ def process_nl_query(req: QueryRequest):
     """
     Main Text-to-SQL endpoint:
     Processes natural language question -> Generates SQL & explanation -> Executes safely -> Returns results.
+    Strictly validates requested tableName and isolates queries to the active dataset.
     """
-    if not req.query.strip():
-        raise HTTPException(status_code=400, detail="Query prompt cannot be empty.")
+    user_question = (req.question or req.query or "").strip()
+    if not user_question:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Missing question",
+                "message": "Query prompt or question cannot be empty."
+            }
+        )
 
-    requested_table = req.active_table or req.tableName or req.table_name
-    canonical_table = None
-
+    requested_table = (req.tableName or req.active_table or req.table_name or "").strip()
     schema_info = get_db_schema_info()
     available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
 
-    if requested_table:
-        req_clean = requested_table.strip()
-        req_lower = req_clean.lower()
-        if req_lower in ("audit_logs", "sqlite_sequence"):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Internal audit log tables cannot be queried as active datasets.",
-                    "requested_table": requested_table,
-                    "available_tables": available_tables
-                }
-            )
-        matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
-        if not matched:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "message": f"Requested table '{requested_table}' does not exist in the database.",
-                    "requested_table": requested_table,
-                    "available_tables": available_tables
-                }
-            )
-        canonical_table = matched
+    # Requirement 4: Reject requests with a missing tableName using a structured 4xx error.
+    if not requested_table:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Missing tableName",
+                "message": "A canonical tableName must be specified for every query request.",
+                "requested_table": None,
+                "available_tables": available_tables
+            }
+        )
+
+    req_lower = requested_table.lower()
+    if req_lower in ("audit_logs", "sqlite_sequence"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Unauthorized table",
+                "message": "Internal audit log tables cannot be queried as active datasets.",
+                "requested_table": requested_table,
+                "available_tables": available_tables
+            }
+        )
+
+    matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
+    if not matched:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "Table not found",
+                "message": f"Requested table '{requested_table}' does not exist in the database.",
+                "requested_table": requested_table,
+                "available_tables": available_tables
+            }
+        )
+    canonical_table = matched
+
+    # Requirement 8: Server logs in development for: requested tableName, loaded schema tableName
+    logger.info(
+        "[ROUTING_LOG] Query request: question='%s', requested_tableName='%s', loaded_schema_table='%s'",
+        user_question, requested_table, canonical_table
+    )
 
     try:
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider)
-        result = pipeline.run(req.query.strip(), active_table=canonical_table)
-        if not result.get("success") and result.get("error"):
-            result["requested_table"] = canonical_table
-            result["available_tables"] = available_tables
+        result = pipeline.run(user_question, active_table=canonical_table)
+        result["requested_table"] = canonical_table
+        result["available_tables"] = available_tables
         return result
     except HTTPException:
         raise
@@ -347,6 +378,7 @@ def process_nl_query(req: QueryRequest):
         raise HTTPException(
             status_code=500,
             detail={
+                "error": "Pipeline error",
                 "message": f"Pipeline error: {str(e)}",
                 "requested_table": canonical_table,
                 "available_tables": available_tables
@@ -359,52 +391,77 @@ def execute_custom_sql(req: ExecuteSqlRequest):
     """
     Allows safe direct execution of a user-edited SQL query.
     Enforces read-only SELECT security checks and interprets results into business insights.
+    Strictly verifies execution references the active dataset.
     """
     if not req.sql.strip():
         raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
 
-    requested_table = req.active_table or req.tableName or req.table_name
-    canonical_table = None
-
+    requested_table = (req.tableName or req.active_table or req.table_name or "").strip()
     schema_info = get_db_schema_info()
     available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
 
-    if requested_table:
-        req_clean = requested_table.strip()
-        req_lower = req_clean.lower()
-        if req_lower in ("audit_logs", "sqlite_sequence"):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Internal audit log tables cannot be queried as active datasets.",
-                    "requested_table": requested_table,
-                    "available_tables": available_tables
-                }
-            )
-        matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
-        if not matched:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "message": f"Requested table '{requested_table}' does not exist in the database.",
-                    "requested_table": requested_table,
-                    "available_tables": available_tables
-                }
-            )
-        canonical_table = matched
+    if not requested_table:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Missing tableName",
+                "message": "A canonical tableName must be specified for SQL execution.",
+                "requested_table": None,
+                "available_tables": available_tables
+            }
+        )
 
-        from backend.app.services.sql_generator import SQLGenerator
-        if not SQLGenerator._sql_references_table(req.sql.strip(), canonical_table):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": f"Executed SQL must reference the active table '{canonical_table}'.",
-                    "requested_table": canonical_table,
-                    "available_tables": available_tables
-                }
-            )
+    req_lower = requested_table.lower()
+    if req_lower in ("audit_logs", "sqlite_sequence"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Unauthorized table",
+                "message": "Internal audit log tables cannot be queried as active datasets.",
+                "requested_table": requested_table,
+                "available_tables": available_tables
+            }
+        )
 
+    matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
+    if not matched:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "Table not found",
+                "message": f"Requested table '{requested_table}' does not exist in the database.",
+                "requested_table": requested_table,
+                "available_tables": available_tables
+            }
+        )
+    canonical_table = matched
+
+    # Security pre-validation: block destructive queries immediately
     result = execute_safe_query(req.sql.strip())
+    if not result.get("success"):
+        return result
+
+    from backend.app.services.sql_generator import SQLGenerator
+    sql_text = req.sql.strip()
+    ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_text, re.IGNORECASE)
+
+    # Requirement 8: Server logs for executed table refs
+    logger.info(
+        "[ROUTING_LOG] Execute-SQL request: requested_tableName='%s', canonical_table='%s', executed_sql_table_refs=%s",
+        requested_table, canonical_table, ref_tables
+    )
+
+    if not SQLGenerator._sql_references_table(sql_text, canonical_table):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Table reference mismatch",
+                "message": f"Executed SQL must reference the active table '{canonical_table}'.",
+                "requested_table": canonical_table,
+                "referenced_tables": ref_tables,
+                "available_tables": available_tables
+            }
+        )
     if result.get("success"):
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider or "gemini")
         visualization = pipeline._infer_visualization(

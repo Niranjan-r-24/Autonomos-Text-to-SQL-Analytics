@@ -289,7 +289,7 @@ def test_pipeline_end_to_end_includes_insights():
 
 def test_api_query_endpoint():
     """Verify the /api/query HTTP endpoint returns insights in response schema."""
-    response = client.post("/api/query", json={"query": "Top 5 revenue products", "provider": "fallback"})
+    response = client.post("/api/query", json={"query": "Top 5 revenue products", "tableName": "products", "provider": "fallback"})
     assert response.status_code == 200
     data = response.json()
 
@@ -303,6 +303,7 @@ def test_api_execute_sql_endpoint_with_insights():
     """Verify that custom SQL execution returns business insights."""
     response = client.post("/api/execute-sql", json={
         "sql": "SELECT name, price FROM products LIMIT 3;",
+        "tableName": "products",
         "question": "First 3 products"
     })
     assert response.status_code == 200
@@ -316,7 +317,8 @@ def test_api_execute_sql_endpoint_with_insights():
 def test_api_execute_sql_security_block():
     """Verify that destructive SQL continues to be strictly blocked."""
     response = client.post("/api/execute-sql", json={
-        "sql": "DROP TABLE sales;"
+        "sql": "DROP TABLE sales;",
+        "tableName": "sales"
     })
     assert response.status_code == 200
     data = response.json()
@@ -648,13 +650,13 @@ def test_regression_rapid_consecutive_requests():
     independent, consistent results with correct row counts and matching column metadata.
     """
     queries = [
-        "Which 3 products sold the highest quantity?",
-        "Top 5 products by revenue",
-        "Show recent failed audit log events"
+        ("Which 3 products sold the highest quantity?", "products"),
+        ("Top 5 products by revenue", "products"),
+        ("Show all customers", "customers")
     ]
 
-    for q in queries:
-        resp = client.post("/api/query", json={"query": q, "provider": "fallback"})
+    for q, tbl in queries:
+        resp = client.post("/api/query", json={"query": q, "tableName": tbl, "provider": "fallback"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True

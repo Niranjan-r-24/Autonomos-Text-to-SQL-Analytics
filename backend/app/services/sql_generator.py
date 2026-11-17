@@ -337,8 +337,10 @@ JSON Response Format:
                     if not exists_in_schema:
                         avail = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
                         avail_str = ", ".join(avail) if avail else "none"
+                        # Fallback query must only reference the validated requested table if active_table is set
+                        fallback_tbl = active_table if (active_table and active_table in schema_info and active_table.lower() not in ("audit_logs", "sqlite_sequence")) else m.group(1)
                         return (
-                            f'SELECT * FROM "{m.group(1)}" LIMIT 10;',
+                            f'SELECT * FROM "{fallback_tbl}" LIMIT 10;',
                             f"Database Error: Table '{m.group(1)}' does not exist in the database. Connected tables: {avail_str}. Please verify the table name or check your schema."
                         )
 
@@ -1109,9 +1111,17 @@ JSON Response Format:
             explanation = f"Calculates overall {agg_alias.replace('_', ' ')} across records in the '{target_table}' table."
             return sql, explanation
 
+        # Determine explicit safe columns for projection from target table schema
+        target_meta = schema_info.get(target_table, {})
+        target_cols = target_meta.get("columns", [])
+        if target_cols:
+            cols_proj = ", ".join(f'"{c["name"]}"' for c in target_cols)
+        else:
+            cols_proj = "*"
+
         # Branch C: Ranked Ordering
         if (is_highest or is_lowest or "top" in q or "bottom" in q) and metric_col:
-            sql = f'SELECT * FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
+            sql = f'SELECT {cols_proj} FROM "{target_table}"{where_clause} ORDER BY "{metric_col}" {direction} LIMIT {limit_val};'
             explanation = f"Retrieves records from '{target_table}' ordered by '{metric_col}' in {direction_word} order."
             return sql, explanation
 
@@ -1119,7 +1129,7 @@ JSON Response Format:
         # The result renderer/executor already has a 1,000-row safety cap.
         # Do not introduce an undocumented ten-row cap for normal questions.
         browse_limit = ""
-        sql = f'SELECT * FROM "{target_table}"{where_clause}{browse_limit};'
+        sql = f'SELECT {cols_proj} FROM "{target_table}"{where_clause}{browse_limit};'
         if where_filters:
             suffix = "all matching records"
             explanation = f"Retrieves records from '{target_table}' where {', '.join(filter_descriptions)} ({suffix})."
