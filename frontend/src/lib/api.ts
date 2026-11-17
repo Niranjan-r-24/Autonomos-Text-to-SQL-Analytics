@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { SchemaInfo, QueryResult, HistoryItem, RagResult } from '@/types';
+import { SchemaInfo, QueryResult, HistoryItem, RagResult, DatasetMetadata } from '@/types';
 
 const getApiBase = () => {
   if (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) {
@@ -85,14 +85,35 @@ export async function fetchSchema(refresh: boolean = false): Promise<SchemaInfo>
   }
 }
 
+export async function fetchDatasets(): Promise<DatasetMetadata[]> {
+  try {
+    const res = await client.get<{ status: string; datasets: DatasetMetadata[] }>(`/api/datasets?_t=${Date.now()}`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
+    });
+    return Array.isArray(res.data?.datasets) ? res.data.datasets : [];
+  } catch (err) {
+    console.warn('API fetchDatasets failed:', err);
+    return [];
+  }
+}
+
 export async function executeQuery(
   question: string,
   provider?: string,
-  apiKey?: string
+  apiKey?: string,
+  tableName?: string,
+  datasetId?: string
 ): Promise<QueryResult> {
   const res = await client.post<QueryResult>('/api/query', {
     question,
     query: question,
+    tableName: tableName || undefined,
+    table_name: tableName || undefined,
+    datasetId: datasetId || undefined,
+    dataset_id: datasetId || undefined,
     provider: provider || undefined,
     api_key: apiKey || undefined,
   });

@@ -1,12 +1,16 @@
 """
 Database schema inspection and metadata caching module.
 Provides schema-first introspection for LLM grounding and UI schema viewer.
+Reads directly from active database and persistent `datasets` registry.
 """
 from typing import Dict, Any, List, Optional
 from sqlalchemy import inspect, text
 from backend.app.db import engine
+from backend.app.datasets import list_datasets
 
 _schema_cache: Optional[Dict[str, Any]] = None
+
+INTERNAL_TABLES = {"datasets", "_uploaded_files_catalog"}
 
 def invalidate_schema_cache():
     """Invalidate cached schema metadata to force fresh database inspection."""
@@ -16,7 +20,7 @@ def invalidate_schema_cache():
 def get_database_schema(use_cache: bool = True) -> Dict[str, Any]:
     """
     Introspect the current database tables, columns, primary keys, foreign keys,
-    row counts, sample values, and uploaded file catalog.
+    row counts, sample values, uploaded file catalog, and persistent datasets.
     """
     global _schema_cache
     if use_cache and _schema_cache is not None:
@@ -25,15 +29,28 @@ def get_database_schema(use_cache: bool = True) -> Dict[str, Any]:
     inspector = inspect(engine)
     all_raw_tables = inspector.get_table_names()
 
-    # Filter internal catalog tables starting with '_' from standard business table list
-    table_names = [t for t in all_raw_tables if not t.startswith("_")]
+    # Filter internal catalog tables starting with '_' or 'datasets' from standard business table list
+    table_names = [t for t in all_raw_tables if not t.startswith("_") and t.lower() not in INTERNAL_TABLES]
+
+    # Fetch persistent datasets
+    try:
+        registered_datasets = list_datasets()
+    except Exception:
+        registered_datasets = []
+
+    # Ensure all registered dataset tables are included in table_names
+    for ds in registered_datasets:
+        tbl = ds.get("table_name")
+        if tbl and tbl not in table_names and tbl in all_raw_tables:
+            table_names.append(tbl)
 
     schema_info: Dict[str, Any] = {
         "status": "success",
         "tables": {},
         "table_names": table_names,
         "relationships": [],
-        "uploaded_files": []
+        "uploaded_files": [],
+        "datasets": registered_datasets
     }
 
     # Fetch uploaded files catalog
@@ -46,10 +63,21 @@ def get_database_schema(use_cache: bool = True) -> Dict[str, Any]:
     with engine.connect() as conn:
         for table_name in table_names:
             columns_info = []
-            columns = inspector.get_columns(table_name)
-            pk_constraint = inspector.get_pk_constraint(table_name)
-            pk_columns = set(pk_constraint.get("constrained_columns", [])) if pk_constraint else set()
-            fks = inspector.get_foreign_keys(table_name)
+            try:
+                columns = inspector.get_columns(table_name)
+            except Exception:
+                columns = []
+
+            try:
+                pk_constraint = inspector.get_pk_constraint(table_name)
+                pk_columns = set(pk_constraint.get("constrained_columns", [])) if pk_constraint else set()
+            except Exception:
+                pk_columns = set()
+
+            try:
+                fks = inspector.get_foreign_keys(table_name)
+            except Exception:
+                fks = []
 
             for col in columns:
                 col_name = col["name"]
@@ -105,7 +133,7 @@ def format_schema_for_prompt(schema_info: Dict[str, Any], excluded_tables: Optio
     lines = []
     
     for tbl_name, tbl_data in schema_info.get("tables", {}).items():
-        if tbl_name in excluded or tbl_name.startswith("_"):
+        if tbl_name in excluded or tbl_name.startswith("_") or tbl_name.lower() in INTERNAL_TABLES:
             continue
         cols_repr = [f"{c['name']} ({c['type']})" for c in tbl_data["columns"]]
         lines.append(f"Table: {tbl_name}")

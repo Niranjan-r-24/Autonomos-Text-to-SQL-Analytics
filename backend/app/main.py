@@ -21,6 +21,7 @@ from backend.app.seed import seed_benchmark_data
 from backend.app.schema import get_database_schema, invalidate_schema_cache
 from backend.app.sql_safety import validate_safe_sql, enforce_query_limit, extract_table_references
 from backend.app.csv_loader import load_csv_to_table, load_document_to_table
+from backend.app.datasets import list_datasets, find_dataset_by_name, find_dataset_by_id
 from backend.app.text2sql import generate_sql_for_question, is_audit_query
 from backend.app.nl_insights import generate_natural_language_answer, recommend_chart_config
 from backend.app.rag import doc_store
@@ -75,8 +76,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 class QueryRequest(BaseModel):
     question: Optional[str] = Field(None, description="Natural language question to query.")
     query: Optional[str] = Field(None, description="Alias for question.")
+    table_name: Optional[str] = Field(None, alias="tableName", description="Target dataset table name.")
+    dataset_id: Optional[str] = Field(None, alias="datasetId", description="Target dataset ID.")
     provider: Optional[str] = Field(None, description="AI provider ('gemini', 'openai', or empty for default).")
     api_key: Optional[str] = Field(None, description="Optional custom API key.")
+
+    class Config:
+        populate_by_name = True
 
     def get_question(self) -> str:
         q = (self.question or self.query or "").strip()
@@ -119,6 +125,7 @@ def root():
         "endpoints": {
             "health": "/health",
             "schema": "/api/schema",
+            "datasets": "/api/datasets",
             "query": "/api/query",
             "execute_sql": "/api/execute-sql",
             "upload_csv": "/api/upload-csv",
@@ -129,11 +136,22 @@ def root():
         }
     }
 
-# ----------------- Schema Inspection Endpoints -----------------
+# ----------------- Schema & Datasets Inspection Endpoints -----------------
+
+@app.get("/api/datasets")
+def get_datasets_endpoint(response: Response):
+    """Retrieve all persistent registered datasets."""
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return {
+        "status": "success",
+        "datasets": list_datasets()
+    }
 
 @app.get("/api/schema")
 def get_schema(response: Response, refresh: bool = False):
-    """Inspect active database tables, columns, data types, sample values, row counts, and uploaded files."""
+    """Inspect active database tables, columns, data types, sample values, row counts, and persistent datasets."""
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -154,6 +172,7 @@ def get_schema(response: Response, refresh: bool = False):
         "table_names": schema.get("table_names", []),
         "relationships": schema.get("relationships", []),
         "uploaded_files": schema.get("uploaded_files", []),
+        "datasets": schema.get("datasets", list_datasets()),
         "indexed_documents": indexed_docs
     }
 
@@ -168,9 +187,9 @@ async def upload_csv(
 ):
     """
     Universal dataset and document ingestion endpoint.
-    - If tabular (CSV, TSV, JSON, Excel): creates typed SQL table.
+    - If tabular (CSV, TSV, JSON, Excel): creates typed SQL table and commits canonical `datasets` metadata.
     - If document (PDF, DOCX, TXT, MD): creates document SQL table and indexes for RAG.
-    Both always appear in Schema Explorer and the uploaded catalog.
+    Returns canonical datasetId and tableName.
     """
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     response.headers["Pragma"] = "no-cache"
@@ -190,17 +209,15 @@ async def upload_csv(
             "type": res.get("file_type", "dataset"),
             "message": f"File '{filename}' ingested and table '{res['table_name']}' created successfully.",
             "dataset": res,
+            "datasetId": res.get("dataset_id"),
+            "dataset_id": res.get("dataset_id"),
+            "tableName": res["table_name"],
             "table_name": res["table_name"],
             "row_count": res["row_count"],
             "columns": res["columns"],
             "active_tables": fresh_schema.get("table_names", []),
-            "schema": {
-                "status": "success",
-                "tables": fresh_schema.get("tables", {}),
-                "table_names": fresh_schema.get("table_names", []),
-                "relationships": fresh_schema.get("relationships", []),
-                "uploaded_files": fresh_schema.get("uploaded_files", [])
-            }
+            "datasets": list_datasets(),
+            "schema": fresh_schema
         }
     except Exception as parse_err:
         logger.error("File ingestion error for '%s': %s", filename, str(parse_err))
@@ -215,14 +232,9 @@ async def upload_csv(
 async def process_natural_language_query(req: QueryRequest):
     """
     End-to-end schema-first Text-to-SQL analytics pipeline.
-    1. Retrieve schema
-    2. Understand intent and select tables
-    3. Generate SQL query
-    4. Validate SQL safety and table references
-    5. Execute query on actual database
-    6. Generate grounded natural-language answer
-    7. Recommend chart visualization
-    8. Record execution in history
+    Resolves canonical table from persistent datasets metadata.
+    Rejects unknown/missing requested tables with 422.
+    Never falls back to unrelated tables like audit_logs.
     """
     start_time = time.perf_counter()
     try:
@@ -230,28 +242,65 @@ async def process_natural_language_query(req: QueryRequest):
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
+    # Resolve target table from datasetId / tableName if provided
+    target_table = (req.table_name or "").strip()
+    if req.dataset_id and not target_table:
+        ds = find_dataset_by_id(req.dataset_id)
+        if ds:
+            target_table = ds["table_name"]
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Dataset table with id '{req.dataset_id}' is unavailable; no query executed."
+            )
+
+    current_schema = get_database_schema(use_cache=True)
+    known_tables = set(t.lower() for t in current_schema.get("table_names", []))
+    for ds in list_datasets():
+        known_tables.add(ds["table_name"].lower())
+
+    # If target_table was explicitly passed, validate that it exists
+    if target_table:
+        clean_target = target_table.lower()
+        ds_match = find_dataset_by_name(clean_target)
+        if ds_match:
+            target_table = ds_match["table_name"]
+        elif clean_target in known_tables:
+            target_table = clean_target
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Dataset table {target_table} is unavailable; no query executed."
+            )
+    else:
+        # Check if question explicitly mentions a registered dataset
+        for ds in list_datasets():
+            tbl = ds["table_name"]
+            if re.search(rf"\b{re.escape(tbl)}\b", question, re.IGNORECASE):
+                target_table = tbl
+                break
+
     # Self-heal benchmark schema if audit_logs is asked for but missing
     if is_audit_query(question):
-        current_schema = get_database_schema(use_cache=True)
-        if "audit_logs" not in current_schema.get("table_names", []):
+        if "audit_logs" not in known_tables:
             seed_benchmark_data(force=False)
             invalidate_schema_cache()
+            current_schema = get_database_schema(use_cache=False)
+            known_tables = set(t.lower() for t in current_schema.get("table_names", []))
 
     # Direct safe SQL execution shortcut if input is already a raw SELECT/WITH query
     trimmed = question.strip().rstrip(";")
     if re.match(r"^(SELECT|WITH)\b", trimmed, re.IGNORECASE):
         is_safe, safety_err = validate_safe_sql(trimmed)
         if is_safe:
-            schema_info = get_database_schema(use_cache=False)
-            all_known = set(t.lower() for t in schema_info.get("table_names", []))
             ref_tables = extract_table_references(trimmed)
-            if "audit_logs" in ref_tables and "audit_logs" not in all_known:
+            if "audit_logs" in ref_tables and "audit_logs" not in known_tables and is_audit_query(question):
                 seed_benchmark_data(force=False)
                 invalidate_schema_cache()
-                schema_info = get_database_schema(use_cache=False)
-                all_known = set(t.lower() for t in schema_info.get("table_names", []))
+                current_schema = get_database_schema(use_cache=False)
+                known_tables = set(t.lower() for t in current_schema.get("table_names", []))
 
-            if ref_tables and all(t in all_known for t in ref_tables):
+            if ref_tables and all(t.lower() in known_tables for t in ref_tables):
                 safe_sql = enforce_query_limit(trimmed)
                 try:
                     columns, rows, exec_ms = execute_raw_sql(safe_sql)
@@ -286,7 +335,8 @@ async def process_natural_language_query(req: QueryRequest):
     sql, provider_used, error = await generate_sql_for_question(
         question=question,
         provider=req.provider,
-        api_key=req.api_key
+        api_key=req.api_key,
+        target_table=target_table
     )
 
     if error:
@@ -300,6 +350,11 @@ async def process_natural_language_query(req: QueryRequest):
             provider=provider_used,
             error=error
         )
+        if (req.table_name or req.dataset_id) and "is unavailable" in error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=error
+            )
         return {
             "status": "error",
             "question": question,

@@ -13,6 +13,18 @@ export interface TableInfo {
   foreign_keys: any[];
 }
 
+export interface DatasetMetadata {
+  dataset_id: string;
+  datasetId?: string;
+  table_name: string;
+  tableName?: string;
+  source_file_name: string;
+  columns_json: string;
+  columns?: ColumnInfo[];
+  row_count: number;
+  created_at?: string;
+}
+
 export interface UploadedFileInfo {
   id?: number;
   filename: string;
@@ -42,6 +54,7 @@ export interface SchemaInfo {
     to_column: string;
   }>;
   uploaded_files?: UploadedFileInfo[];
+  datasets?: DatasetMetadata[];
   indexed_documents?: IndexedDocInfo[];
 }
 

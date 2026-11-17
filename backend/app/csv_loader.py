@@ -2,11 +2,13 @@
 Dataset & Document ingestion module.
 Handles CSV, TSV, JSON, Excel, PDF, DOCX, TXT, and Markdown upload,
 validation, schema inference, dynamic table creation, RAG indexing,
-and permanent uploaded file catalog tracking.
+and permanent uploaded file catalog tracking in `datasets` table.
 """
 import io
 import re
 import time
+import uuid
+import json
 import zipfile
 import xml.etree.ElementTree as ET
 from typing import Dict, Any, List, Tuple, Optional
@@ -15,6 +17,7 @@ from sqlalchemy import text
 from backend.app.db import engine
 from backend.app.schema import invalidate_schema_cache
 from backend.app.rag import doc_store
+from backend.app.datasets import save_dataset_metadata, init_datasets_table, list_datasets
 
 RESERVED_SQL_WORDS = {
     "select", "table", "from", "where", "order", "group", "by", "limit", "join",
@@ -84,8 +87,11 @@ def init_uploaded_catalog():
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """
-    with engine.begin() as conn:
-        conn.execute(text(create_sql))
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(create_sql))
+    except Exception:
+        pass
 
 def record_uploaded_file(
     filename: str,
@@ -97,27 +103,29 @@ def record_uploaded_file(
 ):
     """Save metadata of uploaded dataset or document in catalog."""
     init_uploaded_catalog()
-    with engine.begin() as conn:
-        # Delete prior record for same table if replacing
-        conn.execute(
-            text('DELETE FROM "_uploaded_files_catalog" WHERE "table_name" = :t OR "filename" = :f'),
-            {"t": table_name, "f": filename}
-        )
-        conn.execute(
-            text("""
-            INSERT INTO "_uploaded_files_catalog"
-            (filename, table_name, file_type, row_count, column_count, columns_summary)
-            VALUES (:filename, :table_name, :file_type, :row_count, :column_count, :columns_summary)
-            """),
-            {
-                "filename": filename,
-                "table_name": table_name,
-                "file_type": file_type,
-                "row_count": row_count,
-                "column_count": column_count,
-                "columns_summary": columns_summary
-            }
-        )
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text('DELETE FROM "_uploaded_files_catalog" WHERE "table_name" = :t OR "filename" = :f'),
+                {"t": table_name, "f": filename}
+            )
+            conn.execute(
+                text("""
+                INSERT INTO "_uploaded_files_catalog"
+                (filename, table_name, file_type, row_count, column_count, columns_summary)
+                VALUES (:filename, :table_name, :file_type, :row_count, :column_count, :columns_summary)
+                """),
+                {
+                    "filename": filename,
+                    "table_name": table_name,
+                    "file_type": file_type,
+                    "row_count": row_count,
+                    "column_count": column_count,
+                    "columns_summary": columns_summary
+                }
+            )
+    except Exception:
+        pass
 
 def get_uploaded_files_catalog() -> List[Dict[str, Any]]:
     """Retrieve all uploaded datasets and documents from catalog."""
@@ -213,7 +221,7 @@ def load_document_to_table(
 ) -> Dict[str, Any]:
     """
     Convert a text document (PDF, DOCX, TXT, MD) into a structured SQL database table
-    and simultaneously index it in RAG intelligence.
+    and simultaneously index it in RAG intelligence and the persistent `datasets` table.
     """
     text_content = extract_text_from_file(file_bytes, filename)
     if not text_content.strip():
@@ -226,7 +234,6 @@ def load_document_to_table(
 
     sections = []
     for idx, para in enumerate(raw_paras, start=1):
-        # Derive a short title from the first 50 chars of paragraph
         first_line = para.split("\n")[0].strip()
         title = first_line[:60] if len(first_line) > 5 else f"Section {idx}"
         sections.append({
@@ -272,7 +279,25 @@ def load_document_to_table(
     doc_id = f"doc_{sanitized_table}_{int(time.time())}"
     rag_res = doc_store.add_document(doc_id, filename, text_content)
 
-    # Record in catalog
+    col_info = [
+        {"name": "section_number", "type": "INTEGER"},
+        {"name": "title", "type": "TEXT"},
+        {"name": "content", "type": "TEXT"},
+        {"name": "word_count", "type": "INTEGER"},
+        {"name": "file_name", "type": "TEXT"}
+    ]
+
+    # Commit to canonical `datasets` table
+    dataset_id = f"ds_{uuid.uuid4().hex[:12]}"
+    save_dataset_metadata(
+        dataset_id=dataset_id,
+        table_name=sanitized_table,
+        source_file_name=filename,
+        columns=col_info,
+        row_count=len(df)
+    )
+
+    # Record in uploaded files catalog
     col_summary = "section_number, title, content, word_count, file_name"
     record_uploaded_file(
         filename=filename,
@@ -286,22 +311,19 @@ def load_document_to_table(
     # Invalidate schema cache so schema inspector catches table immediately
     invalidate_schema_cache()
 
-    col_info = [
-        {"name": "section_number", "type": "INTEGER"},
-        {"name": "title", "type": "TEXT"},
-        {"name": "content", "type": "TEXT"},
-        {"name": "word_count", "type": "INTEGER"},
-        {"name": "file_name", "type": "TEXT"}
-    ]
-
     return {
         "status": "success",
-        "file_type": "document",
+        "datasetId": dataset_id,
+        "dataset_id": dataset_id,
+        "tableName": sanitized_table,
         "table_name": sanitized_table,
+        "source_file_name": filename,
         "row_count": len(df),
         "columns": col_info,
-        "rag_chunks": rag_res.get("total_chunks", 0),
-        "filename": filename
+        "columns_json": json.dumps(col_info),
+        "file_type": "document",
+        "filename": filename,
+        "rag_chunks": rag_res.get("total_chunks", 0)
     }
 
 def parse_bytes_to_dataframe(file_bytes: bytes, filename: Optional[str] = None) -> pd.DataFrame:
@@ -353,9 +375,9 @@ def load_csv_to_table(
 ) -> Dict[str, Any]:
     """
     Universal file ingestion handler:
-    - Tabular files (CSV, TSV, Excel, JSON) -> Typed tabular SQL table.
-    - Document files (PDF, DOCX, TXT, MD) -> Structured document SQL table + RAG indexing.
-    Always records in _uploaded_files_catalog and invalidates schema cache.
+    - Tabular files (CSV, TSV, Excel, JSON) -> Typed tabular SQL table + canonical `datasets` metadata.
+    - Document files (PDF, DOCX, TXT, MD) -> Structured document SQL table + canonical `datasets` metadata.
+    Always commits both table data and `datasets` metadata to the shared persistent database.
     """
     if not file_bytes:
         raise ValueError("Uploaded file is empty.")
@@ -366,7 +388,6 @@ def load_csv_to_table(
 
     # Check if document format
     if fname.endswith((".pdf", ".docx", ".doc", ".md", ".txt")):
-        # Check if it might be a CSV disguised as TXT
         is_tabular = False
         try:
             df = parse_bytes_to_dataframe(file_bytes, filename=filename)
@@ -440,6 +461,18 @@ def load_csv_to_table(
         chunksize=1000
     )
 
+    col_info = [{"name": c[0], "type": c[1]} for c in col_types]
+
+    # Commit both table data AND canonical `datasets` metadata
+    dataset_id = f"ds_{uuid.uuid4().hex[:12]}"
+    save_dataset_metadata(
+        dataset_id=dataset_id,
+        table_name=sanitized_table,
+        source_file_name=filename or f"{sanitized_table}.csv",
+        columns=col_info,
+        row_count=len(df)
+    )
+
     # Record in uploaded files catalog
     col_summary = ", ".join(c[0] for c in col_types[:8])
     record_uploaded_file(
@@ -456,9 +489,14 @@ def load_csv_to_table(
 
     return {
         "status": "success",
-        "file_type": "dataset",
+        "datasetId": dataset_id,
+        "dataset_id": dataset_id,
+        "tableName": sanitized_table,
         "table_name": sanitized_table,
+        "source_file_name": filename or f"{sanitized_table}.csv",
         "row_count": len(df),
-        "columns": [{"name": c[0], "type": c[1]} for c in col_types],
+        "columns": col_info,
+        "columns_json": json.dumps(col_info),
+        "file_type": "dataset",
         "filename": filename or f"{sanitized_table}.csv"
     }

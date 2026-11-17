@@ -42,7 +42,7 @@ export function DatasetManager({ onDatasetUploaded, onNavigateToQuery, onNavigat
       setSuccessInfo(res);
       setFile(null);
       setTableName('');
-      onDatasetUploaded(res.schema);
+      onDatasetUploaded(res);
     } catch (err: any) {
       setErrorMessage(formatErrorMessage(err, 'Dataset upload failed.'));
     } finally {

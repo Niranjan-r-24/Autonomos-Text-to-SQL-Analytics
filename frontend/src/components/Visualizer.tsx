@@ -19,18 +19,24 @@ import {
 import { ChartConfig } from '@/types';
 
 interface VisualizerProps {
-  config: ChartConfig;
-  data: Record<string, any>[];
+  config?: ChartConfig | null;
+  data?: Record<string, any>[];
+  chartConfig?: ChartConfig | null;
+  rows?: Record<string, any>[];
+  columns?: string[];
 }
 
 const COLORS = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#EC4899', '#14B8A6'];
 
-export function Visualizer({ config, data }: VisualizerProps) {
+export function Visualizer({ config, data, chartConfig, rows }: VisualizerProps) {
   const [isClient, setIsClient] = React.useState(false);
 
   React.useEffect(() => {
     setIsClient(true);
   }, []);
+
+  const activeConfig = config || chartConfig;
+  const activeData = data || rows || [];
 
   if (!isClient) {
     return (
@@ -40,7 +46,15 @@ export function Visualizer({ config, data }: VisualizerProps) {
     );
   }
 
-  if (!data || data.length === 0) {
+  if (!activeConfig) {
+    return (
+      <div className="h-64 flex items-center justify-center text-slate-500 text-sm">
+        No chart configuration available.
+      </div>
+    );
+  }
+
+  if (!activeData || activeData.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center text-slate-500 text-sm">
         No data available for visualization.
@@ -48,7 +62,7 @@ export function Visualizer({ config, data }: VisualizerProps) {
     );
   }
 
-  const { chart_type, x_axis_key, y_axis_keys, title } = config;
+  const { chart_type, x_axis_key, y_axis_keys, title } = activeConfig;
 
   return (
     <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
@@ -62,7 +76,7 @@ export function Visualizer({ config, data }: VisualizerProps) {
       <div className="h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
           {chart_type === 'line' ? (
-            <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+            <LineChart data={activeData} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis dataKey={x_axis_key} stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
               <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
@@ -90,7 +104,7 @@ export function Visualizer({ config, data }: VisualizerProps) {
               />
               <Legend />
               <Pie
-                data={data}
+                data={activeData}
                 dataKey={y_axis_keys[0]}
                 nameKey={x_axis_key}
                 cx="50%"
@@ -98,13 +112,13 @@ export function Visualizer({ config, data }: VisualizerProps) {
                 outerRadius={90}
                 label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
               >
-                {data.map((_, index) => (
+                {activeData.map((_, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
             </PieChart>
           ) : (
-            <BarChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
+            <BarChart data={activeData} margin={{ top: 10, right: 20, left: 0, bottom: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis dataKey={x_axis_key} stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />
               <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 12 }} />

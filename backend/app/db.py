@@ -1,6 +1,7 @@
 """
 Database connection and session management module.
 Compatible with SQLite (local development) and PostgreSQL (production).
+Provides connection pooling and pre-ping to ensure persistent connections.
 """
 import time
 from datetime import datetime, date
@@ -12,14 +13,23 @@ from backend.app.config import DATABASE_URL, MAX_QUERY_LIMIT
 
 # Engine configuration
 is_sqlite = DATABASE_URL.startswith("sqlite")
-connect_args = {"check_same_thread": False} if is_sqlite else {}
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args=connect_args,
-    pool_pre_ping=True,
-    echo=False
-)
+if is_sqlite:
+    connect_args = {"check_same_thread": False, "timeout": 30}
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+        echo=False
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=300,
+        pool_pre_ping=True,
+        echo=False
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

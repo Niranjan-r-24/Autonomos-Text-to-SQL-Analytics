@@ -10,12 +10,14 @@ import { DatasetManager } from '@/components/DatasetManager';
 import { RagWorkspace } from '@/components/RagWorkspace';
 import { HistoryWorkspace } from '@/components/HistoryWorkspace';
 import { SettingsModal } from '@/components/SettingsModal';
-import { fetchSchema, seedDatabase } from '@/lib/api';
-import { SchemaInfo, QueryResult } from '@/types';
+import { fetchSchema, fetchDatasets, seedDatabase } from '@/lib/api';
+import { SchemaInfo, DatasetMetadata } from '@/types';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
   const [schema, setSchema] = useState<SchemaInfo | null>(null);
+  const [datasets, setDatasets] = useState<DatasetMetadata[]>([]);
+  const [selectedDataset, setSelectedDataset] = useState<DatasetMetadata | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Settings & Provider
@@ -29,14 +31,24 @@ export default function Home() {
   const loadSchema = async (refresh: boolean = false) => {
     setIsRefreshing(true);
     try {
-      const data = await fetchSchema(refresh);
-      if (data && typeof data === 'object' && data.tables) {
-        setSchema(data);
+      const [schemaData, datasetsData] = await Promise.all([
+        fetchSchema(refresh),
+        fetchDatasets()
+      ]);
+
+      if (schemaData && typeof schemaData === 'object' && schemaData.tables) {
+        setSchema(schemaData);
       } else {
         setSchema({ status: 'ok', tables: {}, table_names: [], relationships: [] });
       }
+
+      if (Array.isArray(datasetsData)) {
+        setDatasets(datasetsData);
+      } else if (schemaData?.datasets) {
+        setDatasets(schemaData.datasets);
+      }
     } catch (err) {
-      console.error('Failed to load schema:', err);
+      console.error('Failed to load schema and datasets:', err);
       setSchema({ status: 'error', tables: {}, table_names: [], relationships: [] });
     } finally {
       setIsRefreshing(false);
@@ -68,8 +80,19 @@ export default function Home() {
     }
   };
 
-  const handleNavigateToQuery = (q: string) => {
+  const handleNavigateToQuery = (q: string, ds?: DatasetMetadata | null) => {
     setCurrentQuery(q);
+    if (ds) {
+      setSelectedDataset(ds);
+    } else {
+      // Find matching dataset from question
+      for (const d of datasets) {
+        if (q.toLowerCase().includes(d.table_name.toLowerCase())) {
+          setSelectedDataset(d);
+          break;
+        }
+      }
+    }
     setActiveTab('query');
   };
 
@@ -87,13 +110,18 @@ export default function Home() {
     loadSchema(false);
   }, []);
 
+  const totalActiveTables = Math.max(
+    schema?.table_names?.length || 0,
+    datasets.length
+  );
+
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        tableCount={schema?.table_names?.length || 0}
+        tableCount={totalActiveTables}
       />
 
       {/* Main Content Area */}
@@ -103,7 +131,7 @@ export default function Home() {
           onRefreshSchema={() => loadSchema(true)}
           onReseedData={handleReseed}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          tableCount={schema?.table_names?.length || 0}
+          tableCount={totalActiveTables}
           provider={provider}
           isRefreshing={isRefreshing}
         />
@@ -114,7 +142,7 @@ export default function Home() {
             <Overview
               schema={schema}
               onNavigate={setActiveTab}
-              onRunQuickQuery={handleNavigateToQuery}
+              onRunQuickQuery={(q) => handleNavigateToQuery(q)}
             />
           )}
 
@@ -124,6 +152,9 @@ export default function Home() {
               provider={provider}
               apiKey={apiKey}
               initialQuery={currentQuery}
+              datasets={datasets}
+              activeDataset={selectedDataset}
+              onSelectDataset={setSelectedDataset}
             />
           )}
 
@@ -131,21 +162,33 @@ export default function Home() {
             <SchemaExplorer
               schema={schema}
               onRefresh={() => loadSchema(true)}
-              onSelectTableForQuery={handleNavigateToQuery}
+              onSelectTableForQuery={(q) => handleNavigateToQuery(q)}
               isRefreshing={isRefreshing}
             />
           )}
 
           {activeTab === 'datasets' && (
             <DatasetManager
-              onDatasetUploaded={(newSchema?: SchemaInfo) => {
-                if (newSchema && newSchema.tables) {
-                  setSchema(newSchema);
-                } else {
-                  loadSchema(true);
+              onDatasetUploaded={(res?: any) => {
+                if (res?.datasetId || res?.tableName || res?.dataset?.table_name) {
+                  const tbl = res.tableName || res.table_name || res.dataset?.table_name;
+                  const did = res.datasetId || res.dataset_id || res.dataset?.dataset_id;
+                  const newDs: DatasetMetadata = {
+                    dataset_id: did || `ds_${tbl}`,
+                    datasetId: did || `ds_${tbl}`,
+                    table_name: tbl,
+                    tableName: tbl,
+                    source_file_name: res.source_file_name || res.filename || `${tbl}.csv`,
+                    columns_json: res.columns_json || JSON.stringify(res.columns || []),
+                    columns: res.columns || res.dataset?.columns || [],
+                    row_count: res.row_count ?? res.dataset?.row_count ?? 0,
+                    created_at: new Date().toISOString()
+                  };
+                  setSelectedDataset(newDs);
                 }
+                loadSchema(true);
               }}
-              onNavigateToQuery={handleNavigateToQuery}
+              onNavigateToQuery={(q) => handleNavigateToQuery(q, selectedDataset)}
               onNavigateToSchema={() => setActiveTab('schema')}
             />
           )}
@@ -164,7 +207,7 @@ export default function Home() {
           )}
 
           {activeTab === 'history' && (
-            <HistoryWorkspace onRerunQuery={handleNavigateToQuery} />
+            <HistoryWorkspace onRerunQuery={(q) => handleNavigateToQuery(q)} />
           )}
 
           {activeTab === 'settings' && (
