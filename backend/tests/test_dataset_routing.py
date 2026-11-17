@@ -426,3 +426,71 @@ class TestDatasetRouting:
             assert "audit_logs" not in sql, f"Tricky query '{q}' leaked audit_logs into SQL: {sql}"
             for audit_col in ["ip_address", "timestamp", "user_id"]:
                 assert audit_col not in data.get("columns", [])
+
+    def test_12_fail_if_audit_logs_appears_when_table_is_test_sql_orders(self):
+        """
+        Acceptance test 12 (Production Regression Guard):
+        Fail if 'audit_logs' appears in SQL when tableName is 'test_sql_orders'.
+        Also verifies the backend execution guard blocks and throws an error if
+        SQL references audit_logs or anything other than test_sql_orders.
+        """
+        csv_content = (
+            b"id,item,total\n"
+            b"1,Laptop,1200\n"
+            b"2,Mechanical Keyboard,150\n"
+            b"3,Wireless Mouse,80\n"
+            b"4,4K Monitor,450\n"
+            b"5,USB-C Hub,60\n"
+            b"6,Noise Cancelling Headphones,300\n"
+            b"7,Desk Mat,30\n"
+        )
+        upload_res = client.post(
+            "/api/upload",
+            files={"file": ("test_sql_orders.csv", csv_content, "text/csv")}
+        )
+        assert upload_res.status_code == 200
+
+        # Test query across standard and tricky questions
+        test_queries = [
+            "Top 5 highest total",
+            "Show first 5 rows",
+            "What is the total sum",
+            "Audit log of failed items",
+            "Show logs and actions"
+        ]
+
+        for q in test_queries:
+            res = client.post(
+                "/api/query",
+                json={
+                    "question": q,
+                    "tableName": "test_sql_orders",
+                    "active_table": "test_sql_orders",
+                    "table_name": "test_sql_orders",
+                    "provider": "fallback"
+                }
+            )
+            assert res.status_code == 200
+            data = res.json()
+            sql = (data.get("sql") or "").lower()
+            # Must FAIL if audit_logs appears anywhere in SQL when tableName is test_sql_orders
+            assert "audit_logs" not in sql, f"CRITICAL FAILURE: audit_logs appeared in SQL when tableName was test_sql_orders: {sql}"
+            if data.get("success"):
+                assert "test_sql_orders" in sql
+                for row in data.get("rows", []):
+                    assert "ip_address" not in row
+                    assert "action" not in row
+
+        # Direct verification: If generator attempts to produce audit_logs for test_sql_orders,
+        # the backend guard MUST throw ValueError and block database execution
+        pipeline = TextToSqlPipeline(provider="fallback")
+        with pytest.raises(ValueError) as excinfo:
+            pipeline.corrector.heal_and_execute(
+                initial_sql='SELECT * FROM "audit_logs" LIMIT 10;',
+                user_question="Top 5 highest total",
+                schema_info=get_db_schema_info(),
+                execute_fn=lambda sql: {"success": True, "rows": [], "columns": []},
+                target_table="test_sql_orders"
+            )
+        assert "Execution Guard Error" in str(excinfo.value)
+        assert "audit_logs" in str(excinfo.value)

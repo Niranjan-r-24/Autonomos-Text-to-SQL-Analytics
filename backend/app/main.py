@@ -390,10 +390,21 @@ def process_nl_query(req: QueryRequest):
 
     try:
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider)
-        result = pipeline.run(user_question, active_table=canonical_table)
+        result = pipeline.run(user_question, active_table=canonical_table, request_table_name=requested_table)
         result["requested_table"] = canonical_table
         result["available_tables"] = available_tables
         return result
+    except ValueError as ve:
+        logger.error("[API_GUARD_ERROR] %s", str(ve))
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Table reference mismatch",
+                "message": str(ve),
+                "requested_table": canonical_table,
+                "available_tables": available_tables
+            }
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -465,22 +476,29 @@ def execute_custom_sql(req: ExecuteSqlRequest):
         )
     canonical_table = matched
 
-    # Security pre-validation: block destructive queries immediately
-    result = execute_safe_query(req.sql.strip())
-    if not result.get("success"):
-        return result
+    # 1. Security pre-validation: block destructive queries immediately
+    from backend.app.services.sql_executor import validate_safe_sql
+    is_safe, sec_err = validate_safe_sql(req.sql.strip())
+    if not is_safe:
+        return {
+            "success": False,
+            "error": sec_err or "Security Error: Only read-only SELECT queries are permitted.",
+            "sql": req.sql.strip(),
+            "rows": [],
+            "columns": [],
+            "row_count": 0
+        }
 
     from backend.app.services.sql_generator import SQLGenerator
     sql_text = req.sql.strip()
     ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_text, re.IGNORECASE)
 
-    # Requirement 8: Server logs for executed table refs
-    logger.info(
-        "[ROUTING_LOG] Execute-SQL request: requested_tableName='%s', canonical_table='%s', executed_sql_table_refs=%s",
-        requested_table, canonical_table, ref_tables
-    )
-
-    if not SQLGenerator._sql_references_table(sql_text, canonical_table):
+    # Backend guard immediately before database execution:
+    if not SQLGenerator._sql_references_table(sql_text, canonical_table) or ("audit_logs" in [t.lower() for t in ref_tables]):
+        logger.error(
+            "[EXECUTION_GUARD_VIOLATION] Execute-SQL referenced unpermitted table(s) %s outside '%s'. SQL: '%s'",
+            ref_tables, canonical_table, sql_text
+        )
         raise HTTPException(
             status_code=400,
             detail={
@@ -491,6 +509,18 @@ def execute_custom_sql(req: ExecuteSqlRequest):
                 "available_tables": available_tables
             }
         )
+
+    # Requirement 5: Log exact required values
+    logger.info("request.tableName = %s", requested_table)
+    logger.info("selectedTable = %s", requested_table)
+    logger.info("schema.tableName = %s", canonical_table)
+    logger.info("generatedSql = %s", sql_text)
+    logger.info("executedSql = %s", sql_text)
+
+    # Database execution
+    result = execute_safe_query(sql_text)
+    if not result.get("success"):
+        return result
     if result.get("success"):
         pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider or "gemini")
         visualization = pipeline._infer_visualization(

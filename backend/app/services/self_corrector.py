@@ -31,7 +31,8 @@ class SelfCorrectionService:
         initial_sql: str,
         user_question: str,
         schema_info: Dict[str, Any],
-        execute_fn: Any
+        execute_fn: Any,
+        target_table: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Executes SQL and automatically performs self-correction if an error is encountered.
@@ -41,6 +42,7 @@ class SelfCorrectionService:
             user_question: The original user question.
             schema_info: Structured database schema dictionary.
             execute_fn: Function that safely executes SQL and returns a dict with 'success', 'rows', 'columns', 'error'.
+            target_table: Optional canonical table name to strictly constrain execution.
 
         Returns:
             Dict containing:
@@ -57,6 +59,31 @@ class SelfCorrectionService:
         correction_history: List[Dict[str, Any]] = []
 
         for attempt in range(1, self.max_retries + 1):
+            if target_table:
+                # Backend guard immediately before database execution
+                ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", current_sql, re.IGNORECASE)
+                cte_matches = re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\b|\,\s*([a-zA-Z0-9_]+)\s+AS\s*\(", current_sql, re.IGNORECASE)
+                cte_names = {m[0] or m[1] for m in cte_matches if m[0] or m[1]}
+                actual_refs = [t for t in ref_tables if t.lower() not in {c.lower() for c in cte_names}]
+                
+                permitted = {target_table.lower()}
+                table_meta = schema_info.get(target_table, {}) if schema_info else {}
+                for rel in table_meta.get("relationships", []):
+                    if rel.get("to_table") and rel.get("to_table").lower() != "audit_logs":
+                        permitted.add(rel["to_table"].lower())
+                    if rel.get("from_table") and rel.get("from_table").lower() != "audit_logs":
+                        permitted.add(rel["from_table"].lower())
+                
+                unpermitted = [t for t in actual_refs if t.lower() not in permitted]
+                if unpermitted or ("audit_logs" in [t.lower() for t in actual_refs]):
+                    logger.error(
+                        "[SELF_CORRECTION_GUARD_VIOLATION] SQL references unauthorized table(s) %s outside target_table '%s'. SQL: %s",
+                        unpermitted or ['audit_logs'], target_table, current_sql
+                    )
+                    raise ValueError(
+                        f"Execution Guard Error: SQL references table(s) {unpermitted or ['audit_logs']} other than tableName '{target_table}'."
+                    )
+
             logger.info("Self-Correction: Execution attempt %d/%d for query: %s", attempt, self.max_retries, current_sql)
             exec_res = execute_fn(current_sql)
 

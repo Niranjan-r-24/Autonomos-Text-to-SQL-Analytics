@@ -168,10 +168,13 @@ def get_db_schema_info(force_refresh: bool = False) -> Dict[str, Any]:
                 except Exception as e:
                     logger.warning("Failed to count rows for table %s: %s", table, e)
 
-                # Fetch sample rows (up to 10) for grounding and dynamic value matching
+                # Fetch sample rows for grounding and dynamic value matching
                 sample_rows: List[Dict[str, Any]] = []
                 try:
-                    res = conn.execute(text(f'SELECT * FROM "{table}" LIMIT 10'))
+                    if table.lower() == "audit_logs":
+                        res = conn.execute(text('SELECT id, action, status, user_id, ip_address, timestamp FROM audit_logs LIMIT 5'))
+                    else:
+                        res = conn.execute(text(f'SELECT * FROM "{table}" LIMIT 10'))
                     cols = list(res.keys())
                     sample_rows = [dict(zip(cols, row)) for row in res.fetchall()]
                 except Exception as e:

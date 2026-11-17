@@ -41,7 +41,7 @@ class TextToSqlPipeline:
         self.interpreter = BusinessInsightsInterpreter(api_key=api_key, provider=provider)
         self.corrector = SelfCorrectionService(max_retries=3, api_key=api_key, provider=provider)
 
-    def run(self, user_question: str, active_table: Optional[str] = None) -> Dict[str, Any]:
+    def run(self, user_question: str, active_table: Optional[str] = None, request_table_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Executes the full multi-agent pipeline for a user question.
         """
@@ -381,13 +381,61 @@ class TextToSqlPipeline:
 
         # Step 3: Safe Execution & Self-Correction Agent
         t_exec = time.time()
-        exec_ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_query, re.IGNORECASE)
-        logger.info("[ROUTING_LOG] Executing SQL against table references: %s", exec_ref_tables)
+
+        # BACKEND GUARD IMMEDIATELY BEFORE DATABASE EXECUTION:
+        # - receive tableName from the request
+        # - parse table references from generated SQL
+        # - if SQL references anything other than tableName, throw an error and log both values.
+        enforced_table = request_table_name or active_table
+        if enforced_table and sql_query:
+            raw_refs = re.findall(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_query, re.IGNORECASE)
+            cte_matches = re.findall(r"\bWITH\s+([a-zA-Z0-9_]+)\s+AS\b|\,\s*([a-zA-Z0-9_]+)\s+AS\s*\(", sql_query, re.IGNORECASE)
+            cte_names = {m[0] or m[1] for m in cte_matches if m[0] or m[1]}
+            parsed_tables = [t for t in raw_refs if t.lower() not in {c.lower() for c in cte_names}]
+
+            permitted_tables = {enforced_table.lower()}
+            table_meta = schema_info.get(enforced_table, {}) if schema_info else {}
+            for rel in table_meta.get("relationships", []):
+                if rel.get("to_table") and rel.get("to_table").lower() != "audit_logs":
+                    permitted_tables.add(rel["to_table"].lower())
+                if rel.get("from_table") and rel.get("from_table").lower() != "audit_logs":
+                    permitted_tables.add(rel["from_table"].lower())
+
+            unpermitted = [t for t in parsed_tables if t.lower() not in permitted_tables]
+            if unpermitted or ("audit_logs" in [t.lower() for t in parsed_tables]):
+                logger.error(
+                    "[EXECUTION_GUARD_VIOLATION] SQL references unauthorized table(s) %s other than tableName '%s'. Generated SQL: '%s'",
+                    unpermitted or ['audit_logs'], enforced_table, sql_query
+                )
+                raise ValueError(
+                    f"Backend Execution Guard: Generated SQL references unauthorized table(s) {unpermitted or ['audit_logs']} other than tableName '{enforced_table}'."
+                )
+
+        # Requirement 5: Log these exact values from the deployed API:
+        # request.tableName, selectedTable, schema.tableName, generatedSql, executedSql
+        executed_sql = sql_query
+        req_tbl_log = request_table_name or active_table or "none"
+        sel_tbl_log = enforced_table or "none"
+        sch_tbl_log = active_table or enforced_table or "none"
+        gen_sql_log = sql_query
+        exec_sql_log = executed_sql
+
+        logger.info(
+            "[DEPLOYED_API_LOG] request.tableName=%s, selectedTable=%s, schema.tableName=%s, generatedSql=%s, executedSql=%s",
+            req_tbl_log, sel_tbl_log, sch_tbl_log, gen_sql_log, exec_sql_log
+        )
+        logger.info("request.tableName = %s", req_tbl_log)
+        logger.info("selectedTable = %s", sel_tbl_log)
+        logger.info("schema.tableName = %s", sch_tbl_log)
+        logger.info("generatedSql = %s", gen_sql_log)
+        logger.info("executedSql = %s", exec_sql_log)
+
         exec_result = self.corrector.heal_and_execute(
             initial_sql=sql_query,
             user_question=user_question,
             schema_info=schema_info,
-            execute_fn=execute_safe_query
+            execute_fn=execute_safe_query,
+            target_table=enforced_table
         )
         exec_time = round(time.time() - t_exec, 3)
 

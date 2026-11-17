@@ -337,10 +337,8 @@ JSON Response Format:
                     if not exists_in_schema:
                         avail = [t for t in schema_info.keys() if t.lower() not in ("audit_logs", "sqlite_sequence")]
                         avail_str = ", ".join(avail) if avail else "none"
-                        # Fallback query must only reference the validated requested table if active_table is set
-                        fallback_tbl = active_table if (active_table and active_table in schema_info and active_table.lower() not in ("audit_logs", "sqlite_sequence")) else m.group(1)
                         return (
-                            f'SELECT * FROM "{fallback_tbl}" LIMIT 10;',
+                            "",
                             f"Database Error: Table '{m.group(1)}' does not exist in the database. Connected tables: {avail_str}. Please verify the table name or check your schema."
                         )
 
