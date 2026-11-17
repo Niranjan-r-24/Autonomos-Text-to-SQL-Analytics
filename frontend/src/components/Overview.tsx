@@ -24,8 +24,8 @@ interface OverviewProps {
 
 export function Overview({ schema, onNavigate, onRunQuickQuery }: OverviewProps) {
   const tableCount = schema?.table_names?.length || 0;
-  const totalRows = schema
-    ? Object.values(schema.tables).reduce((acc, t) => acc + (t.row_count || 0), 0)
+  const totalRows = schema?.tables
+    ? Object.values(schema.tables).reduce((acc, t) => acc + (t?.row_count || 0), 0)
     : 0;
 
   const quickStats = [

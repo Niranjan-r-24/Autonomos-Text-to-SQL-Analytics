@@ -30,9 +30,14 @@ export default function Home() {
     setIsRefreshing(true);
     try {
       const data = await fetchSchema(refresh);
-      setSchema(data);
+      if (data && typeof data === 'object' && data.tables) {
+        setSchema(data);
+      } else {
+        setSchema({ status: 'ok', tables: {}, table_names: [], relationships: [] });
+      }
     } catch (err) {
       console.error('Failed to load schema:', err);
+      setSchema({ status: 'error', tables: {}, table_names: [], relationships: [] });
     } finally {
       setIsRefreshing(false);
     }

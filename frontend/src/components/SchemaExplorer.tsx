@@ -74,7 +74,7 @@ export function SchemaExplorer({
       {/* Table Cards List */}
       <div className="space-y-3">
         {schema.table_names.map((tblName) => {
-          const tbl = schema.tables[tblName];
+          const tbl = schema.tables?.[tblName];
           const isExpanded = expandedTable === tblName;
 
           return (
