@@ -13,6 +13,24 @@ export interface TableInfo {
   foreign_keys: any[];
 }
 
+export interface UploadedFileInfo {
+  id?: number;
+  filename: string;
+  table_name: string;
+  file_type: 'dataset' | 'document';
+  row_count: number;
+  column_count?: number;
+  columns_summary?: string;
+  uploaded_at?: string;
+}
+
+export interface IndexedDocInfo {
+  doc_id: string;
+  filename: string;
+  length?: number;
+  total_chunks?: number;
+}
+
 export interface SchemaInfo {
   status: string;
   tables: Record<string, TableInfo>;
@@ -23,6 +41,8 @@ export interface SchemaInfo {
     to_table: string;
     to_column: string;
   }>;
+  uploaded_files?: UploadedFileInfo[];
+  indexed_documents?: IndexedDocInfo[];
 }
 
 export interface ChartConfig {

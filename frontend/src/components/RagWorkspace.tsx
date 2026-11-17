@@ -1,14 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-import { FileText, Upload, Search, BookOpen, AlertCircle, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { FileText, Upload, Search, BookOpen, AlertCircle, CheckCircle2, ShieldCheck, ArrowRight } from 'lucide-react';
 import { uploadRagDocument, queryRag, formatErrorMessage } from '@/lib/api';
 import { RagResult } from '@/types';
 
-export function RagWorkspace() {
+interface RagWorkspaceProps {
+  onDocumentUploaded?: (schema?: any) => void;
+  onNavigateToSchema?: () => void;
+}
+
+export function RagWorkspace({ onDocumentUploaded, onNavigateToSchema }: RagWorkspaceProps) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [createdTableName, setCreatedTableName] = useState<string | null>(null);
 
   const [ragQueryText, setRagQueryText] = useState('');
   const [querying, setQuerying] = useState(false);
@@ -22,11 +28,18 @@ export function RagWorkspace() {
     setUploading(true);
     setError(null);
     setUploadSuccess(null);
+    setCreatedTableName(null);
 
     try {
       const res = await uploadRagDocument(file);
       setUploadSuccess(res.message);
+      if (res.table_name || res.data?.table_name) {
+        setCreatedTableName(res.table_name || res.data?.table_name);
+      }
       setFile(null);
+      if (onDocumentUploaded) {
+        onDocumentUploaded(res.schema);
+      }
     } catch (err: any) {
       setError(formatErrorMessage(err, 'RAG document upload failed.'));
     } finally {
@@ -61,12 +74,12 @@ export function RagWorkspace() {
             Independent RAG Document Intelligence
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Semantic document retrieval with source citations. Kept strictly isolated from structured SQL database queries.
+            Semantic document retrieval with source citations. Ingested documents are also available as queryable tables in the Schema Explorer.
           </p>
         </div>
         <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded">
           <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Decoupled from Database Schema</span>
+          <span>Synced to Schema & RAG</span>
         </div>
       </div>
 
@@ -80,7 +93,7 @@ export function RagWorkspace() {
             <div className="border border-dashed border-slate-700 hover:border-emerald-500/50 rounded-lg p-4 text-center cursor-pointer transition-colors relative bg-slate-950/40">
               <input
                 type="file"
-                accept=".txt,.md,.pdf,.docx,.json"
+                accept=".txt,.md,.pdf,.docx,.doc,.json"
                 onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)}
                 className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
               />
@@ -96,14 +109,26 @@ export function RagWorkspace() {
               className="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-medium py-2 rounded-lg transition-colors"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>{uploading ? 'Indexing...' : 'Index Document'}</span>
+              <span>{uploading ? 'Ingesting Document...' : 'Index Document'}</span>
             </button>
           </form>
 
           {uploadSuccess && (
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs text-emerald-300 flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <span>{uploadSuccess}</span>
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs text-emerald-300 space-y-2">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <span>{uploadSuccess}</span>
+              </div>
+              {createdTableName && onNavigateToSchema && (
+                <button
+                  type="button"
+                  onClick={onNavigateToSchema}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-emerald-300 hover:text-white underline pt-1"
+                >
+                  <span>View &quot;{createdTableName}&quot; in Schema Explorer</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )}
             </div>
           )}
         </div>

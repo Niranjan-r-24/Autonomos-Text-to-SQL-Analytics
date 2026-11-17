@@ -54,7 +54,13 @@ export function formatErrorMessage(err: any, fallback: string = 'An unexpected e
 
 export async function fetchSchema(refresh: boolean = false): Promise<SchemaInfo> {
   try {
-    const res = await client.get<SchemaInfo>(`/api/schema?refresh=${refresh}`);
+    const timestamp = Date.now();
+    const res = await client.get<SchemaInfo>(`/api/schema?refresh=${refresh}&_t=${timestamp}`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
+    });
     if (res.data && typeof res.data === 'object' && res.data.tables) {
       return res.data;
     }
@@ -63,6 +69,8 @@ export async function fetchSchema(refresh: boolean = false): Promise<SchemaInfo>
       tables: {},
       table_names: [],
       relationships: [],
+      uploaded_files: [],
+      indexed_documents: [],
     };
   } catch (err) {
     console.warn('API fetchSchema failed, using fallback empty schema:', err);
@@ -71,6 +79,8 @@ export async function fetchSchema(refresh: boolean = false): Promise<SchemaInfo>
       tables: {},
       table_names: [],
       relationships: [],
+      uploaded_files: [],
+      indexed_documents: [],
     };
   }
 }

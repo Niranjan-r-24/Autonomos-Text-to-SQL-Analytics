@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, status, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, status, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +20,7 @@ from backend.app.db import engine, execute_raw_sql
 from backend.app.seed import seed_benchmark_data
 from backend.app.schema import get_database_schema, invalidate_schema_cache
 from backend.app.sql_safety import validate_safe_sql, enforce_query_limit, extract_table_references
-from backend.app.csv_loader import load_csv_to_table
+from backend.app.csv_loader import load_csv_to_table, load_document_to_table
 from backend.app.text2sql import generate_sql_for_question, is_audit_query
 from backend.app.nl_insights import generate_natural_language_answer, recommend_chart_config
 from backend.app.rag import doc_store
@@ -132,16 +132,29 @@ def root():
 # ----------------- Schema Inspection Endpoints -----------------
 
 @app.get("/api/schema")
-def get_schema(refresh: bool = False):
-    """Inspect active database tables, columns, data types, sample values, and row counts."""
+def get_schema(response: Response, refresh: bool = False):
+    """Inspect active database tables, columns, data types, sample values, row counts, and uploaded files."""
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     if refresh:
         invalidate_schema_cache()
     schema = get_database_schema(use_cache=not refresh)
+
+    # Format indexed documents from doc_store
+    indexed_docs = [
+        {"doc_id": doc_id, "filename": info.get("filename", "document"), "length": info.get("length", 0)}
+        for doc_id, info in doc_store.documents.items()
+    ]
+
     return {
         "status": "success",
         "tables": schema.get("tables", {}),
         "table_names": schema.get("table_names", []),
-        "relationships": schema.get("relationships", [])
+        "relationships": schema.get("relationships", []),
+        "uploaded_files": schema.get("uploaded_files", []),
+        "indexed_documents": indexed_docs
     }
 
 # ----------------- CSV Upload & Dataset Management -----------------
@@ -149,28 +162,33 @@ def get_schema(refresh: bool = False):
 @app.post("/api/upload")
 @app.post("/api/upload-csv")
 async def upload_csv(
+    response: Response,
     file: UploadFile = File(...),
     table_name: Optional[str] = Form(None)
 ):
     """
     Universal dataset and document ingestion endpoint.
-    - If .csv / .tsv / .txt (tabular): creates a database table with inferred types and refreshes schema.
-    - If .md / .pdf / .docx / .json: indexes document into independent RAG store.
+    - If tabular (CSV, TSV, JSON, Excel): creates typed SQL table.
+    - If document (PDF, DOCX, TXT, MD): creates document SQL table and indexes for RAG.
+    Both always appear in Schema Explorer and the uploaded catalog.
     """
-    filename = (file.filename or "uploaded_file").lower()
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+    filename = file.filename or "uploaded_file"
     content = await file.read()
-    base_name = file.filename.rsplit(".", 1)[0] if "." in file.filename else file.filename
+    base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
     target_table = table_name or base_name
 
-    # 1. Attempt tabular dataset ingestion first
     try:
         res = load_csv_to_table(content, target_table, filename=filename, replace_existing=True)
         invalidate_schema_cache()
         fresh_schema = get_database_schema(use_cache=False)
         return {
             "status": "success",
-            "type": "dataset",
-            "message": f"Dataset uploaded and table '{res['table_name']}' created successfully.",
+            "type": res.get("file_type", "dataset"),
+            "message": f"File '{filename}' ingested and table '{res['table_name']}' created successfully.",
             "dataset": res,
             "table_name": res["table_name"],
             "row_count": res["row_count"],
@@ -180,29 +198,15 @@ async def upload_csv(
                 "status": "success",
                 "tables": fresh_schema.get("tables", {}),
                 "table_names": fresh_schema.get("table_names", []),
-                "relationships": fresh_schema.get("relationships", [])
+                "relationships": fresh_schema.get("relationships", []),
+                "uploaded_files": fresh_schema.get("uploaded_files", [])
             }
         }
     except Exception as parse_err:
-        # 2. If tabular parsing fails and it's a document format (PDF, DOCX, MD), route to RAG
-        if any(filename.endswith(ext) for ext in [".pdf", ".doc", ".docx", ".md"]):
-            try:
-                text_content = content.decode("utf-8", errors="replace")
-                doc_id = f"doc_{base_name}_{int(time.time())}"
-                rag_res = doc_store.add_document(doc_id, file.filename, text_content)
-                return {
-                    "status": "success",
-                    "type": "document",
-                    "message": f"Document '{file.filename}' indexed in Document Intelligence (RAG). Note: Documents are queryable in the RAG Workspace, not as tabular database tables.",
-                    "data": rag_res
-                }
-            except Exception as doc_err:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File processing failed: {str(doc_err)}")
-        
-        logger.error("Dataset upload error: %s", str(parse_err))
+        logger.error("File ingestion error for '%s': %s", filename, str(parse_err))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to ingest dataset '{file.filename}': {str(parse_err)}"
+            detail=f"Failed to ingest file '{filename}': {str(parse_err)}"
         )
 
 # ----------------- Text-to-SQL Analytics Pipeline -----------------
@@ -479,21 +483,57 @@ def clear_history():
 
 @app.post("/api/rag/upload")
 @app.post("/api/upload-document")
-async def upload_rag_document(file: UploadFile = File(...)):
-    """Upload document for independent RAG retrieval."""
-    content = await file.read()
-    try:
-        text_content = content.decode("utf-8", errors="replace")
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File decoding failed: {str(e)}")
+async def upload_rag_document(
+    response: Response,
+    file: UploadFile = File(...)
+):
+    """
+    Upload and index document for semantic RAG retrieval and schema tracking.
+    Maintains strict independence from SQL query generation while reflecting in schema explorer.
+    """
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
 
-    doc_id = f"doc_{file.filename.split('.')[0]}_{int(time.time())}"
-    res = doc_store.add_document(doc_id, file.filename, text_content)
-    return {
-        "status": "success",
-        "message": f"Document '{file.filename}' indexed for RAG retrieval.",
-        "data": res
-    }
+    filename = file.filename or "document.txt"
+    content = await file.read()
+    base_name = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+    try:
+        from backend.app.csv_loader import extract_text_from_file, record_uploaded_file
+        text_content = extract_text_from_file(content, filename)
+        doc_id = f"doc_{base_name}_{int(time.time())}"
+        rag_res = doc_store.add_document(doc_id, filename, text_content)
+
+        # Record in uploaded files catalog as document
+        try:
+            record_uploaded_file(
+                filename=filename,
+                table_name=f"doc_{base_name}",
+                file_type="document",
+                row_count=rag_res.get("total_chunks", 1),
+                column_count=1,
+                columns_summary="text passages"
+            )
+        except Exception:
+            pass
+
+        invalidate_schema_cache()
+        fresh_schema = get_database_schema(use_cache=False)
+
+        return {
+            "status": "success",
+            "message": f"Document '{filename}' indexed for RAG retrieval ({rag_res.get('total_chunks', 1)} passages).",
+            "data": rag_res,
+            "filename": filename,
+            "schema": fresh_schema
+        }
+    except Exception as e:
+        logger.error("Document indexing error for '%s': %s", filename, str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to process and index document '{filename}': {str(e)}"
+        )
 
 @app.post("/api/rag/query")
 def query_rag_documents(req: RagQueryRequest):

@@ -16,20 +16,32 @@ def invalidate_schema_cache():
 def get_database_schema(use_cache: bool = True) -> Dict[str, Any]:
     """
     Introspect the current database tables, columns, primary keys, foreign keys,
-    row counts, and sample values.
+    row counts, sample values, and uploaded file catalog.
     """
     global _schema_cache
     if use_cache and _schema_cache is not None:
         return _schema_cache
 
     inspector = inspect(engine)
-    table_names = inspector.get_table_names()
+    all_raw_tables = inspector.get_table_names()
+
+    # Filter internal catalog tables starting with '_' from standard business table list
+    table_names = [t for t in all_raw_tables if not t.startswith("_")]
 
     schema_info: Dict[str, Any] = {
+        "status": "success",
         "tables": {},
         "table_names": table_names,
-        "relationships": []
+        "relationships": [],
+        "uploaded_files": []
     }
+
+    # Fetch uploaded files catalog
+    try:
+        from backend.app.csv_loader import get_uploaded_files_catalog
+        schema_info["uploaded_files"] = get_uploaded_files_catalog()
+    except Exception:
+        schema_info["uploaded_files"] = []
 
     with engine.connect() as conn:
         for table_name in table_names:
@@ -87,13 +99,13 @@ def get_database_schema(use_cache: bool = True) -> Dict[str, Any]:
 def format_schema_for_prompt(schema_info: Dict[str, Any], excluded_tables: Optional[List[str]] = None) -> str:
     """
     Format schema representation for LLM prompt context.
-    Omits excluded tables (like audit_logs unless requested).
+    Omits excluded tables (like audit_logs unless requested) and internal tables.
     """
     excluded = set(excluded_tables or [])
     lines = []
     
     for tbl_name, tbl_data in schema_info.get("tables", {}).items():
-        if tbl_name in excluded:
+        if tbl_name in excluded or tbl_name.startswith("_"):
             continue
         cols_repr = [f"{c['name']} ({c['type']})" for c in tbl_data["columns"]]
         lines.append(f"Table: {tbl_name}")

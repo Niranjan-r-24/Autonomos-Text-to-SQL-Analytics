@@ -150,7 +150,18 @@ export default function Home() {
             />
           )}
 
-          {activeTab === 'rag' && <RagWorkspace />}
+          {activeTab === 'rag' && (
+            <RagWorkspace
+              onDocumentUploaded={(newSchema?: SchemaInfo) => {
+                if (newSchema && newSchema.tables) {
+                  setSchema(newSchema);
+                } else {
+                  loadSchema(true);
+                }
+              }}
+              onNavigateToSchema={() => setActiveTab('schema')}
+            />
+          )}
 
           {activeTab === 'history' && (
             <HistoryWorkspace onRerunQuery={handleNavigateToQuery} />
