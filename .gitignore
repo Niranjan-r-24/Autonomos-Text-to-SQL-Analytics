@@ -25,6 +25,10 @@ env/
 dist/
 *.egg-info/
 
+# Databases
+*.db
+*.sqlite3
+
 # Environment variables
 .env
 .env*.local
@@ -38,4 +42,3 @@ Thumbs.db
 # Local Backups
 * - Copy*
 .* - Copy*
-

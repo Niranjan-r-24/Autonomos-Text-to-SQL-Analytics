@@ -1,83 +1,52 @@
 """
-Enterprise Text-to-SQL Analytics API.
-FastAPI application exposing endpoints for natural language querying, safe SQL execution,
-database schema inspection, LLM configuration, and multi-format dataset uploads (.CSV, .XLSX, .XLS, .JSON, .DB, .SQLITE, .SQL, .TXT, .TSV, .PARQUET).
+Autonomos Text-to-SQL Analytics Platform - FastAPI Main API
+Provides REST endpoints for natural-language queries, manual SQL execution,
+dynamic CSV dataset ingestion, schema introspection, RAG intelligence, and history.
 """
-import io
-import os
-import re
-import sys
-import json
-import sqlite3
+import time
 import logging
-import httpx
-import pandas as pd
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, ConfigDict
+from contextlib import asynccontextmanager
 
-# Configure structured logging
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from backend.app.config import DEFAULT_PROVIDER
+from backend.app.db import engine, execute_raw_sql
+from backend.app.seed import seed_benchmark_data
+from backend.app.schema import get_database_schema, invalidate_schema_cache
+from backend.app.sql_safety import validate_safe_sql, enforce_query_limit, extract_table_references
+from backend.app.csv_loader import load_csv_to_table
+from backend.app.text2sql import generate_sql_for_question, is_audit_query
+from backend.app.nl_insights import generate_natural_language_answer, recommend_chart_config
+from backend.app.rag import doc_store
+from backend.app.history import record_query_execution, get_query_history, clear_query_history
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("text2sql.api")
 
-# Add project root and backend dir to sys.path
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-if BACKEND_DIR not in sys.path:
-    sys.path.insert(0, BACKEND_DIR)
-
-try:
-    from dotenv import load_dotenv
-    load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
-    load_dotenv(os.path.join(BACKEND_DIR, ".env"))
-except ImportError:
-    pass
-
-from sqlalchemy import text
-
-try:
-    from backend.app.db.database import DB_PATH, DATA_DIR, engine
-    from backend.app.db.seed import seed_database
-    from backend.app.services.schema_service import get_db_schema_info, clear_schema_cache
-    from backend.app.services.sql_executor import execute_safe_query
-    from backend.app.services.pipeline import TextToSqlPipeline
-    from backend.app.services.insights_service import BusinessInsightsInterpreter
-    from backend.app.services.rag_service import rag_service
-except ImportError:
-    from app.db.database import DB_PATH, DATA_DIR, engine
-    from app.db.seed import seed_database
-    from app.services.schema_service import get_db_schema_info, clear_schema_cache
-    from app.services.sql_executor import execute_safe_query
-    from app.services.pipeline import TextToSqlPipeline
-    from app.services.insights_service import BusinessInsightsInterpreter
-    from app.services.rag_service import rag_service
-
-from contextlib import asynccontextmanager
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if not os.path.exists(DB_PATH):
-        logger.info("Database file not found at %s. Seeding sample database...", DB_PATH)
-        seed_database()
-    else:
-        logger.info("Connected to database at %s", DB_PATH)
+    # Startup: Seed initial benchmark data if database is unseeded
+    try:
+        seed_benchmark_data(force=False)
+        logger.info("Database initialized with benchmark dataset.")
+    except Exception as e:
+        logger.warning("Auto-seed on startup failed: %s", str(e))
     yield
+    # Shutdown
 
 app = FastAPI(
-    title="Text-to-SQL Analytics API",
+    title="Autonomos Text-to-SQL Analytics API",
     version="2.0.0",
-    description="Clean, secure, and beginner-friendly Text-to-SQL Analytics backend.",
+    description="Production-ready AI-powered Text-to-SQL Analytics Platform",
     lifespan=lifespan
 )
 
-# Enable CORS for frontend requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,815 +55,335 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ----------------- Request / Response Models -----------------
+
+class QueryRequest(BaseModel):
+    question: str = Field(..., min_length=1, description="Natural language question to query.")
+    provider: Optional[str] = Field(None, description="AI provider ('gemini', 'openai', or empty for default).")
+    api_key: Optional[str] = Field(None, description="Optional custom API key.")
+
+class ExecuteSqlRequest(BaseModel):
+    sql: str = Field(..., min_length=1, description="Raw SQL query to execute safely.")
+
+class RagQueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Natural language question for document intelligence.")
+
+# ----------------- Health & Status Endpoints -----------------
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "service": "Autonomos Text-to-SQL Analytics API"}
 
 @app.get("/")
 def root():
-    """Root endpoint for status check."""
     return {
-        "status": "online",
+        "status": "ok",
         "service": "Autonomos Text-to-SQL Analytics API",
         "version": "2.0.0",
-        "docs": "/docs",
-        "health": "/api/health"
-    }
-
-
-@app.get("/health")
-def health():
-    """Alias for health check."""
-    return health_check()
-
-
-class QueryRequest(BaseModel):
-    query: Optional[str] = Field(None, description="Natural language question to translate into SQL")
-    question: Optional[str] = Field(None, description="Alternative natural language question field")
-    api_key: Optional[str] = Field(None, description="Optional LLM API Key (Gemini or OpenAI)")
-    provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
-    active_table: Optional[str] = Field(None, description="Optional active table name to prioritize")
-    tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
-    table_name: Optional[str] = Field(None, description="Optional table name identifier")
-    schema_columns: Optional[List[Dict[str, Any]]] = Field(None, alias="schema", description="Client-provided schema columns")
-    datasetContext: Optional[Dict[str, Any]] = Field(None, description="Canonical DatasetContext object")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class ExecuteSqlRequest(BaseModel):
-    sql: str = Field(..., description="Raw SQL query to execute safely")
-    question: Optional[str] = Field("Custom SQL Execution", description="Optional natural language question or description")
-    api_key: Optional[str] = Field(None, description="Optional LLM API Key")
-    provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
-    active_table: Optional[str] = Field(None, description="Optional active table name identifier")
-    tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
-    table_name: Optional[str] = Field(None, description="Optional table name identifier")
-    schema_columns: Optional[List[Dict[str, Any]]] = Field(None, alias="schema", description="Client-provided schema columns")
-    datasetContext: Optional[Dict[str, Any]] = Field(None, description="Canonical DatasetContext object")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-
-class KeyVerifyRequest(BaseModel):
-    api_key: str = Field(..., description="API key to verify")
-    provider: Optional[str] = Field("gemini", description="LLM provider: gemini or openai")
-
-
-class RagQueryRequest(BaseModel):
-    query: str = Field(..., description="Document or knowledge question")
-    api_key: Optional[str] = Field(None, description="Optional LLM API Key")
-    provider: Optional[str] = Field("gemini", description="LLM provider: gemini, openai, or fallback")
-
-
-@app.get("/api/health")
-def health_check():
-    """Health check endpoint returning connection status and active configuration."""
-    gemini_key_set = bool(os.getenv("GEMINI_API_KEY"))
-    openai_key_set = bool(os.getenv("OPENAI_API_KEY"))
-    return {
-        "status": "healthy",
-        "database_connected": True,
-        "database_path": DB_PATH,
-        "dialect": engine.dialect.name,
-        "providers": {
-            "gemini": gemini_key_set,
-            "openai": openai_key_set,
-            "deterministic_engine": True
-        },
-        "rag_store": {
-            "indexed_documents": len(rag_service.list_documents()),
-            "total_chunks": len(rag_service.records),
-            "status": "ready" if rag_service.has_documents else "empty"
+        "endpoints": {
+            "health": "/health",
+            "schema": "/api/schema",
+            "query": "/api/query",
+            "execute_sql": "/api/execute-sql",
+            "upload_csv": "/api/upload-csv",
+            "history": "/api/history",
+            "rag_query": "/api/rag/query",
+            "rag_upload": "/api/rag/upload",
+            "seed": "/api/db/seed"
         }
     }
 
+# ----------------- Schema Inspection Endpoints -----------------
 
 @app.get("/api/schema")
-def get_schema(
-    active_table: Optional[str] = None,
-    tableName: Optional[str] = None,
-    table_name: Optional[str] = None,
+def get_schema(refresh: bool = False):
+    """Inspect active database tables, columns, data types, sample values, and row counts."""
+    if refresh:
+        invalidate_schema_cache()
+    schema = get_database_schema(use_cache=not refresh)
+    return {
+        "status": "success",
+        "tables": schema.get("tables", {}),
+        "table_names": schema.get("table_names", []),
+        "relationships": schema.get("relationships", [])
+    }
+
+# ----------------- CSV Upload & Dataset Management -----------------
+
+@app.post("/api/upload-csv")
+async def upload_csv(
+    file: UploadFile = File(...),
+    table_name: Optional[str] = Form(None)
 ):
-    """Returns structured schema definitions for database tables, optionally validating the requested table."""
+    """
+    Upload a CSV file, dynamically infer types, create a database table,
+    and refresh the schema cache immediately.
+    """
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .csv files are supported for dataset upload."
+        )
+
+    content = await file.read()
+    target_table = table_name or file.filename.rsplit(".", 1)[0]
+
     try:
-        schema = get_db_schema_info()
-        clean_schema = {k: v for k, v in schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-        available_tables = list(clean_schema.keys())
-
-        requested_table = active_table or tableName or table_name
-        canonical_name = None
-        if requested_table:
-            req_lower = requested_table.strip().lower()
-            if req_lower in ("audit_logs", "sqlite_sequence"):
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "message": "Internal audit log tables cannot be selected as active datasets.",
-                        "requested_table": requested_table,
-                        "available_tables": available_tables
-                    }
-                )
-            matched = next((k for k in clean_schema.keys() if k.lower() == req_lower), None)
-            if not matched:
-                raise HTTPException(
-                    status_code=404,
-                    detail={
-                        "message": f"Requested table '{requested_table}' does not exist in the database.",
-                        "requested_table": requested_table,
-                        "available_tables": available_tables
-                    }
-                )
-            canonical_name = matched
-
-        resp = {"success": True, "schema": clean_schema}
-        if canonical_name:
-            table_meta = clean_schema.get(canonical_name, {})
-            cols = table_meta.get("columns", [])
-            r_count = table_meta.get("row_count", 0)
-            resp["tableName"] = canonical_name
-            resp["active_table"] = canonical_name
-            resp["table_name"] = canonical_name
-            resp["sourceFileName"] = f"{canonical_name}.csv"
-            resp["rowCount"] = r_count
-            resp["row_count"] = r_count
-            resp["columns"] = cols
-            resp["datasetId"] = canonical_name
-            resp["datasetContext"] = {
-                "tableName": canonical_name,
-                "sourceFileName": f"{canonical_name}.csv",
-                "columns": [{"name": c["name"], "type": c.get("type", "TEXT")} for c in cols],
-                "rowCount": r_count,
-                "datasetId": canonical_name,
-            }
-        return resp
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to retrieve schema: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/seed")
-def trigger_seed():
-    """Re-seeds the database with standard enterprise sample tables."""
-    try:
-        seed_database()
-        clear_schema_cache()
-        schema = get_db_schema_info(force_refresh=True)
-        clean_schema = {k: v for k, v in schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
+        res = load_csv_to_table(content, target_table, replace_existing=True)
+        # Fetch fresh schema
+        fresh_schema = get_database_schema(use_cache=False)
         return {
-            "success": True,
-            "message": "Database successfully re-seeded with fresh sample data.",
-            "schema": clean_schema
+            "status": "success",
+            "message": f"Dataset uploaded and table '{res['table_name']}' created successfully.",
+            "dataset": res,
+            "active_tables": fresh_schema.get("table_names", [])
         }
     except Exception as e:
-        logger.error("Failed to re-seed database: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("CSV upload error: %s", str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-
-@app.post("/api/verify-key")
-def verify_api_key(req: KeyVerifyRequest):
-    """Verifies that the provided Gemini or OpenAI API key is active and functional."""
-    key = req.api_key.strip()
-    provider = (req.provider or "gemini").lower()
-
-    if not key and provider != "fallback":
-        return {"valid": False, "message": "API key cannot be empty."}
-
-    try:
-        if "gemini" in provider:
-            models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash"]
-            last_err = "Verification failed."
-            for m_name in models_to_try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={key}"
-                payload = {"contents": [{"parts": [{"text": "Hello"}]}]}
-                try:
-                    with httpx.Client(timeout=15) as client:
-                        res = client.post(url, json=payload)
-                        if res.status_code == 200:
-                            return {
-                                "valid": True,
-                                "message": f"Gemini API key verified successfully! Connected to {m_name}.",
-                                "provider": f"Google Gemini ({m_name})"
-                            }
-                        elif res.status_code == 404:
-                            continue
-                        else:
-                            err_info = res.json().get("error", {})
-                            last_err = err_info.get("message", f"HTTP {res.status_code}")
-                            break
-                except Exception as ex:
-                    last_err = str(ex)
-                    continue
-            return {"valid": False, "message": f"Gemini key verification failed: {last_err}"}
-                    
-        elif "openai" in provider:
-            url = "https://api.openai.com/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            payload = {
-                "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": "Hi"}],
-                "max_tokens": 5
-            }
-            with httpx.Client(timeout=8) as client:
-                res = client.post(url, headers=headers, json=payload)
-                if res.status_code == 200:
-                    return {
-                        "valid": True,
-                        "message": "OpenAI API key verified successfully! Connected to GPT-4o.",
-                        "provider": "OpenAI GPT-4o"
-                    }
-                else:
-                    err_info = res.json().get("error", {})
-                    err_msg = err_info.get("message", f"HTTP {res.status_code} response.")
-                    return {"valid": False, "message": f"OpenAI key verification failed: {err_msg}"}
-        else:
-            return {
-                "valid": True,
-                "message": "Deterministic offline engine active. No external API key required.",
-                "provider": "Deterministic Engine"
-            }
-    except Exception as e:
-        logger.error("API key verification network error: %s", str(e))
-        return {"valid": False, "message": f"Verification network error: {str(e)}"}
-
+# ----------------- Text-to-SQL Analytics Pipeline -----------------
 
 @app.post("/api/query")
-def process_nl_query(req: QueryRequest):
+async def process_natural_language_query(req: QueryRequest):
     """
-    Main Text-to-SQL endpoint:
-    Processes natural language question -> Generates SQL & explanation -> Executes safely -> Returns results.
-    Strictly validates requested tableName and isolates queries to the active dataset.
+    End-to-end schema-first Text-to-SQL analytics pipeline.
+    1. Retrieve schema
+    2. Understand intent and select tables
+    3. Generate SQL query
+    4. Validate SQL safety and table references
+    5. Execute query on actual database
+    6. Generate grounded natural-language answer
+    7. Recommend chart visualization
+    8. Record execution in history
     """
-    user_question = (req.question or req.query or "").strip()
-    if not user_question:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Missing question",
-                "message": "Query prompt or question cannot be empty."
-            }
-        )
-
-    requested_table = (
-        (req.datasetContext.get("tableName") if isinstance(req.datasetContext, dict) else None)
-        or req.tableName
-        or req.active_table
-        or req.table_name
-        or ""
-    ).strip()
-    schema_info = get_db_schema_info()
-    available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
-
-    # Requirement 4: Reject requests with a missing tableName using a structured 4xx error.
-    if not requested_table:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Missing tableName",
-                "message": "A canonical tableName must be specified for every query request.",
-                "requested_table": None,
-                "available_tables": available_tables
-            }
-        )
-
-    req_lower = requested_table.lower()
-    if req_lower in ("audit_logs", "sqlite_sequence"):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Unauthorized table",
-                "message": "Internal audit log tables cannot be queried as active datasets.",
-                "requested_table": requested_table,
-                "available_tables": available_tables
-            }
-        )
-
-    matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
-    if not matched:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "Table not found",
-                "message": f"Requested table '{requested_table}' does not exist in the database.",
-                "requested_table": requested_table,
-                "available_tables": available_tables
-            }
-        )
-    canonical_table = matched
-
-    # Requirement 8: Server logs in development for: requested tableName, loaded schema tableName
-    logger.info(
-        "[ROUTING_LOG] Query request: question='%s', requested_tableName='%s', loaded_schema_table='%s'",
-        user_question, requested_table, canonical_table
+    start_time = time.perf_counter()
+    question = req.question.strip()
+    
+    # 1 & 2 & 3: Generate SQL via schema-first engine
+    sql, provider_used, error = await generate_sql_for_question(
+        question=question,
+        provider=req.provider,
+        api_key=req.api_key
     )
 
-    try:
-        pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider)
-        result = pipeline.run(user_question, active_table=canonical_table, request_table_name=requested_table)
-        result["requested_table"] = canonical_table
-        result["available_tables"] = available_tables
-        return result
-    except ValueError as ve:
-        logger.error("[API_GUARD_ERROR] %s", str(ve))
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Table reference mismatch",
-                "message": str(ve),
-                "requested_table": canonical_table,
-                "available_tables": available_tables
-            }
+    if error:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        record_query_execution(
+            question=question,
+            sql="",
+            status="error",
+            duration_ms=duration_ms,
+            row_count=0,
+            provider=provider_used,
+            error=error
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Pipeline execution error: %s", str(e), exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Pipeline error",
-                "message": f"Pipeline error: {str(e)}",
-                "requested_table": canonical_table,
-                "available_tables": available_tables
-            }
-        )
+        return {
+            "status": "error",
+            "question": question,
+            "sql": "",
+            "error": error,
+            "provider": provider_used,
+            "execution_time_ms": duration_ms
+        }
 
+    # 4: Validate SQL safety
+    is_safe, safety_err = validate_safe_sql(sql)
+    if not is_safe:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        record_query_execution(
+            question=question,
+            sql=sql,
+            status="blocked",
+            duration_ms=duration_ms,
+            row_count=0,
+            provider=provider_used,
+            error=safety_err
+        )
+        return {
+            "status": "blocked",
+            "question": question,
+            "sql": sql,
+            "error": safety_err,
+            "provider": provider_used,
+            "execution_time_ms": duration_ms
+        }
+
+    # 5: Execute query on database
+    try:
+        columns, rows, exec_ms = execute_raw_sql(sql)
+    except Exception as e:
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        err_msg = f"Database execution error: {str(e)}"
+        record_query_execution(
+            question=question,
+            sql=sql,
+            status="execution_error",
+            duration_ms=duration_ms,
+            row_count=0,
+            provider=provider_used,
+            error=err_msg
+        )
+        return {
+            "status": "execution_error",
+            "question": question,
+            "sql": sql,
+            "error": err_msg,
+            "provider": provider_used,
+            "execution_time_ms": duration_ms
+        }
+
+    total_duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+    # 6: Generate natural-language answer
+    nl_answer = generate_natural_language_answer(question, sql, columns, rows)
+
+    # 7: Recommend chart
+    chart_cfg = recommend_chart_config(columns, rows)
+
+    # 8: Record query in history
+    record_query_execution(
+        question=question,
+        sql=sql,
+        status="success",
+        duration_ms=total_duration_ms,
+        row_count=len(rows),
+        provider=provider_used
+    )
+
+    return {
+        "status": "success",
+        "question": question,
+        "sql": sql,
+        "columns": columns,
+        "rows": rows,
+        "row_count": len(rows),
+        "execution_time_ms": total_duration_ms,
+        "database_time_ms": exec_ms,
+        "answer": nl_answer,
+        "chart": chart_cfg,
+        "provider": provider_used
+    }
+
+# ----------------- Manual SQL Execution -----------------
 
 @app.post("/api/execute-sql")
-def execute_custom_sql(req: ExecuteSqlRequest):
+def execute_manual_sql(req: ExecuteSqlRequest):
     """
-    Allows safe direct execution of a user-edited SQL query.
-    Enforces read-only SELECT security checks and interprets results into business insights.
-    Strictly verifies execution references the active dataset.
+    Execute user-provided SQL query safely.
+    Validates read-only permissions, checks table references, executes query,
+    and returns tabular results with chart recommendations.
     """
-    if not req.sql.strip():
-        raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
+    start_time = time.perf_counter()
+    raw_sql = req.sql.strip()
 
-    requested_table = (
-        (req.datasetContext.get("tableName") if isinstance(req.datasetContext, dict) else None)
-        or req.tableName
-        or req.active_table
-        or req.table_name
-        or ""
-    ).strip()
-    schema_info = get_db_schema_info()
-    available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
-
-    if not requested_table:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Missing tableName",
-                "message": "A canonical tableName must be specified for SQL execution.",
-                "requested_table": None,
-                "available_tables": available_tables
-            }
-        )
-
-    req_lower = requested_table.lower()
-    if req_lower in ("audit_logs", "sqlite_sequence"):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Unauthorized table",
-                "message": "Internal audit log tables cannot be queried as active datasets.",
-                "requested_table": requested_table,
-                "available_tables": available_tables
-            }
-        )
-
-    matched = next((k for k in schema_info.keys() if k.lower() == req_lower), None)
-    if not matched:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "Table not found",
-                "message": f"Requested table '{requested_table}' does not exist in the database.",
-                "requested_table": requested_table,
-                "available_tables": available_tables
-            }
-        )
-    canonical_table = matched
-
-    # 1. Security pre-validation: block destructive queries immediately
-    from backend.app.services.sql_executor import validate_safe_sql
-    is_safe, sec_err = validate_safe_sql(req.sql.strip())
+    # Safety validation
+    is_safe, safety_err = validate_safe_sql(raw_sql)
     if not is_safe:
-        return {
-            "success": False,
-            "error": sec_err or "Security Error: Only read-only SELECT queries are permitted.",
-            "sql": req.sql.strip(),
-            "rows": [],
-            "columns": [],
-            "row_count": 0
-        }
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=safety_err)
 
-    from backend.app.services.sql_generator import SQLGenerator
-    sql_text = req.sql.strip()
-    ref_tables = re.findall(r"\b(?:FROM|JOIN)\s+[\"`\[]?([a-zA-Z0-9_]+)[\"`\]]?", sql_text, re.IGNORECASE)
+    # Schema reference validation
+    schema_info = get_database_schema(use_cache=True)
+    all_known_tables = set(t.lower() for t in schema_info.get("table_names", []))
+    referenced_tables = extract_table_references(raw_sql)
 
-    # Backend guard immediately before database execution:
-    if not SQLGenerator._sql_references_table(sql_text, canonical_table) or ("audit_logs" in [t.lower() for t in ref_tables]):
-        logger.error(
-            "[EXECUTION_GUARD_VIOLATION] Execute-SQL referenced unpermitted table(s) %s outside '%s'. SQL: '%s'",
-            ref_tables, canonical_table, sql_text
-        )
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Table reference mismatch",
-                "message": f"Executed SQL must reference the active table '{canonical_table}'.",
-                "requested_table": canonical_table,
-                "referenced_tables": ref_tables,
-                "available_tables": available_tables
-            }
-        )
-
-    # Requirement 5: Log exact required values
-    logger.info("request.tableName = %s", requested_table)
-    logger.info("selectedTable = %s", requested_table)
-    logger.info("schema.tableName = %s", canonical_table)
-    logger.info("generatedSql = %s", sql_text)
-    logger.info("executedSql = %s", sql_text)
-
-    # Database execution
-    result = execute_safe_query(sql_text)
-    if not result.get("success"):
-        return result
-    if result.get("success"):
-        pipeline = TextToSqlPipeline(api_key=req.api_key, provider=req.provider or "gemini")
-        visualization = pipeline._infer_visualization(
-            columns=result.get("columns", []),
-            rows=result.get("rows", []),
-            user_question=req.question or "Custom SQL Execution"
-        )
-        result["visualization"] = visualization
-
-        interpreter = BusinessInsightsInterpreter(api_key=req.api_key, provider=req.provider or "gemini")
-        insights = interpreter.interpret(
-            question=req.question or "Custom SQL Execution",
-            sql_query=req.sql.strip(),
-            columns=result.get("columns", []),
-            rows=result.get("rows", []),
-            error=result.get("error")
-        )
-        result["insights"] = insights
-    else:
-        result["requested_table"] = canonical_table
-        result["available_tables"] = available_tables
-    return result
-
-
-
-def resolve_clean_table_name(filename: str) -> str:
-    """
-    Normalizes dataset filenames into clean, standard SQL table names.
-    Automatically handles browser duplicate suffixes like (1), _1, copy, etc.,
-    and maps only exact canonical sample-dataset names to standard relational
-    tables. User-defined names such as ``customer_test`` are preserved.
-    """
-    base_name = os.path.splitext(filename)[0]
-    raw = re.sub(r"[\s_\-\(\)]+\d+[\)\_]?$", "", base_name, flags=re.IGNORECASE).strip()
-    raw = re.sub(r"[\s_\-]+copy\b", "", raw, flags=re.IGNORECASE).strip()
-    raw_lower = raw.lower().replace("-", "_").replace(" ", "_")
-
-    if raw_lower in ("customer", "customers"):
-        return "customers"
-    if raw_lower in ("product", "products"):
-        return "products"
-    if raw_lower in ("order_item", "order_items", "orderitem", "orderitems"):
-        return "order_items"
-    if raw_lower in ("order", "orders"):
-        return "orders"
-    if raw_lower in ("payment", "payments"):
-        return "payments"
-    if raw_lower in ("ticket", "tickets", "support_ticket", "support_tickets"):
-        return "support_tickets"
-    if raw_lower in ("employee", "employees"):
-        return "employees"
-    if raw_lower in ("sale", "sales"):
-        return "sales"
-
-    clean = re.sub(r"[^a-zA-Z0-9_]", "_", raw_lower).strip("_")
-    sql_keywords = {
-        "select", "table", "group", "order", "where", "from", "limit", "join",
-        "index", "values", "check", "default", "primary", "key", "create",
-        "insert", "update", "delete", "drop", "alter", "with", "as", "by", "all"
-    }
-    if not clean or clean[0].isdigit() or clean in sql_keywords:
-        clean = f"dataset_{clean}"
-    return clean
-
-
-@app.post("/api/upload")
-async def upload_dataset(file: UploadFile = File(...)):
-    """
-    Uploads custom datasets in all major formats:
-    - .CSV (Comma Separated)
-    - .XLSX / .XLS (Excel Workbooks)
-    - .JSON (JSON Records or Key-Value)
-    - .DB / .SQLITE / .SQLITE3 (SQLite Database file with multiple tables)
-    - .SQL (SQL DDL/DML script)
-    - .TXT / .TSV (Tab or Delimited text)
-    - .PARQUET (Apache Parquet)
-    
-    Automatically imports the table(s) into SQLite and updates the schema for instant querying.
-    """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file uploaded.")
-
-    filename = file.filename
-    ext = os.path.splitext(filename)[1].lower()
-    clean_table_name = resolve_clean_table_name(filename)
-
-    contents = await file.read()
-
-    try:
-        # 1. SQLite Database (.db, .sqlite, .sqlite3)
-        if ext in [".db", ".sqlite", ".sqlite3"]:
-            temp_db_path = os.path.join(DATA_DIR, f"temp_{clean_table_name}.db")
-            with open(temp_db_path, "wb") as f:
-                f.write(contents)
-
-            src_conn = sqlite3.connect(temp_db_path)
-            cursor = src_conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-            tables = cursor.fetchall()
-
-            imported_tables = []
-            for t in tables:
-                t_name = t[0]
-                temp_df = pd.read_sql_query(f'SELECT * FROM "{t_name}"', src_conn)
-                temp_df.columns = [re.sub(r"[^a-zA-Z0-9_]", "_", str(c).strip().lower()) for c in temp_df.columns]
-                clean_t = re.sub(r"[^a-zA-Z0-9_]", "_", t_name).lower()
-                with engine.begin() as conn:
-                    temp_df.to_sql(clean_t, conn, if_exists="replace", index=False)
-                imported_tables.append(clean_t)
-
-            src_conn.close()
-            if os.path.exists(temp_db_path):
-                os.remove(temp_db_path)
-
-            clear_schema_cache()
-            raw_schema = get_db_schema_info(force_refresh=True)
-            updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-            primary_table = imported_tables[0] if imported_tables else clean_table_name
-            return {
-                "success": True,
-                "message": f"Successfully imported database with table(s): {', '.join(imported_tables)}.",
-                "table_name": primary_table,
-                "tableName": primary_table,
-                "tables_imported": imported_tables,
-                "schema": updated_schema
-            }
-
-        # 2. SQL Dump Script (.sql)
-        elif ext == ".sql":
-            sql_text = contents.decode("utf-8", errors="ignore")
-            if engine.dialect.name == "sqlite":
-                dest_conn = sqlite3.connect(DB_PATH)
-                dest_conn.executescript(sql_text)
-                dest_conn.commit()
-                dest_conn.close()
-            else:
-                with engine.begin() as conn:
-                    for stmt in sql_text.split(";"):
-                        if stmt.strip():
-                            conn.execute(text(stmt.strip()))
-
-            clear_schema_cache()
-            raw_schema = get_db_schema_info(force_refresh=True)
-            updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-            return {
-                "success": True,
-                "message": f"Successfully executed SQL script '{filename}'.",
-                "table_name": clean_table_name,
-                "tableName": clean_table_name,
-                "schema": updated_schema
-            }
-
-        # 3. CSV (.csv)
-        elif ext == ".csv":
-            df = pd.read_csv(io.BytesIO(contents))
-
-        # 4. Excel (.xlsx, .xls)
-        elif ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(io.BytesIO(contents))
-
-        # 5. JSON (.json)
-        elif ext == ".json":
-            try:
-                df = pd.read_json(io.BytesIO(contents))
-            except Exception:
-                data = json.loads(contents.decode("utf-8", errors="ignore"))
-                if isinstance(data, list):
-                    df = pd.json_normalize(data)
-                elif isinstance(data, dict):
-                    list_keys = [k for k, v in data.items() if isinstance(v, list)]
-                    if list_keys:
-                        df = pd.json_normalize(data[list_keys[0]])
-                    else:
-                        df = pd.json_normalize([data])
-                else:
-                    raise ValueError("JSON format could not be normalized into tabular rows.")
-
-        # 6. Tab-Separated / Text (.tsv, .txt)
-        elif ext in [".tsv", ".txt"]:
-            # Differentiate between structured tabular data (TSV/CSV) and prose text documents
-            is_tabular = False
-            try:
-                sample_text = contents[:4096].decode("utf-8", errors="ignore")
-                lines = [l for l in sample_text.splitlines() if l.strip()]
-                if len(lines) >= 2:
-                    for delim in ["\t", ",", "|", ";"]:
-                        c1 = len(lines[0].split(delim))
-                        c2 = len(lines[1].split(delim))
-                        if c1 > 1 and c1 == c2:
-                            is_tabular = True
-                            break
-            except Exception:
-                is_tabular = False
-
-            if is_tabular or ext == ".tsv":
-                try:
-                    df = pd.read_csv(io.BytesIO(contents), sep="\t" if ext == ".tsv" else None, engine="python")
-                except Exception:
-                    df = pd.read_csv(io.BytesIO(contents))
-            else:
-                # Ingest unstructured text document into RAG knowledge store
-                rag_info = rag_service.ingest(filename, contents)
-                raw_schema = get_db_schema_info(force_refresh=True)
-                clean_s = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-                return {
-                    "success": True,
-                    "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
-                    "table_name": "knowledge_base",
-                    "type": "document",
-                    "rag_info": rag_info,
-                    "documents": rag_service.list_documents(),
-                    "schema": clean_s
-                }
-
-        # 7. Apache Parquet (.parquet)
-        elif ext == ".parquet":
-            df = pd.read_parquet(io.BytesIO(contents))
-
-        # 8. Document Knowledge Base (.pdf, .docx, .doc, .md) for RAG
-        elif ext in [".pdf", ".docx", ".doc", ".md"]:
-            rag_info = rag_service.ingest(filename, contents)
-            raw_schema = get_db_schema_info(force_refresh=True)
-            clean_s = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-            return {
-                "success": True,
-                "message": f"Successfully indexed '{filename}' into document knowledge base ({rag_info['chunks_created']} chunks created).",
-                "table_name": "knowledge_base",
-                "type": "document",
-                "rag_info": rag_info,
-                "documents": rag_service.list_documents(),
-                "schema": clean_s
-            }
-
-        else:
+    for ref_tbl in referenced_tables:
+        if ref_tbl not in all_known_tables:
             raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported format '{ext}'. Supported formats: .csv, .xlsx, .xls, .json, .db, .sqlite, .sql, .txt, .tsv, .parquet, .pdf, .docx, .md"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Table '{ref_tbl}' does not exist in active database schema."
             )
 
-        # Standardize column names (handle numeric-only headers and SQL identifier safety)
-        if all(str(c).strip().isdigit() for c in df.columns):
-            if "ticket" in clean_table_name:
-                default_ticket_cols = ["ticket_id", "customer_id", "order_id", "issue", "priority", "status", "created_at"]
-                if len(df.columns) == len(default_ticket_cols):
-                    df.columns = default_ticket_cols
-                else:
-                    df.columns = [f"col_{c}" for c in df.columns]
-            else:
-                df.columns = [f"col_{c}" for c in df.columns]
-        else:
-            cleaned_cols = []
-            for c in df.columns:
-                c_str = re.sub(r"[^a-zA-Z0-9_]", "_", str(c).strip().lower()).strip("_")
-                if not c_str or c_str[0].isdigit():
-                    c_str = f"col_{c_str}"
-                cleaned_cols.append(c_str)
-            df.columns = cleaned_cols
+    safe_sql = enforce_query_limit(raw_sql)
 
-        # Save to database engine via SQLAlchemy engine
-        with engine.begin() as conn:
-            df.to_sql(clean_table_name, conn, if_exists="replace", index=False)
-
-        clear_schema_cache()
-        raw_schema = get_db_schema_info(force_refresh=True)
-        updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
-        logger.info("Imported table '%s' with %d rows and %d columns", clean_table_name, len(df), len(df.columns))
-
-        col_list = [{"name": c, "type": str(df[c].dtype)} for c in df.columns]
-        return {
-            "success": True,
-            "message": f"Successfully created database table '{clean_table_name}' with {len(df)} rows and {len(df.columns)} columns.",
-            "table_name": clean_table_name,
-            "tableName": clean_table_name,
-            "sourceFileName": filename,
-            "rowCount": len(df),
-            "row_count": len(df),
-            "columns": col_list,
-            "datasetId": clean_table_name,
-            "datasetContext": {
-                "tableName": clean_table_name,
-                "sourceFileName": filename,
-                "columns": col_list,
-                "rowCount": len(df),
-                "datasetId": clean_table_name,
-            },
-            "schema": updated_schema
-        }
-
-    except HTTPException:
-        raise
+    try:
+        columns, rows, exec_ms = execute_raw_sql(safe_sql)
     except Exception as e:
-        logger.error("Dataset upload failed: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to process and import file: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SQL execution failed: {str(e)}"
+        )
 
+    total_duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    nl_answer = generate_natural_language_answer("Manual Query", safe_sql, columns, rows)
+    chart_cfg = recommend_chart_config(columns, rows)
+
+    record_query_execution(
+        question="Manual SQL Execution",
+        sql=safe_sql,
+        status="success",
+        duration_ms=total_duration_ms,
+        row_count=len(rows),
+        provider="manual"
+    )
+
+    return {
+        "status": "success",
+        "sql": safe_sql,
+        "columns": columns,
+        "rows": rows,
+        "row_count": len(rows),
+        "execution_time_ms": total_duration_ms,
+        "database_time_ms": exec_ms,
+        "answer": nl_answer,
+        "chart": chart_cfg
+    }
+
+# ----------------- Query History Endpoints -----------------
+
+@app.get("/api/history")
+def fetch_history(limit: int = Query(50, ge=1, le=100)):
+    return {
+        "status": "success",
+        "history": get_query_history(limit=limit)
+    }
+
+@app.delete("/api/history")
+def clear_history():
+    clear_query_history()
+    return {"status": "success", "message": "Query history cleared."}
+
+# ----------------- RAG Document Intelligence Endpoints -----------------
 
 @app.post("/api/rag/upload")
 async def upload_rag_document(file: UploadFile = File(...)):
-    """Uploads document (.pdf, .docx, .doc, .txt, .md) and chunks/indexes it into the RAG knowledge store."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file uploaded.")
-
-    ext = os.path.splitext(file.filename)[1].lower()
-    allowed_exts = [".pdf", ".docx", ".doc", ".txt", ".md", ".json", ".csv", ".tsv"]
-    if ext not in allowed_exts:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported document format '{ext}'. Supported formats: .pdf, .docx, .txt, .md"
-        )
-
-    contents = await file.read()
-    if not contents or len(contents) == 0:
-        raise HTTPException(status_code=400, detail=f"File '{file.filename}' is empty (0 bytes).")
-
+    """Upload document for independent RAG retrieval."""
+    content = await file.read()
     try:
-        res = rag_service.ingest(file.filename, contents)
-        return {
-            "success": True,
-            **res,
-            "documents": rag_service.list_documents()
-        }
-    except ValueError as ve:
-        logger.error("RAG document processing error for '%s': %s", file.filename, str(ve))
-        raise HTTPException(status_code=400, detail=str(ve))
+        text_content = content.decode("utf-8", errors="replace")
     except Exception as e:
-        logger.error("RAG document upload failed: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=400, detail=f"Failed to process and index document: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File decoding failed: {str(e)}")
 
+    doc_id = f"doc_{file.filename.split('.')[0]}_{int(time.time())}"
+    res = doc_store.add_document(doc_id, file.filename, text_content)
+    return {
+        "status": "success",
+        "message": f"Document '{file.filename}' indexed for RAG retrieval.",
+        "data": res
+    }
 
 @app.post("/api/rag/query")
-def query_rag_knowledge(req: RagQueryRequest):
-    """Queries the document knowledge base using hybrid retrieval and returns answer with citations."""
-    if not req.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty.")
-    try:
-        res = rag_service.answer(req.query.strip(), api_key=req.api_key, provider=req.provider or "gemini")
-        return {"success": True, "query": req.query, **res}
-    except Exception as e:
-        logger.error("RAG query failed: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=f"RAG query failed: {str(e)}")
+def query_rag_documents(req: RagQueryRequest):
+    """Retrieve grounded answers and citations from indexed documents."""
+    result = doc_store.answer_query(req.query)
+    return {
+        "status": "success",
+        "query": req.query,
+        "answer": result["answer"],
+        "citations": result["citations"],
+        "retrieved_count": result["retrieved_count"]
+    }
 
+# ----------------- Database Seeding & Maintenance -----------------
 
-@app.get("/api/rag/documents")
-@app.get("/documents")
-@app.get("/api/documents")
-def list_rag_documents():
-    """Lists indexed documents and chunk statistics."""
-    try:
-        docs = rag_service.list_documents()
-        return {
-            "success": True,
-            "document_count": len(docs),
-            "total_chunks": len(rag_service.records),
-            "documents": docs
-        }
-    except Exception as e:
-        logger.error("Failed to list RAG documents: %s", str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/api/rag/documents/{filename:path}")
-def delete_rag_document(filename: str):
-    """Deletes an indexed document from RAG knowledge store."""
-    try:
-        deleted = rag_service.delete_document(filename)
-        return {
-            "success": deleted,
-            "message": f"Document '{filename}' {'deleted' if deleted else 'not found'}.",
-            "documents": rag_service.list_documents()
-        }
-    except Exception as e:
-        logger.error("Failed to delete document '%s': %s", filename, str(e), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
+@app.post("/api/db/seed")
+def seed_database_endpoint(force: bool = True):
+    """Seed or reseed the database with benchmark enterprise dataset."""
+    result = seed_benchmark_data(force=force)
+    invalidate_schema_cache()
+    fresh_schema = get_database_schema(use_cache=False)
+    return {
+        "status": "success",
+        "seed_info": result,
+        "active_tables": fresh_schema.get("table_names", [])
+    }

@@ -1,1 +1,3 @@
-# Test package marker
+"""
+Test suite package for Autonomos Text-to-SQL Analytics backend.
+"""
