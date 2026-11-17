@@ -72,15 +72,36 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # ----------------- Request / Response Models -----------------
 
 class QueryRequest(BaseModel):
-    question: str = Field(..., min_length=1, description="Natural language question to query.")
+    question: Optional[str] = Field(None, description="Natural language question to query.")
+    query: Optional[str] = Field(None, description="Alias for question.")
     provider: Optional[str] = Field(None, description="AI provider ('gemini', 'openai', or empty for default).")
     api_key: Optional[str] = Field(None, description="Optional custom API key.")
 
+    def get_question(self) -> str:
+        q = (self.question or self.query or "").strip()
+        if not q:
+            raise ValueError("Field required: 'question' or 'query' must be provided.")
+        return q
+
 class ExecuteSqlRequest(BaseModel):
-    sql: str = Field(..., min_length=1, description="Raw SQL query to execute safely.")
+    sql: Optional[str] = Field(None, description="Raw SQL query to execute safely.")
+    query: Optional[str] = Field(None, description="Alias for sql.")
+
+    def get_sql(self) -> str:
+        s = (self.sql or self.query or "").strip()
+        if not s:
+            raise ValueError("Field required: 'sql' must be provided.")
+        return s
 
 class RagQueryRequest(BaseModel):
-    query: str = Field(..., min_length=1, description="Natural language question for document intelligence.")
+    query: Optional[str] = Field(None, description="Natural language question for document intelligence.")
+    question: Optional[str] = Field(None, description="Alias for query.")
+
+    def get_query(self) -> str:
+        q = (self.query or self.question or "").strip()
+        if not q:
+            raise ValueError("Field required: 'query' or 'question' must be provided.")
+        return q
 
 # ----------------- Health & Status Endpoints -----------------
 
@@ -186,7 +207,10 @@ async def process_natural_language_query(req: QueryRequest):
     8. Record execution in history
     """
     start_time = time.perf_counter()
-    question = req.question.strip()
+    try:
+        question = req.get_question()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
     
     # 1 & 2 & 3: Generate SQL via schema-first engine
     sql, provider_used, error = await generate_sql_for_question(
@@ -303,7 +327,10 @@ def execute_manual_sql(req: ExecuteSqlRequest):
     and returns tabular results with chart recommendations.
     """
     start_time = time.perf_counter()
-    raw_sql = req.sql.strip()
+    try:
+        raw_sql = req.get_sql()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
 
     # Safety validation
     is_safe, safety_err = validate_safe_sql(raw_sql)
@@ -394,10 +421,15 @@ async def upload_rag_document(file: UploadFile = File(...)):
 @app.post("/api/rag/query")
 def query_rag_documents(req: RagQueryRequest):
     """Retrieve grounded answers and citations from indexed documents."""
-    result = doc_store.answer_query(req.query)
+    try:
+        query_text = req.get_query()
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    result = doc_store.answer_query(query_text)
     return {
         "status": "success",
-        "query": req.query,
+        "query": query_text,
         "answer": result["answer"],
         "citations": result["citations"],
         "retrieved_count": result["retrieved_count"]

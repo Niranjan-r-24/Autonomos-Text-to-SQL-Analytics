@@ -108,3 +108,28 @@ def test_q8_nonexistent_table_handling(client):
     data = res.json()
     assert data["status"] == "error"
     assert "not found" in data["error"].lower() or "no matching table" in data["error"].lower()
+
+def test_query_alias_support(client):
+    """Verify that both 'query' and 'question' are accepted interchangeably."""
+    # Test query key alone
+    res1 = client.post("/api/query", json={"query": "How many customers are in the database?"})
+    assert res1.status_code == 200
+    assert res1.json()["status"] == "success"
+
+    # Test dual payload
+    res2 = client.post("/api/query", json={
+        "question": "How many customers are in the database?",
+        "query": "How many customers are in the database?"
+    })
+    assert res2.status_code == 200
+    assert res2.json()["status"] == "success"
+
+    # Test empty payload yields 422
+    res_empty = client.post("/api/query", json={})
+    assert res_empty.status_code == 422
+
+    # Test execute-sql alias
+    res_sql = client.post("/api/execute-sql", json={"query": "SELECT count(*) FROM customers;"})
+    assert res_sql.status_code == 200
+    assert res_sql.json()["status"] == "success"
+

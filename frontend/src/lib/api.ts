@@ -77,6 +77,7 @@ export async function executeQuery(
 ): Promise<QueryResult> {
   const res = await client.post<QueryResult>('/api/query', {
     question,
+    query: question,
     provider: provider || undefined,
     api_key: apiKey || undefined,
   });
@@ -84,7 +85,10 @@ export async function executeQuery(
 }
 
 export async function executeManualSql(sql: string): Promise<QueryResult> {
-  const res = await client.post<QueryResult>('/api/execute-sql', { sql });
+  const res = await client.post<QueryResult>('/api/execute-sql', {
+    sql,
+    query: sql,
+  });
   return res.data;
 }
 
@@ -144,7 +148,10 @@ export async function uploadRagDocument(file: File) {
 }
 
 export async function queryRag(query: string): Promise<RagResult> {
-  const res = await client.post<RagResult>('/api/rag/query', { query });
+  const res = await client.post<RagResult>('/api/rag/query', {
+    query,
+    question: query,
+  });
   return res.data;
 }
 
