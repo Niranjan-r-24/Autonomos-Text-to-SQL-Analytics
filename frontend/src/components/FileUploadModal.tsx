@@ -6,6 +6,7 @@ import {
   UploadCloud, FileText, CheckCircle2, AlertCircle, X, Loader2, Table, ArrowRight, BookOpen, Trash2, HelpCircle
 } from 'lucide-react';
 import { API_BASE } from '@/config/api';
+import { DatasetContext } from '@/app/page';
 
 export interface DocumentMeta {
   filename: string;
@@ -19,7 +20,7 @@ export interface DocumentMeta {
 interface FileUploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUploadSuccess: (tableName: string, schema: Record<string, any>) => void;
+  onUploadSuccess: (context: DatasetContext, schema: Record<string, any>) => void;
   onQueryDocument?: (docName: string) => void;
 }
 
@@ -181,6 +182,21 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
       }
 
       const primaryTable = lastUploadData?.tableName || lastUploadData?.table_name || importedTables[0] || 'knowledge_base';
+      const rawCols = lastUploadData?.columns || [];
+      const cols = rawCols.map((col: any) =>
+        typeof col === 'string' ? { name: col, type: 'TEXT' } : { name: col.name, type: col.type || 'TEXT' }
+      );
+      const rowCount = lastUploadData?.rowCount || lastUploadData?.row_count || 0;
+      const sourceFileName = lastUploadData?.sourceFileName || (selectedFiles.length > 0 ? selectedFiles[0].name : `${primaryTable}.csv`);
+
+      const datasetContext: DatasetContext = {
+        tableName: primaryTable,
+        sourceFileName,
+        columns: cols,
+        rowCount,
+        datasetId: lastUploadData?.datasetId || primaryTable,
+      };
+
       const summaryResult = {
         ...lastUploadData,
         message:
@@ -191,11 +207,12 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({
         table_name: primaryTable,
         tableName: primaryTable,
         schema: latestSchema,
+        datasetContext,
       };
       setUploadResult(summaryResult);
 
-      if (onUploadSuccess) {
-        onUploadSuccess(primaryTable, latestSchema);
+      if (onUploadSuccess && primaryTable !== 'knowledge_base') {
+        onUploadSuccess(datasetContext, latestSchema);
       }
     } catch (err: any) {
       const msg = err.response?.data?.detail || err.message || 'File upload failed.';

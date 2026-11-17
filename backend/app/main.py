@@ -114,6 +114,7 @@ class QueryRequest(BaseModel):
     tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
     table_name: Optional[str] = Field(None, description="Optional table name identifier")
     schema_columns: Optional[List[Dict[str, Any]]] = Field(None, alias="schema", description="Client-provided schema columns")
+    datasetContext: Optional[Dict[str, Any]] = Field(None, description="Canonical DatasetContext object")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -127,6 +128,7 @@ class ExecuteSqlRequest(BaseModel):
     tableName: Optional[str] = Field(None, description="Optional canonical table name identifier")
     table_name: Optional[str] = Field(None, description="Optional table name identifier")
     schema_columns: Optional[List[Dict[str, Any]]] = Field(None, alias="schema", description="Client-provided schema columns")
+    datasetContext: Optional[Dict[str, Any]] = Field(None, description="Canonical DatasetContext object")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -205,9 +207,24 @@ def get_schema(
 
         resp = {"success": True, "schema": clean_schema}
         if canonical_name:
+            table_meta = clean_schema.get(canonical_name, {})
+            cols = table_meta.get("columns", [])
+            r_count = table_meta.get("row_count", 0)
             resp["tableName"] = canonical_name
             resp["active_table"] = canonical_name
             resp["table_name"] = canonical_name
+            resp["sourceFileName"] = f"{canonical_name}.csv"
+            resp["rowCount"] = r_count
+            resp["row_count"] = r_count
+            resp["columns"] = cols
+            resp["datasetId"] = canonical_name
+            resp["datasetContext"] = {
+                "tableName": canonical_name,
+                "sourceFileName": f"{canonical_name}.csv",
+                "columns": [{"name": c["name"], "type": c.get("type", "TEXT")} for c in cols],
+                "rowCount": r_count,
+                "datasetId": canonical_name,
+            }
         return resp
     except HTTPException:
         raise
@@ -318,7 +335,13 @@ def process_nl_query(req: QueryRequest):
             }
         )
 
-    requested_table = (req.tableName or req.active_table or req.table_name or "").strip()
+    requested_table = (
+        (req.datasetContext.get("tableName") if isinstance(req.datasetContext, dict) else None)
+        or req.tableName
+        or req.active_table
+        or req.table_name
+        or ""
+    ).strip()
     schema_info = get_db_schema_info()
     available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
 
@@ -396,7 +419,13 @@ def execute_custom_sql(req: ExecuteSqlRequest):
     if not req.sql.strip():
         raise HTTPException(status_code=400, detail="SQL query cannot be empty.")
 
-    requested_table = (req.tableName or req.active_table or req.table_name or "").strip()
+    requested_table = (
+        (req.datasetContext.get("tableName") if isinstance(req.datasetContext, dict) else None)
+        or req.tableName
+        or req.active_table
+        or req.table_name
+        or ""
+    ).strip()
     schema_info = get_db_schema_info()
     available_tables = [k for k in schema_info.keys() if k.lower() not in ("audit_logs", "sqlite_sequence")]
 
@@ -729,13 +758,24 @@ async def upload_dataset(file: UploadFile = File(...)):
         updated_schema = {k: v for k, v in raw_schema.items() if k.lower() not in ("audit_logs", "sqlite_sequence")}
         logger.info("Imported table '%s' with %d rows and %d columns", clean_table_name, len(df), len(df.columns))
 
+        col_list = [{"name": c, "type": str(df[c].dtype)} for c in df.columns]
         return {
             "success": True,
             "message": f"Successfully created database table '{clean_table_name}' with {len(df)} rows and {len(df.columns)} columns.",
             "table_name": clean_table_name,
             "tableName": clean_table_name,
+            "sourceFileName": filename,
+            "rowCount": len(df),
             "row_count": len(df),
-            "columns": list(df.columns),
+            "columns": col_list,
+            "datasetId": clean_table_name,
+            "datasetContext": {
+                "tableName": clean_table_name,
+                "sourceFileName": filename,
+                "columns": col_list,
+                "rowCount": len(df),
+                "datasetId": clean_table_name,
+            },
             "schema": updated_schema
         }
 

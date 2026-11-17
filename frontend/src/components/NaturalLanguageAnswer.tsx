@@ -154,7 +154,7 @@ function synthesizeDynamicAnswer(
     }
 
     // Single row with multiple columns (e.g. single top item)
-    const preferredNames = ['product_name', 'name', 'customer_name', 'title', 'category', 'item_name', 'car_model', 'action'];
+    const preferredNames = ['product_name', 'name', 'item', 'customer_name', 'title', 'category', 'item_name', 'car_model', 'action'];
     const nameCol = cols.find((c) => preferredNames.includes(c.toLowerCase()));
     const metricCol = cols.find(
       (c) => typeof sampleRow[c] === 'number' && !c.toLowerCase().endsWith('_id') && c.toLowerCase() !== 'id'
@@ -170,7 +170,7 @@ function synthesizeDynamicAnswer(
 
   // 4. Multi-Row Ranked / Breakdown Results (e.g. "top 5 revenue products", "Soap is the top-performing product")
   const preferredNameCols = [
-    'product_name', 'product', 'name', 'customer_name', 'title', 'item_name',
+    'product_name', 'product', 'item', 'name', 'customer_name', 'title', 'item_name',
     'car_model', 'brand', 'category', 'action', 'department', 'city', 'country'
   ];
   const nameCol =

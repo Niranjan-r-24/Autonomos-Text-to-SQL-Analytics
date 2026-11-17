@@ -12,11 +12,16 @@ import { FileUploadModal } from '@/components/FileUploadModal';
 import { AlertCircle, Database } from 'lucide-react';
 import { API_BASE } from '@/config/api';
 
-export interface TableContext {
+export type DatasetContext = {
   tableName: string;
+  sourceFileName: string;
   columns: Array<{ name: string; type: string }>;
-  source: 'uploaded' | 'sample';
-}
+  rowCount: number;
+  datasetId?: string;
+};
+
+// Backward-compatible alias
+export type TableContext = DatasetContext;
 
 const SAMPLE_TABLE_SET = new Set([
   'customers', 'products', 'orders', 'order_items', 'payments', 'support_tickets', 'sales', 'employees'
@@ -33,9 +38,9 @@ export default function Home() {
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
 
-  // Canonical table-context state & ref
-  const [tableContext, setTableContext] = useState<TableContext | null>(null);
-  const tableContextRef = useRef<TableContext | null>(null);
+  // Canonical dataset-context state & ref
+  const [datasetContext, setDatasetContext] = useState<DatasetContext | null>(null);
+  const datasetContextRef = useRef<DatasetContext | null>(null);
 
   // Data & Execution states
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
@@ -57,7 +62,7 @@ export default function Home() {
     fetchDocuments();
   }, []);
 
-  const fetchTableContext = async (tableName: string): Promise<TableContext | null> => {
+  const fetchTableContext = async (tableName: string, preloadedCtx?: Partial<DatasetContext>): Promise<DatasetContext | null> => {
     setIsSchemaLoading(true);
     try {
       const res = await axios.get(`${API_BASE}/api/schema`, {
@@ -66,16 +71,23 @@ export default function Home() {
       const canonicalName = res.data?.tableName || tableName;
       const schemaEntry = res.data?.schema?.[canonicalName];
       if (schemaEntry && schemaEntry.columns) {
-        const ctx: TableContext = {
+        const columns = schemaEntry.columns.map((col: any) => ({
+          name: col.name,
+          type: col.type || 'TEXT',
+        }));
+        const rowCount = preloadedCtx?.rowCount ?? res.data?.rowCount ?? schemaEntry.row_count ?? 0;
+        const sourceFileName = preloadedCtx?.sourceFileName ?? res.data?.sourceFileName ?? `${canonicalName}.csv`;
+        const datasetId = preloadedCtx?.datasetId ?? res.data?.datasetId ?? canonicalName;
+
+        const ctx: DatasetContext = {
           tableName: canonicalName,
-          columns: schemaEntry.columns.map((col: any) => ({
-            name: col.name,
-            type: col.type || 'TEXT',
-          })),
-          source: SAMPLE_TABLE_SET.has(canonicalName.toLowerCase()) ? 'sample' : 'uploaded',
+          sourceFileName,
+          columns,
+          rowCount,
+          datasetId,
         };
-        setTableContext(ctx);
-        tableContextRef.current = ctx;
+        setDatasetContext(ctx);
+        datasetContextRef.current = ctx;
         setActiveTable(canonicalName);
         activeTableRef.current = canonicalName;
         setSchemaData((prev) => ({ ...prev, [canonicalName]: schemaEntry }));
@@ -83,7 +95,7 @@ export default function Home() {
       }
       return null;
     } catch (err: any) {
-      console.error('Failed to load table context:', err);
+      console.error('Failed to load dataset context:', err);
       const data = err.response?.data;
       const msg = (data && (data.detail?.message || data.detail || data.message)) || `Failed to load schema for ${tableName}.`;
       setErrorMessage(msg);
@@ -109,7 +121,7 @@ export default function Home() {
         const target = selectedTable || activeTableRef.current;
         if (target && filtered[target]) {
           await fetchTableContext(target);
-        } else if (!tableContextRef.current && Object.keys(filtered).length > 0) {
+        } else if (!datasetContextRef.current && Object.keys(filtered).length > 0) {
           const defaultTable = Object.keys(filtered)[0];
           await fetchTableContext(defaultTable);
         }
@@ -154,8 +166,8 @@ export default function Home() {
       const res = await axios.post(`${API_BASE}/api/seed`);
       if (res.data && res.data.schema) {
         setSchemaData(res.data.schema);
-        setTableContext(null);
-        tableContextRef.current = null;
+        setDatasetContext(null);
+        datasetContextRef.current = null;
         setActiveTable(null);
         activeTableRef.current = null;
         setPipelineResult(null);
@@ -170,14 +182,28 @@ export default function Home() {
     }
   };
 
-  const handleUploadSuccess = async (tableName: string, updatedSchema: Record<string, any>) => {
+  const handleUploadSuccess = async (uploadedCtx: DatasetContext, updatedSchema: Record<string, any>) => {
     fetchDocuments();
     setPipelineResult(null);
     setErrorMessage(null);
     setQuery('');
 
-    if (tableName && tableName !== 'knowledge_base' && !['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
-      await fetchTableContext(tableName);
+    if (updatedSchema) {
+      const filtered: Record<string, any> = {};
+      for (const [k, v] of Object.entries(updatedSchema)) {
+        if (!['audit_logs', 'sqlite_sequence'].includes(k.toLowerCase())) {
+          filtered[k] = v;
+        }
+      }
+      setSchemaData(filtered);
+    }
+
+    if (uploadedCtx && uploadedCtx.tableName && !['audit_logs', 'sqlite_sequence'].includes(uploadedCtx.tableName.toLowerCase())) {
+      setDatasetContext(uploadedCtx);
+      datasetContextRef.current = uploadedCtx;
+      setActiveTable(uploadedCtx.tableName);
+      activeTableRef.current = uploadedCtx.tableName;
+      await fetchTableContext(uploadedCtx.tableName, uploadedCtx);
     }
   };
 
@@ -187,8 +213,8 @@ export default function Home() {
     setQuery('');
 
     if (!tableName || ['audit_logs', 'sqlite_sequence'].includes(tableName.toLowerCase())) {
-      setTableContext(null);
-      tableContextRef.current = null;
+      setDatasetContext(null);
+      datasetContextRef.current = null;
       setActiveTable(null);
       activeTableRef.current = null;
       return;
@@ -196,14 +222,14 @@ export default function Home() {
     await fetchTableContext(tableName);
   };
 
-  const isTableSchemaReady = Boolean(tableContext?.columns?.length) && !isSchemaLoading;
+  const isTableSchemaReady = Boolean(datasetContext?.columns?.length) && !isSchemaLoading;
 
   const handleRunQuery = async (overrideQuery?: string, overrideTable?: string) => {
     const targetQuery = overrideQuery || query;
     if (!targetQuery.trim()) return;
     if (isExecuting && !overrideQuery) return;
 
-    let currentContext = tableContextRef.current;
+    let currentContext = datasetContextRef.current;
     if (overrideTable && (!currentContext || currentContext.tableName !== overrideTable)) {
       currentContext = await fetchTableContext(overrideTable);
     }
@@ -230,6 +256,7 @@ export default function Home() {
         active_table: currentContext.tableName,
         table_name: currentContext.tableName,
         schema: currentContext.columns,
+        datasetContext: currentContext,
         api_key: apiKey,
         provider: provider,
       });
@@ -274,7 +301,7 @@ export default function Home() {
   const handleRunCustomSql = async (customSql: string) => {
     if (!customSql.trim() || isExecuting) return;
 
-    const currentContext = tableContextRef.current;
+    const currentContext = datasetContextRef.current;
     if (!currentContext) {
       setErrorMessage("Please select an active table before executing SQL.");
       return;
@@ -292,6 +319,7 @@ export default function Home() {
         active_table: currentContext.tableName,
         table_name: currentContext.tableName,
         schema: currentContext.columns,
+        datasetContext: currentContext,
         api_key: apiKey,
         provider: provider,
       });
@@ -370,9 +398,9 @@ export default function Home() {
             setQuery={setQuery}
             onSubmit={handleRunQuery}
             isExecuting={isExecuting}
-            activeTable={tableContext?.tableName || activeTable}
+            activeTable={datasetContext?.tableName || activeTable}
             tables={tableList}
-            tableColumns={tableContext?.columns ? tableContext.columns.map((c) => c.name) : (activeTable && schemaData[activeTable]?.columns ? schemaData[activeTable].columns.map((c: any) => c.name) : [])}
+            tableColumns={datasetContext?.columns ? datasetContext.columns.map((c) => c.name) : (activeTable && schemaData[activeTable]?.columns ? schemaData[activeTable].columns.map((c: any) => c.name) : [])}
             onSelectTable={handleSelectTable}
             isTableSchemaReady={isTableSchemaReady}
             isSchemaLoading={isSchemaLoading}

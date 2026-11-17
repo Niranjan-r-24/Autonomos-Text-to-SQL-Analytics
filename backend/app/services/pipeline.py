@@ -263,13 +263,16 @@ class TextToSqlPipeline:
                 "error": clarification_msg
             }
 
-        # Strict security guard: Block audit_logs from ever being queried for non-audit questions
-        is_explicit_audit = any(k in q_tokens or f" {k} " in f" {q_lower} " for k in [
-            "audit", "audit_log", "audit_logs", "security log", "security logs", "security audit",
-            "failed login", "failed logins"
-        ])
+        # Strict security guard: Block audit_logs from ever being queried for non-audit questions or when active_table is not audit_logs
+        is_explicit_audit = (
+            (active_table and active_table.lower() == "audit_logs")
+            or (not active_table and any(k in q_tokens or f" {k} " in f" {q_lower} " for k in [
+                "audit", "audit_log", "audit_logs", "security log", "security logs", "security audit",
+                "failed login", "failed logins"
+            ]))
+        )
         if "audit_logs" in sql_query.lower() and not is_explicit_audit:
-            logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for business tables.", user_question)
+            logger.warning("Intercepted unwanted audit_logs query for question: '%s'. Re-synthesizing for table: %s.", user_question, active_table)
             sql_query, explanation = self.generator._synthesize_dynamic_sql(user_question, schema_info, target_table=active_table)
             generated_by = "Deterministic Analytics Engine"
             if "audit_logs" in sql_query.lower():

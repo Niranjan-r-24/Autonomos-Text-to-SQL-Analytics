@@ -280,3 +280,149 @@ class TestDatasetRouting:
             assert res2.status_code == 200
             assert "warehouse_inventory" in res2.json()["sql"]
             assert "test_sql_orders" not in res2.json()["sql"]
+
+    def test_09_upload_payments_csv_and_query_highest_amount_and_browse(self):
+        """
+        Acceptance test 9:
+        Upload payments.csv and verify that queries like 'Top 5 highest amount'
+        and 'Show first 10 rows from payments' strictly target payments,
+        never fall back to audit_logs or multi-table sales joins, and return DatasetContext.
+        """
+        payments_csv = (
+            b"payment_id,order_id,amount,payment_method,payment_status\n"
+            b"PAY-001,101,150.50,Credit Card,Completed\n"
+            b"PAY-002,102,999.99,Bank Wire,Completed\n"
+            b"PAY-003,103,45.00,PayPal,Completed\n"
+            b"PAY-004,104,1250.00,Credit Card,Completed\n"
+            b"PAY-005,105,320.75,Debit Card,Pending\n"
+            b"PAY-006,106,75.25,Apple Pay,Completed\n"
+        )
+
+        upload_res = client.post(
+            "/api/upload",
+            files={"file": ("payments.csv", payments_csv, "text/csv")}
+        )
+        assert upload_res.status_code == 200
+        upload_data = upload_res.json()
+        assert upload_data["success"] is True
+        assert upload_data["tableName"] == "payments"
+        assert upload_data["sourceFileName"] == "payments.csv"
+        assert upload_data["rowCount"] == 6
+        assert "datasetContext" in upload_data
+        assert upload_data["datasetContext"]["tableName"] == "payments"
+
+        # 1. Ask 'Top 5 highest amount'
+        query_res = client.post(
+            "/api/query",
+            json={
+                "question": "Top 5 highest amount",
+                "tableName": "payments",
+                "datasetContext": upload_data["datasetContext"],
+                "provider": "fallback"
+            }
+        )
+        assert query_res.status_code == 200
+        data = query_res.json()
+        assert data["success"] is True
+        sql = data["sql"]
+
+        assert "payments" in sql
+        assert "audit_logs" not in sql
+        assert "sales" not in sql
+        assert "order_items" not in sql
+
+        sql_normalized = sql.replace('"', '').replace("`", "").lower()
+        assert "order by amount desc limit 5" in sql_normalized
+        assert data["row_count"] == 5
+        assert data["rows"][0]["amount"] == 1250.00
+        assert data["rows"][1]["amount"] == 999.99
+
+        # 2. Ask 'Show first 10 rows from payments'
+        browse_res = client.post(
+            "/api/query",
+            json={
+                "question": "Show first 10 rows from payments",
+                "tableName": "payments",
+                "datasetContext": upload_data["datasetContext"],
+                "provider": "fallback"
+            }
+        )
+        assert browse_res.status_code == 200
+        b_data = browse_res.json()
+        assert b_data["success"] is True
+        b_sql = b_data["sql"]
+        assert "payments" in b_sql
+        assert "audit_logs" not in b_sql
+
+    def test_10_dataset_context_payload_in_query_and_execute_sql(self):
+        """
+        Acceptance test 10:
+        Verify datasetContext object is accepted directly by /api/query and /api/execute-sql.
+        """
+        ctx = {
+            "tableName": "payments",
+            "sourceFileName": "payments.csv",
+            "columns": [
+                {"name": "payment_id", "type": "TEXT"},
+                {"name": "amount", "type": "REAL"}
+            ],
+            "rowCount": 6,
+            "datasetId": "payments"
+        }
+
+        # Query using datasetContext
+        q_res = client.post(
+            "/api/query",
+            json={
+                "question": "Top 3 highest amount",
+                "datasetContext": ctx,
+                "provider": "fallback"
+            }
+        )
+        assert q_res.status_code == 200
+        q_data = q_res.json()
+        assert "payments" in q_data["sql"]
+        assert "audit_logs" not in q_data["sql"]
+
+        # Execute safe SQL using datasetContext
+        exec_res = client.post(
+            "/api/execute-sql",
+            json={
+                "sql": 'SELECT "payment_id", "amount" FROM "payments" ORDER BY "amount" DESC LIMIT 3;',
+                "datasetContext": ctx
+            }
+        )
+        assert exec_res.status_code == 200
+        exec_data = exec_res.json()
+        assert exec_data["success"] is True
+        assert exec_data["row_count"] == 3
+
+    def test_11_no_csv_query_ever_reads_audit_logs_under_any_circumstance(self):
+        """
+        Acceptance test 11:
+        Verify no CSV query ever reads audit_logs even with tricky questions
+        mentioning logs, actions, audits, or failed events when a CSV table is selected.
+        """
+        tricky_queries = [
+            "Show log of payments",
+            "Failed transaction events",
+            "Audit status of payments",
+            "Payment action history",
+            "Security status of transactions"
+        ]
+
+        for q in tricky_queries:
+            res = client.post(
+                "/api/query",
+                json={
+                    "question": q,
+                    "tableName": "payments",
+                    "provider": "fallback"
+                }
+            )
+            assert res.status_code == 200
+            data = res.json()
+            sql = (data.get("sql") or "").lower()
+            assert "audit_logs" not in sql, f"Tricky query '{q}' leaked audit_logs into SQL: {sql}"
+            for audit_col in ["ip_address", "timestamp", "user_id"]:
+                assert audit_col not in data.get("columns", [])

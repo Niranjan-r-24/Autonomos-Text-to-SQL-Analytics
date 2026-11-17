@@ -230,7 +230,12 @@ def format_schema_for_llm(schema_info: Dict[str, Any], active_table: Optional[st
             return (3, 0)
         return (4, t_l)
 
-    sorted_tables = sorted(schema_info.keys(), key=table_sort_key)
+    # Exclude internal system/audit tables unless explicitly requested as active_table
+    valid_tables = [
+        t for t in schema_info.keys()
+        if not (t.lower() in ("sqlite_sequence", "audit_logs") and (not active_table or active_table.lower() != t.lower()))
+    ]
+    sorted_tables = sorted(valid_tables, key=table_sort_key)
 
     for table_name in sorted_tables:
         meta = schema_info[table_name]

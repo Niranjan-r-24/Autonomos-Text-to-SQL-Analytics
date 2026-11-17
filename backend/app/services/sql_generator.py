@@ -192,8 +192,15 @@ class SQLGenerator:
         formatted_schema = format_schema_for_llm(schema_info, active_table=active_table)
 
         active_table_instruction = ""
-        if active_table and active_table in schema_info:
-            active_table_instruction = f"\nTARGET TABLE: The active dataset is '{active_table}'. Prioritize writing queries against '{active_table}' unless the question explicitly asks for another table.\n"
+        if active_table and active_table in schema_info and active_table.lower() != "audit_logs":
+            permitted_list = list(schema_info.keys())
+            active_table_instruction = f"""
+TARGET TABLE ENFORCEMENT:
+The user is querying ONLY the active table '{active_table}'.
+You MUST strictly and exclusively query '{active_table}'.
+Do NOT query any other table or join any table other than permitted relationships: {permitted_list}.
+Under NO circumstances may you reference 'audit_logs' or 'sqlite_sequence'.
+"""
 
         system_prompt = f"""You are an expert SQL Developer and Database Architect.
 Generate a standard SQLite/ANSI SQL query and a short, clear plain English explanation for the user question.
@@ -204,8 +211,7 @@ DATABASE SCHEMA AND RELATIONSHIPS:
 CRITICAL INTENT AND SCHEMA GROUNDING RULES:
 1. STRICT SCHEMA GROUNDING (NEVER GUESS COLUMN NAMES):
    - You MUST ONLY query table names and column names that appear in the DATABASE SCHEMA above.
-   - If 'products' has 'product_name' and 'product_id', you MUST use 'products.product_name' and 'products.product_id' (NEVER 'p.name' or 'p.id').
-   - If 'customers' has 'customer_name' and 'customer_id', use 'customers.customer_name' and 'customers.customer_id'.
+   - Never reference tables or columns not defined in the schema above.
 
 2. MULTI-TABLE RELATIONAL DATASETS (E-COMMERCE / ORDERS / TRANSACTIONS):
    - If 'order_items' and 'products' exist:
@@ -216,17 +222,11 @@ CRITICAL INTENT AND SCHEMA GROUNDING RULES:
      GROUP BY p.product_id, p.product_name
      ORDER BY total_revenue DESC LIMIT 5;
    - If 'orders' and 'customers' exist: join on 'orders.customer_id = customers.customer_id'.
-   - If 'orders' and 'order_items' exist: monthly revenue is:
-     SELECT strftime('%Y-%m', o.order_date) AS sales_month, SUM(oi.line_total) AS monthly_revenue
-     FROM orders o JOIN order_items oi ON o.order_id = oi.order_id
-     GROUP BY sales_month ORDER BY sales_month ASC;
 
-3. DOMAIN & TABLE ROUTING RULES:
-   - Questions about "customers", "users", "clients", "subscribers" (e.g., "How many customers are in the database?") MUST ALWAYS query the 'customers' table (e.g. SELECT COUNT(*) AS total_customers FROM customers;). NEVER query 'audit_logs'.
-   - 'audit_logs' contains system security logs (actions, IP addresses, failures). NEVER query 'audit_logs' unless the user explicitly asks about audit logs, security events, logins, or IP addresses.
-   - Questions about "products", "catalog", "items", "prices" MUST query the 'products' table.
-   - Questions about "orders", "purchases", "order status" MUST query 'orders'.
-   - Questions about nonexistent tables: Do NOT substitute another table. Return empty string for sql and clear error.
+3. DOMAIN & ACTIVE TABLE ROUTING RULES:
+   - When TARGET TABLE is specified, you MUST query that target table and project only its real columns.
+   - For queries with no active table, match tables strictly based on schema columns and entities.
+   - Never substitute unrelated tables or fall back to system tables.
 
 4. RANKING DIRECTION & LIMITS:
    - For "lowest", "bottom", "least", "cheapest", "worst", "minimum", "ascending", or "ASC": use ORDER BY <metric> ASC.
@@ -360,15 +360,21 @@ JSON Response Format:
             any(k in q for k in ["give me all", "show all", "list all", "get all", "all ", "browse ", "display "])
             or q.startswith("show ") or q.startswith("list ") or q.startswith("all ") or q in [t.lower() for t in schema_info.keys()]
         ) and not any(k in q for k in ["where", "less", "greater", "more", "average", "avg", "count", "sum", "highest", "lowest", "by", ">", "<", "=", "top", "bottom", "revenue", "sales", "spend", "sold", "how many", "number of", "total number", "prices", "price"]):
-            for t in schema_info.keys():
-                tl = t.lower()
-                if tl in ("sqlite_sequence", "audit_logs"):
-                    continue
-                if tl in q_tokens or tl in q or tl.rstrip("s") in q_tokens:
-                    candidate_browse_tbl = t
-                    break
+            if active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
+                candidate_browse_tbl = active_table
+            else:
+                for t in schema_info.keys():
+                    tl = t.lower()
+                    if tl in ("sqlite_sequence", "audit_logs"):
+                        continue
+                    if tl in q_tokens or tl in q or tl.rstrip("s") in q_tokens:
+                        candidate_browse_tbl = t
+                        break
 
         if candidate_browse_tbl:
+            target_meta = schema_info.get(candidate_browse_tbl, {})
+            target_cols = target_meta.get("columns", [])
+            cols_proj = ", ".join(f'"{c["name"]}"' for c in target_cols) if target_cols else "*"
             lim_m = re.search(r"\b(\d+)\b", q)
             has_all = any(k in q for k in ["all", "every", "full"]) and not lim_m
             if lim_m:
@@ -385,7 +391,7 @@ JSON Response Format:
                 limit_desc = "all "
 
             tbl_name_str = candidate_browse_tbl if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", candidate_browse_tbl) else f'"{candidate_browse_tbl}"'
-            sql = f"SELECT * FROM {tbl_name_str}{limit_clause}"
+            sql = f"SELECT {cols_proj} FROM {tbl_name_str}{limit_clause};"
             explanation = f"Retrieves {limit_desc}records from the '{candidate_browse_tbl}' table."
             return sql, explanation
 
@@ -410,8 +416,14 @@ JSON Response Format:
 
         if active_table and active_table in schema_info and active_table.lower() not in ("sqlite_sequence", "audit_logs"):
             target_table_name = active_table
-            # For custom uploaded datasets, route directly to dynamic synthesis for that table
-            if active_table.lower() not in canonical_tables:
+            # When active_table is explicitly specified, route to dynamic synthesis unless explicit join cues or mentions of other permitted tables exist
+            has_join_cues = any(k in q for k in ["join", "with their", "and their", "across"])
+            mentions_other_schema_table = any(
+                t.lower() != active_table.lower() and (t.lower() in q or t.lower().rstrip("s") in q)
+                for t in schema_info.keys()
+            )
+            active_has_fks = bool(schema_info.get(active_table, {}).get("relationships"))
+            if not ((has_join_cues or mentions_other_schema_table) and active_has_fks) or len(schema_info) == 1:
                 return self._synthesize_dynamic_sql(user_question, schema_info, target_table=active_table)
 
         business_tables_syns = {k: v for k, v in table_synonyms.items() if k != "audit_logs"}
@@ -1127,8 +1139,8 @@ JSON Response Format:
 
         # Branch D: Browse / Filtered Query
         # The result renderer/executor already has a 1,000-row safety cap.
-        # Do not introduce an undocumented ten-row cap for normal questions.
-        browse_limit = ""
+        # Respect explicit numeric limit (e.g. first 10 rows).
+        browse_limit = f" LIMIT {limit_val}" if has_explicit_limit else ""
         sql = f'SELECT {cols_proj} FROM "{target_table}"{where_clause}{browse_limit};'
         if where_filters:
             suffix = "all matching records"
