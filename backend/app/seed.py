@@ -16,21 +16,32 @@ def seed_benchmark_data(force: bool = False):
     Populate database with the benchmark enterprise schema and dataset.
     """
     with engine.begin() as conn:
-        # Check if already seeded and not force
-        tables = conn.execute(
-            text("SELECT name FROM sqlite_master WHERE type='table' AND name='customers';") 
-            if engine.url.drivername.startswith("sqlite") 
-            else text("SELECT table_name FROM information_schema.tables WHERE table_name='customers';")
-        ).fetchall()
+        # Check existing tables
+        if engine.url.drivername.startswith("sqlite"):
+            rows = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';")).fetchall()
+            existing_tables = {r[0].lower() for r in rows}
+        else:
+            rows = conn.execute(text("SELECT table_name FROM information_schema.tables WHERE table_schema='public';")).fetchall()
+            existing_tables = {r[0].lower() for r in rows}
 
-        if tables and not force:
+        required_tables = {"customers", "products", "orders", "order_items", "audit_logs"}
+        if required_tables.issubset(existing_tables) and not force:
             count = conn.execute(text("SELECT COUNT(*) FROM customers")).scalar()
-            if count == 12:
-                return {"status": "already_seeded", "customers": 12, "products": 8, "orders": 30}
+            audit_count = conn.execute(text("SELECT COUNT(*) FROM audit_logs")).scalar()
+            if count == 12 and audit_count == 10:
+                return {
+                    "status": "already_seeded",
+                    "customers": 12,
+                    "products": 8,
+                    "orders": 30,
+                    "order_items": 30,
+                    "audit_logs": 10
+                }
 
-        # Drop existing benchmark tables
+        # Drop existing benchmark tables in correct dependency order
+        cascade = " CASCADE" if not engine.url.drivername.startswith("sqlite") else ""
         for tbl in ["order_items", "orders", "products", "customers", "audit_logs"]:
-            conn.execute(text(f"DROP TABLE IF EXISTS {tbl};"))
+            conn.execute(text(f"DROP TABLE IF EXISTS {tbl}{cascade};"))
 
         # 1. Customers Table (12 rows)
         conn.execute(text("""
@@ -197,7 +208,7 @@ def seed_benchmark_data(force: bool = False):
                 id INTEGER PRIMARY KEY,
                 action TEXT NOT NULL,
                 user_id INTEGER,
-                timestamp DATETIME NOT NULL,
+                timestamp TIMESTAMP NOT NULL,
                 details TEXT
             );
         """))

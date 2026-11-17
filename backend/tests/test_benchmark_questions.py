@@ -133,3 +133,22 @@ def test_query_alias_support(client):
     assert res_sql.status_code == 200
     assert res_sql.json()["status"] == "success"
 
+def test_audit_logs_double_quoted_and_direct_sql(client):
+    """Verify execution of double-quoted table names and direct SQL inputs."""
+    # 1. Manual SQL with double-quoted audit_logs
+    res1 = client.post("/api/execute-sql", json={"sql": 'SELECT * FROM "audit_logs" LIMIT 10;'})
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert data1["status"] == "success"
+    assert data1["row_count"] == 10
+    assert data1["question"] == "Manual SQL Execution"
+
+    # 2. Direct SQL input in question field
+    res2 = client.post("/api/query", json={"question": 'SELECT * FROM "audit_logs" LIMIT 10;'})
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["status"] == "success"
+    assert data2["row_count"] == 10
+    assert "id" in data2["columns"]
+
+

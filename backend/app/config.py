@@ -14,7 +14,18 @@ PROJECT_ROOT = BACKEND_DIR.parent
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(BACKEND_DIR / ".env")
 
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'autonomos.db'}")
+raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{BACKEND_DIR / 'enterprise_analytics.db'}")
+if raw_db_url.startswith("sqlite:///") and not raw_db_url.startswith("sqlite:////"):
+    rel_path = raw_db_url.replace("sqlite:///", "")
+    if not os.path.isabs(rel_path):
+        resolved_path = (PROJECT_ROOT / rel_path).resolve()
+        if not resolved_path.parent.exists() and (BACKEND_DIR / rel_path).parent.exists():
+            resolved_path = (BACKEND_DIR / rel_path).resolve()
+        DATABASE_URL = f"sqlite:///{resolved_path.as_posix()}"
+    else:
+        DATABASE_URL = raw_db_url
+else:
+    DATABASE_URL = raw_db_url
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "gemini" if GEMINI_API_KEY else ("openai" if OPENAI_API_KEY else "schema_fallback"))

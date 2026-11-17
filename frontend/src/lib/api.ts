@@ -6,7 +6,8 @@ const getApiBase = () => {
     return process.env.NEXT_PUBLIC_API_URL.replace(/\/+$/, '');
   }
   if (typeof window !== 'undefined') {
-    if (window.location.hostname.includes('render.com')) {
+    // If running in browser and NOT on local machine, connect directly to production API
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
       return 'https://autonomos-text2sql-api.onrender.com';
     }
   }

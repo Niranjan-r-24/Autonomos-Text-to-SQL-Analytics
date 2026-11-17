@@ -188,7 +188,11 @@ export function QueryWorkspace({
                     ? 'Security Policy Blocked Query'
                     : 'Query Generation or Execution Error'}
                 </p>
-                <p className="text-xs text-red-300/80 mt-1">{String(result.error || '')}</p>
+                <p className="text-xs text-red-300/80 mt-1">
+                  {result.error
+                    ? String(result.error)
+                    : 'The database reported an execution issue. Please verify table references or click "Cancel Edit" / re-run.'}
+                </p>
               </div>
             </div>
           )}
