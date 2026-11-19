@@ -10,6 +10,7 @@ import {
   History,
   Settings,
   Sparkles,
+  Menu,
 } from 'lucide-react';
 
 export type NavTab = 'overview' | 'query' | 'schema' | 'datasets' | 'rag' | 'history' | 'settings';
@@ -18,9 +19,17 @@ interface SidebarProps {
   activeTab: NavTab;
   setActiveTab: (tab: NavTab) => void;
   tableCount: number;
+  isOpen?: boolean;
+  onToggle?: () => void;
 }
 
-export function Sidebar({ activeTab, setActiveTab, tableCount }: SidebarProps) {
+export function Sidebar({
+  activeTab,
+  setActiveTab,
+  tableCount,
+  isOpen = true,
+  onToggle,
+}: SidebarProps) {
   const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'query', label: 'Query Workspace', icon: Terminal, badge: 'AI' },
@@ -32,20 +41,44 @@ export function Sidebar({ activeTab, setActiveTab, tableCount }: SidebarProps) {
   ];
 
   return (
-    <aside className="w-64 border-r border-slate-800 bg-slate-900/90 flex flex-col justify-between shrink-0 select-none">
-      <div>
-        {/* Brand Header */}
-        <div className="h-16 flex items-center gap-3 px-6 border-b border-slate-800">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-500/30">
-            A
+    <aside
+      className={`h-screen border-slate-800 bg-slate-900/90 flex flex-col justify-between shrink-0 select-none transition-all duration-300 ease-in-out overflow-hidden z-20 ${
+        isOpen
+          ? 'w-64 border-r opacity-100'
+          : 'w-0 border-r-0 opacity-0 pointer-events-none'
+      }`}
+    >
+      <div
+        className={`w-64 min-w-[16rem] h-full flex flex-col justify-between transition-transform duration-300 ease-in-out ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div>
+          {/* Brand Header */}
+          <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-500/30 shrink-0">
+                A
+              </div>
+              <div>
+                <h1 className="font-semibold text-white tracking-wide text-sm flex items-center gap-1.5">
+                  Autonomos <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                </h1>
+                <p className="text-xs text-slate-400">Text-to-SQL Analytics</p>
+              </div>
+            </div>
+            {onToggle && (
+              <button
+                type="button"
+                onClick={onToggle}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors focus:outline-none"
+                title="Collapse sidebar"
+                aria-label="Collapse sidebar"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+            )}
           </div>
-          <div>
-            <h1 className="font-semibold text-white tracking-wide text-sm flex items-center gap-1.5">
-              Autonomos <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            </h1>
-            <p className="text-xs text-slate-400">Text-to-SQL Analytics</p>
-          </div>
-        </div>
 
         {/* Navigation Items */}
         <nav className="p-3 space-y-1">
@@ -86,6 +119,7 @@ export function Sidebar({ activeTab, setActiveTab, tableCount }: SidebarProps) {
       <div className="p-4 border-t border-slate-800 text-xs text-slate-500">
         <p className="font-medium text-slate-400">Production Ready</p>
         <p className="mt-0.5">SQLite & PostgreSQL</p>
+      </div>
       </div>
     </aside>
   );

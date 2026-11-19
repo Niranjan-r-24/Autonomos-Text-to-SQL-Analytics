@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Database, RefreshCw, Key, ShieldCheck, Sparkles } from 'lucide-react';
+import { Database, RefreshCw, Key, Sparkles, Menu } from 'lucide-react';
 
 interface HeaderProps {
   onRefreshSchema: () => void;
@@ -10,6 +10,8 @@ interface HeaderProps {
   tableCount: number;
   provider: string;
   isRefreshing: boolean;
+  onToggleSidebar?: () => void;
+  isSidebarOpen?: boolean;
 }
 
 export function Header({
@@ -19,10 +21,23 @@ export function Header({
   tableCount,
   provider,
   isRefreshing,
+  onToggleSidebar,
+  isSidebarOpen,
 }: HeaderProps) {
   return (
     <header className="h-16 border-b border-slate-800 bg-slate-900/60 backdrop-blur px-8 flex items-center justify-between shrink-0">
       <div className="flex items-center gap-4">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors focus:outline-none"
+            title={isSidebarOpen ? 'Collapse sidebar' : 'Show sidebar'}
+            aria-label="Toggle sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+        )}
         <div className="flex items-center gap-2 text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span>Live Engine</span>

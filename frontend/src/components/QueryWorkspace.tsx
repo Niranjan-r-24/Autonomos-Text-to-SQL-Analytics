@@ -304,60 +304,6 @@ export function QueryWorkspace({
             </div>
           )}
 
-          {/* SQL Inspection / Editor Toolbar */}
-          {result.sql && (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
-                <div className="flex items-center gap-2">
-                  <Database className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-semibold uppercase text-slate-300">
-                    Executed SQL Query
-                  </span>
-                  {result.provider && (
-                    <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
-                      Engine: {result.provider}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsEditingSql(!isEditingSql)}
-                    className="flex items-center gap-1 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded transition-colors"
-                  >
-                    <Edit3 className="w-3 h-3" />
-                    <span>{isEditingSql ? 'Cancel Edit' : 'Edit SQL'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* SQL Display or Edit Box */}
-              <div className="p-4 bg-slate-950 font-mono text-xs">
-                {isEditingSql ? (
-                  <div className="space-y-3">
-                    <textarea
-                      value={editableSql}
-                      onChange={(e) => setEditableSql(e.target.value)}
-                      rows={4}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-slate-100 font-mono text-xs focus:outline-none focus:border-emerald-500"
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={handleRunManualSql}
-                        disabled={manualLoading}
-                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-sans font-medium transition-colors"
-                      >
-                        <Play className="w-3 h-3" />
-                        <span>{manualLoading ? 'Executing...' : 'Run Edited SQL'}</span>
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <pre className="text-emerald-300 overflow-x-auto whitespace-pre-wrap">{result.sql}</pre>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Performance & Execution Telemetry */}
           {result.status === 'success' && (
             <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400 px-1">
@@ -454,6 +400,60 @@ export function QueryWorkspace({
                     rows={result.rows || []}
                     columns={result.columns || []}
                   />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* SQL Inspection / Editor Toolbar (Placed at the bottom after answer and table) */}
+          {result.sql && (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-semibold uppercase text-slate-300">
+                    Executed SQL Query
+                  </span>
+                  {result.provider && (
+                    <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+                      Engine: {result.provider}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsEditingSql(!isEditingSql)}
+                    className="flex items-center gap-1 text-xs text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded transition-colors"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                    <span>{isEditingSql ? 'Cancel Edit' : 'Edit SQL'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* SQL Display or Edit Box */}
+              <div className="p-4 bg-slate-950 font-mono text-xs">
+                {isEditingSql ? (
+                  <div className="space-y-3">
+                    <textarea
+                      value={editableSql}
+                      onChange={(e) => setEditableSql(e.target.value)}
+                      rows={4}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-slate-100 font-mono text-xs focus:outline-none focus:border-emerald-500"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={handleRunManualSql}
+                        disabled={manualLoading}
+                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-xs font-sans font-medium transition-colors"
+                      >
+                        <Play className="w-3 h-3" />
+                        <span>{manualLoading ? 'Executing...' : 'Run Edited SQL'}</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <pre className="text-emerald-300 overflow-x-auto whitespace-pre-wrap">{result.sql}</pre>
                 )}
               </div>
             </div>

@@ -28,6 +28,9 @@ export default function Home() {
   // Initial query state when navigating from schema or history
   const [currentQuery, setCurrentQuery] = useState<string>('');
 
+  // Sidebar slide toggle state
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
   const loadSchema = async (refresh: boolean = false) => {
     setIsRefreshing(true);
     try {
@@ -122,6 +125,8 @@ export default function Home() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         tableCount={totalActiveTables}
+        isOpen={isSidebarOpen}
+        onToggle={() => setIsSidebarOpen((prev) => !prev)}
       />
 
       {/* Main Content Area */}
@@ -134,6 +139,8 @@ export default function Home() {
           tableCount={totalActiveTables}
           provider={provider}
           isRefreshing={isRefreshing}
+          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+          isSidebarOpen={isSidebarOpen}
         />
 
         {/* Tab View Content */}
