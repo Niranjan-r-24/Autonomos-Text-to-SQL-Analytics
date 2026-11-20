@@ -12,6 +12,7 @@ import { HistoryWorkspace } from '@/components/HistoryWorkspace';
 import { SettingsModal } from '@/components/SettingsModal';
 import { fetchSchema, fetchDatasets, seedDatabase } from '@/lib/api';
 import { SchemaInfo, DatasetMetadata } from '@/types';
+import { Settings } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<NavTab>('overview');
@@ -119,8 +120,8 @@ export default function Home() {
   );
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* Sidebar Navigation */}
+    <div className="flex h-screen bg-[#F8F9F8] text-[#18221D] overflow-hidden font-sans">
+      {/* Dark Forest-Green Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -130,7 +131,7 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#F8F9F8]">
         {/* Top Header */}
         <Header
           onRefreshSchema={() => loadSchema(true)}
@@ -144,92 +145,106 @@ export default function Home() {
         />
 
         {/* Tab View Content */}
-        <main className="flex-1 overflow-y-auto p-8">
-          {activeTab === 'overview' && (
-            <Overview
-              schema={schema}
-              onNavigate={setActiveTab}
-              onRunQuickQuery={(q) => handleNavigateToQuery(q)}
-            />
-          )}
+        <main className="flex-1 overflow-y-auto p-6 md:p-8">
+          <div className="max-w-7xl mx-auto">
+            {activeTab === 'overview' && (
+              <Overview
+                schema={schema}
+                onNavigate={setActiveTab}
+                onRunQuickQuery={(q) => handleNavigateToQuery(q)}
+              />
+            )}
 
-          {activeTab === 'query' && (
-            <QueryWorkspace
-              onSuccessQuery={() => {}}
-              provider={provider}
-              apiKey={apiKey}
-              initialQuery={currentQuery}
-              datasets={datasets}
-              activeDataset={selectedDataset}
-              onSelectDataset={setSelectedDataset}
-            />
-          )}
+            {activeTab === 'query' && (
+              <QueryWorkspace
+                onSuccessQuery={() => {}}
+                provider={provider}
+                apiKey={apiKey}
+                initialQuery={currentQuery}
+                datasets={datasets}
+                activeDataset={selectedDataset}
+                onSelectDataset={setSelectedDataset}
+              />
+            )}
 
-          {activeTab === 'schema' && (
-            <SchemaExplorer
-              schema={schema}
-              onRefresh={() => loadSchema(true)}
-              onSelectTableForQuery={(q) => handleNavigateToQuery(q)}
-              isRefreshing={isRefreshing}
-            />
-          )}
+            {activeTab === 'schema' && (
+              <SchemaExplorer
+                schema={schema}
+                onRefresh={() => loadSchema(true)}
+                onSelectTableForQuery={(q) => handleNavigateToQuery(q)}
+                isRefreshing={isRefreshing}
+              />
+            )}
 
-          {activeTab === 'datasets' && (
-            <DatasetManager
-              onDatasetUploaded={(res?: any) => {
-                if (res?.datasetId || res?.tableName || res?.dataset?.table_name) {
-                  const tbl = res.tableName || res.table_name || res.dataset?.table_name;
-                  const did = res.datasetId || res.dataset_id || res.dataset?.dataset_id;
-                  const newDs: DatasetMetadata = {
-                    dataset_id: did || `ds_${tbl}`,
-                    datasetId: did || `ds_${tbl}`,
-                    table_name: tbl,
-                    tableName: tbl,
-                    source_file_name: res.source_file_name || res.filename || `${tbl}.csv`,
-                    columns_json: res.columns_json || JSON.stringify(res.columns || []),
-                    columns: res.columns || res.dataset?.columns || [],
-                    row_count: res.row_count ?? res.dataset?.row_count ?? 0,
-                    created_at: new Date().toISOString()
-                  };
-                  setSelectedDataset(newDs);
-                }
-                loadSchema(true);
-              }}
-              onNavigateToQuery={(q) => handleNavigateToQuery(q, selectedDataset)}
-              onNavigateToSchema={() => setActiveTab('schema')}
-            />
-          )}
-
-          {activeTab === 'rag' && (
-            <RagWorkspace
-              onDocumentUploaded={(newSchema?: SchemaInfo) => {
-                if (newSchema && newSchema.tables) {
-                  setSchema(newSchema);
-                } else {
+            {activeTab === 'datasets' && (
+              <DatasetManager
+                onDatasetUploaded={(res?: any) => {
+                  if (res?.datasetId || res?.tableName || res?.dataset?.table_name) {
+                    const tbl = res.tableName || res.table_name || res.dataset?.table_name;
+                    const did = res.datasetId || res.dataset_id || res.dataset?.dataset_id;
+                    const newDs: DatasetMetadata = {
+                      dataset_id: did || `ds_${tbl}`,
+                      datasetId: did || `ds_${tbl}`,
+                      table_name: tbl,
+                      tableName: tbl,
+                      source_file_name: res.source_file_name || res.filename || `${tbl}.csv`,
+                      columns_json: res.columns_json || JSON.stringify(res.columns || []),
+                      columns: res.columns || res.dataset?.columns || [],
+                      row_count: res.row_count ?? res.dataset?.row_count ?? 0,
+                      created_at: new Date().toISOString()
+                    };
+                    setSelectedDataset(newDs);
+                  }
                   loadSchema(true);
-                }
-              }}
-              onNavigateToSchema={() => setActiveTab('schema')}
-            />
-          )}
+                }}
+                onNavigateToQuery={(q) => handleNavigateToQuery(q, selectedDataset)}
+                onNavigateToSchema={() => setActiveTab('schema')}
+              />
+            )}
 
-          {activeTab === 'history' && (
-            <HistoryWorkspace onRerunQuery={(q) => handleNavigateToQuery(q)} />
-          )}
+            {activeTab === 'rag' && (
+              <RagWorkspace
+                onDocumentUploaded={(newSchema?: SchemaInfo) => {
+                  if (newSchema && newSchema.tables) {
+                    setSchema(newSchema);
+                  } else {
+                    loadSchema(true);
+                  }
+                }}
+                onNavigateToSchema={() => setActiveTab('schema')}
+              />
+            )}
 
-          {activeTab === 'settings' && (
-            <div className="max-w-xl">
-              <h2 className="text-base font-semibold text-slate-100 mb-4">
-                Configuration & API Keys
-              </h2>
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors"
-              >
-                Open Settings Panel
-              </button>
-            </div>
-          )}
+            {activeTab === 'history' && (
+              <HistoryWorkspace onRerunQuery={(q) => handleNavigateToQuery(q)} />
+            )}
+
+            {activeTab === 'settings' && (
+              <div className="max-w-xl bg-white border border-stone-200/90 rounded-xl p-6 shadow-card space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-sage-50 text-forest-800 flex items-center justify-center border border-sage-200/80">
+                    <Settings className="w-5 h-5 text-forest-700" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-stone-900">
+                      Configuration & API Keys
+                    </h2>
+                    <p className="text-xs text-stone-500">
+                      Manage LLM intelligence providers, fallback schema engine options, and API credentials.
+                    </p>
+                  </div>
+                </div>
+                <div className="pt-2">
+                  <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="bg-forest-900 hover:bg-forest-850 text-white text-xs font-medium px-4 py-2.5 rounded-lg transition-colors inline-flex items-center gap-2 shadow-sm"
+                  >
+                    Open Settings Panel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </main>
       </div>
 

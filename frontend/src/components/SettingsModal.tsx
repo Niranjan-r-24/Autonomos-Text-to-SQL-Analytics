@@ -33,28 +33,29 @@ export function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+      <div className="bg-white border border-stone-200/90 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-popover relative">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 text-slate-500 hover:text-slate-300 p-1 rounded-md"
+          className="absolute right-4 top-4 text-stone-400 hover:text-stone-700 p-1 rounded-md transition-colors"
+          aria-label="Close settings"
         >
           <X className="w-5 h-5" />
         </button>
 
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
-            <Key className="w-4 h-4" />
+          <div className="w-10 h-10 rounded-xl bg-sage-50 text-forest-700 flex items-center justify-center border border-sage-200/80 shadow-subtle">
+            <Key className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-slate-100">AI Provider & API Configuration</h3>
-            <p className="text-xs text-slate-400">Configure your LLM backend or use the built-in engine</p>
+            <h3 className="text-base font-semibold text-stone-900">AI Provider & API Configuration</h3>
+            <p className="text-xs text-stone-500">Configure your LLM backend or use the built-in engine</p>
           </div>
         </div>
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-stone-600 mb-2">
               Select AI Model Provider
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -67,10 +68,10 @@ export function SettingsModal({
                   type="button"
                   key={p.id}
                   onClick={() => setProvider(p.id)}
-                  className={`p-2.5 rounded-lg text-xs font-medium border text-center transition-colors ${
+                  className={`p-2.5 rounded-lg text-xs font-medium border text-center transition-all ${
                     provider === p.id
-                      ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                      ? 'bg-sage-100 border-forest-600 text-forest-900 font-bold shadow-xs'
+                      : 'bg-stone-50 border-stone-200 text-stone-600 hover:text-stone-900 hover:bg-stone-100'
                   }`}
                 >
                   {p.label}
@@ -81,7 +82,7 @@ export function SettingsModal({
 
           {provider !== 'schema_fallback' && (
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-stone-600 mb-1.5">
                 API Key for {provider === 'gemini' ? 'Google Gemini' : 'OpenAI'}
               </label>
               <input
@@ -89,36 +90,36 @@ export function SettingsModal({
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder="Paste your API key (leave blank to use backend .env)"
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 font-mono text-xs"
+                className="w-full bg-stone-50 border border-stone-300 rounded-lg px-3 py-2 text-xs text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-forest-600 focus:ring-1 focus:ring-forest-600 font-mono shadow-subtle"
               />
-              <p className="text-[11px] text-slate-500 mt-1">
+              <p className="text-[11px] text-stone-500 mt-1">
                 Keys remain in your browser session and are never persisted to disk.
               </p>
             </div>
           )}
 
-          <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-lg flex items-start gap-2.5 text-xs text-slate-400">
-            <Shield className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <span>
+          <div className="p-3.5 bg-sage-50/80 border border-sage-200 rounded-lg flex items-start gap-2.5 text-xs text-stone-600">
+            <Shield className="w-4 h-4 text-forest-700 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">
               If no API key is provided, Autonomos uses the zero-cost schema-grounded deterministic engine, ensuring 100% offline accuracy.
             </span>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex justify-end gap-2.5 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200"
+              className="px-4 py-2 rounded-lg text-xs font-medium text-stone-600 hover:text-stone-900 hover:bg-stone-100 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-forest-900 hover:bg-forest-850 text-white transition-colors shadow-sm"
             >
               {saved ? (
                 <>
-                  <Check className="w-3.5 h-3.5" />
+                  <Check className="w-3.5 h-3.5 text-emerald-300" />
                   <span>Saved!</span>
                 </>
               ) : (
