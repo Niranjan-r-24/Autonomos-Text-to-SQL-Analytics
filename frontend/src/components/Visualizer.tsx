@@ -44,7 +44,22 @@ export function Visualizer({ config, data, chartConfig, rows }: VisualizerProps)
   }, []);
 
   const activeConfig = config || chartConfig;
-  const activeData = data || rows || [];
+  const rawData = data || rows || [];
+
+  const activeData = React.useMemo(() => {
+    if (!activeConfig || !rawData || rawData.length === 0) return [];
+    return rawData.map((row) => {
+      const clean: Record<string, any> = { ...row };
+      for (const k of activeConfig.y_axis_keys || []) {
+        const val = row[k];
+        if (val !== undefined && val !== null) {
+          const n = Number(val);
+          clean[k] = isNaN(n) ? 0 : n;
+        }
+      }
+      return clean;
+    });
+  }, [activeConfig, rawData]);
 
   if (!isClient) {
     return (
@@ -56,8 +71,9 @@ export function Visualizer({ config, data, chartConfig, rows }: VisualizerProps)
 
   if (!activeConfig) {
     return (
-      <div className="h-64 flex items-center justify-center text-stone-400 text-xs font-sans">
-        No chart configuration available.
+      <div className="h-64 flex flex-col items-center justify-center text-stone-400 text-xs font-sans space-y-1">
+        <p className="font-medium text-stone-600">No chart recommended for this query result.</p>
+        <p className="text-stone-400">This query (such as a single scalar value or raw record list) is best viewed in Table Results.</p>
       </div>
     );
   }
@@ -71,6 +87,14 @@ export function Visualizer({ config, data, chartConfig, rows }: VisualizerProps)
   }
 
   const { chart_type, x_axis_key, y_axis_keys, title } = activeConfig;
+
+  if (!y_axis_keys || y_axis_keys.length === 0) {
+    return (
+      <div className="h-64 flex items-center justify-center text-stone-400 text-xs font-sans">
+        No metric values available to chart.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

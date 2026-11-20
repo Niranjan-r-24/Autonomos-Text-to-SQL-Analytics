@@ -141,6 +141,7 @@ export function QueryWorkspace({
   const handleRunQuery = async (queryText?: string) => {
     const q = queryText || question;
     if (!q.trim()) return;
+    setResult(null);
     setLoading(true);
     setIsEditingSql(false);
 
@@ -171,6 +172,7 @@ export function QueryWorkspace({
 
   const handleRunManualSql = async () => {
     if (!editableSql.trim()) return;
+    setResult(null);
     setManualLoading(true);
 
     try {
@@ -196,6 +198,7 @@ export function QueryWorkspace({
 
   const handleDatasetChange = (ds: DatasetMetadata | null) => {
     setSelectedDataset(ds);
+    setResult(null);
     if (onSelectDataset) {
       onSelectDataset(ds);
     }
@@ -334,6 +337,15 @@ export function QueryWorkspace({
           </div>
         </div>
       </div>
+
+      {/* Query Loading State */}
+      {(loading || manualLoading) && (
+        <div className="bg-white border border-stone-200/90 rounded-xl p-8 shadow-card flex flex-col items-center justify-center space-y-3">
+          <div className="w-8 h-8 rounded-full border-2 border-forest-700 border-t-transparent animate-spin" />
+          <p className="text-sm font-medium text-stone-700">Analyzing question and compiling visualization...</p>
+          <p className="text-xs text-stone-400">Executing schema-grounded query against active dataset</p>
+        </div>
+      )}
 
       {/* Query Results & Execution Details */}
       {result && (

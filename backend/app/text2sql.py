@@ -42,21 +42,37 @@ RULES:
 """
 
 async def call_gemini_api(prompt: str, api_key: str) -> str:
-    """Call Google Gemini API."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 800}
-    }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, json=payload)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Gemini API error ({resp.status_code}): {resp.text}")
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise RuntimeError("Gemini returned no candidates.")
-        return candidates[0]["content"]["parts"][0]["text"]
+    """Call Google Gemini API with modern model fallback."""
+    models_to_try = [
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash"
+    ]
+    last_err = None
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        for model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.0, "maxOutputTokens": 800}
+            }
+            try:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        return candidates[0]["content"]["parts"][0]["text"]
+                elif resp.status_code == 404:
+                    continue
+                else:
+                    last_err = f"Gemini API error ({resp.status_code}): {resp.text}"
+            except Exception as e:
+                last_err = str(e)
+                continue
+    raise RuntimeError(last_err or "Gemini API unavailable")
 
 async def call_openai_api(system_prompt: str, user_prompt: str, api_key: str) -> str:
     """Call OpenAI API."""
@@ -73,7 +89,7 @@ async def call_openai_api(system_prompt: str, user_prompt: str, api_key: str) ->
         ],
         "temperature": 0.0
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(url, headers=headers, json=payload)
         if resp.status_code != 200:
             raise RuntimeError(f"OpenAI API error ({resp.status_code}): {resp.text}")
@@ -137,38 +153,16 @@ def schema_grounded_fallback(
     # Prevent accidental audit_logs
     non_audit_tables = [t for t in available_table_names if t != "audit_logs"]
 
-    # If target_table is explicitly provided
+    # 1. Determine primary table
+    target_tbl = None
     if target_table:
         matched = find_best_table_match(target_table, non_audit_tables)
         if not matched:
             return f"-- ERROR: Dataset table {target_table} is unavailable; no query executed."
-        # If question is generic "show all" or mentions target_table
-        if any(w in q for w in ["show", "list", "all", "get", "select", target_table.lower()]):
-            return f"SELECT * FROM {matched};"
+        target_tbl = matched
 
-    # 1. Count questions: e.g. "how many customers", "count of orders", "count of payments"
-    count_match = re.search(r"(?:how many|count (?:of )?|total number of)\s+([a-zA-Z0-9_]+)", q)
-    if count_match:
-        target_entity = count_match.group(1)
-        matched_tbl = find_best_table_match(target_entity, non_audit_tables)
-        if matched_tbl:
-            return f"SELECT COUNT(*) AS total_count FROM {matched_tbl};"
-        else:
-            return f"-- ERROR: Dataset table {target_entity} is unavailable; no query executed."
-
-    # 2. Count by status: e.g. "count orders by status", "orders by status"
-    if "by status" in q or "group by status" in q:
-        for word in q.split():
-            matched_tbl = find_best_table_match(word, non_audit_tables)
-            if matched_tbl and "status" in [c["name"].lower() for c in tables[matched_tbl]["columns"]]:
-                return f"SELECT status, COUNT(*) AS count FROM {matched_tbl} GROUP BY status ORDER BY count DESC;"
-        for tbl in non_audit_tables:
-            col_names = [c["name"].lower() for c in tables[tbl]["columns"]]
-            if "status" in col_names:
-                return f"SELECT status, COUNT(*) AS count FROM {tbl} GROUP BY status ORDER BY count DESC;"
-
-    # 3. Highest revenue product
-    if "highest revenue" in q or "top revenue" in q or "most revenue" in q or "top selling product" in q:
+    # Multi-table benchmark queries (e.g. highest revenue product)
+    if ("highest revenue" in q or "top revenue" in q or "most revenue" in q or "top selling" in q) and ("product" in q or "products" in q or "item" in q):
         if "order_items" in tables and "products" in tables:
             return (
                 "SELECT p.id, p.name, SUM(oi.quantity * oi.unit_price) AS total_revenue "
@@ -178,55 +172,201 @@ def schema_grounded_fallback(
                 "ORDER BY total_revenue DESC "
                 "LIMIT 1;"
             )
-        elif "orders" in tables and "total_amount" in [c["name"] for c in tables["orders"]["columns"]]:
-            return "SELECT * FROM orders ORDER BY total_amount DESC LIMIT 1;"
 
-    # 4. Monthly revenue / trends
-    if "monthly" in q and ("revenue" in q or "sales" in q or "income" in q):
-        if "orders" in tables:
-            date_col = next((c["name"] for c in tables["orders"]["columns"] if "date" in c["name"].lower()), None)
-            amt_col = next((c["name"] for c in tables["orders"]["columns"] if "amount" in c["name"].lower() or "price" in c["name"].lower()), None)
-            if date_col and amt_col:
-                return (
-                    f"SELECT strftime('%Y-%m', {date_col}) AS month, SUM({amt_col}) AS monthly_revenue "
-                    f"FROM orders "
-                    f"GROUP BY month "
-                    f"ORDER BY month ASC;"
-                )
+    if not target_tbl:
+        # Benchmark specific: monthly revenue / sales maps to orders if target_table not set
+        if ("monthly" in q or "daily" in q or "yearly" in q) and any(term in q for term in ["revenue", "sales", "income"]) and "orders" in non_audit_tables:
+            target_tbl = "orders"
 
-    # 5. Top N or First N items: e.g. "show the first 10 products", "top 5 customers"
+    if not target_tbl:
+        # Match table by words in question (skip generic and metric keywords)
+        skip_words = {
+            "show", "all", "the", "get", "list", "what", "which", "when", "data",
+            "table", "count", "total", "average", "many", "first", "limit",
+            "revenue", "sales", "monthly", "daily", "yearly", "status", "amount",
+            "price", "quota", "cost", "income", "profit", "highest", "lowest", "top"
+        }
+        for word in q.split():
+            clean_word = re.sub(r"[^\w]", "", word)
+            if len(clean_word) < 3 or clean_word in skip_words:
+                continue
+            matched_tbl = find_best_table_match(clean_word, non_audit_tables)
+            if matched_tbl:
+                target_tbl = matched_tbl
+                break
+
+    if not target_tbl:
+        # Check if question mentions orders/products/customers/payments/revenue
+        if "order" in q and "orders" in non_audit_tables:
+            target_tbl = "orders"
+        elif "product" in q and "products" in non_audit_tables:
+            target_tbl = "products"
+        elif "customer" in q and "customers" in non_audit_tables:
+            target_tbl = "customers"
+        elif "payment" in q and "payments" in non_audit_tables:
+            target_tbl = "payments"
+        elif "revenue" in q and "orders" in non_audit_tables:
+            target_tbl = "orders"
+        elif len(non_audit_tables) == 1:
+            target_tbl = non_audit_tables[0]
+        else:
+            missing_match = re.search(r"(?:all|show|from|in|count)\s+([a-zA-Z0-9_]+)", q)
+            missing = missing_match.group(1) if missing_match else "this entity"
+            return f"-- ERROR: No matching table or columns found for '{missing}' in the database schema."
+
+    # 2. Inspect target table schema
+    table_cols = tables.get(target_tbl, {}).get("columns", [])
+    col_map = {c["name"].lower(): c["name"] for c in table_cols}
+    col_types = {c["name"].lower(): c.get("type", "").upper() for c in table_cols}
+
+    id_col_names = {
+        name for name, orig in col_map.items()
+        if name in {"id", "_id", "_row_id", "row_id", "uuid", "guid", "index"}
+        or name.endswith("_id") or name.startswith("id_")
+    }
+
+    date_cols = [
+        c["name"] for c in table_cols
+        if c["name"].lower() not in id_col_names and (
+            c.get("type", "").upper() in {"DATE", "TIMESTAMP", "DATETIME"}
+            or any(t in c["name"].lower() for t in ["date", "month", "year", "day", "time", "created_at", "timestamp"])
+        )
+    ]
+
+    numeric_cols = [
+        c["name"] for c in table_cols
+        if c["name"].lower() not in id_col_names and (
+            c.get("type", "").upper() in {"INTEGER", "REAL", "FLOAT", "NUMERIC", "DOUBLE", "BIGINT", "DECIMAL"}
+            or any(t in c["name"].lower() for t in ["amount", "revenue", "sales", "quota", "price", "salary", "profit", "quantity", "score", "total"])
+        )
+    ]
+
+    cat_cols = [
+        c["name"] for c in table_cols
+        if c["name"].lower() not in id_col_names
+        and c["name"] not in date_cols
+        and c["name"] not in numeric_cols
+    ]
+
+    # 3. Intent A: Date-based aggregation / trend
+    is_date_q = any(w in q for w in ["monthly", "daily", "yearly", "annual", "by month", "by date", "by year", "over time", "trend", "timeline"])
+    if is_date_q and (date_cols or "month" in col_map or "year" in col_map):
+        d_col = date_cols[0] if date_cols else col_map.get("month", list(col_map.values())[0])
+        if "daily" in q or "by day" in q or "by date" in q:
+            d_expr = f"strftime('%Y-%m-%d', {d_col}) AS day"
+            d_alias = "day"
+        elif "yearly" in q or "annual" in q or "by year" in q:
+            d_expr = f"strftime('%Y', {d_col}) AS year"
+            d_alias = "year"
+        else:
+            d_expr = f"strftime('%Y-%m', {d_col}) AS month"
+            d_alias = "month"
+
+        # Match numeric metric column
+        m_col = next((c for c in numeric_cols if c.lower() in q), None)
+        if not m_col:
+            m_col = next((c for c in numeric_cols if any(term in c.lower() for term in ["revenue", "sales", "amount", "total"])), None)
+        if not m_col and numeric_cols:
+            m_col = numeric_cols[0]
+
+        if m_col:
+            if "avg" in q or "average" in q:
+                agg_expr = f"AVG({m_col}) AS avg_{m_col}"
+            else:
+                agg_expr = f"SUM({m_col}) AS monthly_{m_col}" if d_alias == "month" else f"SUM({m_col}) AS total_{m_col}"
+        else:
+            agg_expr = "COUNT(*) AS count"
+
+        return f"SELECT {d_expr}, {agg_expr} FROM {target_tbl} GROUP BY {d_alias} ORDER BY {d_alias} ASC;"
+
+    # 4. Intent B: Grouped aggregation (by category / dimension)
+    has_by = bool(re.search(r"\b(by|per|breakdown|distribution)\b", q))
+    if has_by:
+        group_col = None
+        by_m = re.search(r"(?:by|per)\s+([a-zA-Z0-9_]+)", q)
+        if by_m:
+            w = by_m.group(1).lower().strip()
+            for c in table_cols:
+                c_low = c["name"].lower()
+                if c_low == w or w in c_low or c_low in w:
+                    group_col = c["name"]
+                    break
+
+        if not group_col:
+            for c in cat_cols + [c["name"] for c in table_cols if c["name"].lower() not in id_col_names]:
+                if re.search(rf"\b{re.escape(c.lower())}\b", q):
+                    group_col = c
+                    break
+
+        if group_col:
+            # Determine metric column
+            m_col = next((c for c in numeric_cols if c.lower() in q), None)
+            is_count = any(term in q for term in ["count", "number of", "how many", "distribution"])
+
+            if is_count or (not m_col and not any(term in q for term in ["total", "sum", "avg", "average", "price", "amount", "revenue", "quota"])):
+                return f"SELECT {group_col}, COUNT(*) AS count FROM {target_tbl} GROUP BY {group_col} ORDER BY count DESC;"
+            else:
+                if not m_col and numeric_cols:
+                    m_col = numeric_cols[0]
+
+                if m_col:
+                    if "avg" in q or "average" in q or "mean" in q:
+                        return f"SELECT {group_col}, AVG({m_col}) AS avg_{m_col} FROM {target_tbl} GROUP BY {group_col} ORDER BY avg_{m_col} DESC;"
+                    elif "min" in q or "lowest" in q:
+                        return f"SELECT {group_col}, MIN({m_col}) AS min_{m_col} FROM {target_tbl} GROUP BY {group_col} ORDER BY min_{m_col} ASC;"
+                    elif "max" in q or "highest" in q:
+                        return f"SELECT {group_col}, MAX({m_col}) AS max_{m_col} FROM {target_tbl} GROUP BY {group_col} ORDER BY max_{m_col} DESC;"
+                    else:
+                        return f"SELECT {group_col}, SUM({m_col}) AS total_{m_col} FROM {target_tbl} GROUP BY {group_col} ORDER BY total_{m_col} DESC;"
+
+    # 5. Intent C: Superlatives / Top / Bottom / Ranking
+    if any(term in q for term in ["highest", "top", "most", "lowest", "least", "best", "worst"]):
+        direction = "DESC" if any(term in q for term in ["highest", "top", "most", "best"]) else "ASC"
+        entity_col = next((c for c in cat_cols if c.lower() in q), None)
+        if not entity_col and cat_cols:
+            entity_col = cat_cols[0]
+
+        metric_col = next((c for c in numeric_cols if c.lower() in q), None)
+        if not metric_col and numeric_cols:
+            metric_col = numeric_cols[0]
+
+        lim_m = re.search(r"(?:top|first|best|limit)\s+(\d+)", q)
+        lim = lim_m.group(1) if lim_m else "1"
+
+        if entity_col and metric_col:
+            return f"SELECT {entity_col}, SUM({metric_col}) AS total_{metric_col} FROM {target_tbl} GROUP BY {entity_col} ORDER BY total_{metric_col} {direction} LIMIT {lim};"
+        elif metric_col:
+            return f"SELECT * FROM {target_tbl} ORDER BY {metric_col} {direction} LIMIT {lim};"
+
+    # 6. Intent D: Scalar Count (How many / Count of entire table)
+    if any(phrase in q for phrase in ["how many", "count of", "total number of", "count all", "number of"]) or (q.startswith("count ") and not has_by):
+        return f"SELECT COUNT(*) AS total_count FROM {target_tbl};"
+
+    # 7. Intent E: Scalar Metric (Total / Average of entire table)
+    if any(term in q for term in ["total", "sum", "average", "avg", "overall"]) and not has_by:
+        metric_col = next((c for c in numeric_cols if c.lower() in q), None)
+        if not metric_col and numeric_cols:
+            for c in numeric_cols:
+                if any(term in c.lower() for term in ["revenue", "sales", "amount", "total", "price"]):
+                    metric_col = c
+                    break
+        if metric_col:
+            func = "AVG" if ("avg" in q or "average" in q) else "SUM"
+            alias = f"avg_{metric_col}" if func == "AVG" else f"total_{metric_col}"
+            return f"SELECT {func}({metric_col}) AS {alias} FROM {target_tbl};"
+
+    # 8. Intent F: Top N or First N items (non-aggregated)
     top_match = re.search(r"(?:first|top|limit)\s+(\d+)\s+([a-zA-Z0-9_]+)", q)
-    if top_match:
+    if top_match and not has_by:
         lim = top_match.group(1)
-        entity = top_match.group(2)
-        matched_tbl = find_best_table_match(entity, non_audit_tables)
-        if matched_tbl:
-            return f"SELECT * FROM {matched_tbl} LIMIT {lim};"
-        else:
-            return f"-- ERROR: Dataset table {entity} is unavailable; no query executed."
+        return f"SELECT * FROM {target_tbl} LIMIT {lim};"
 
-    # 6. Show all <entity>: e.g. "show all orders", "show all payments", "list products"
+    # 9. Intent G: Generic Show All / Preview
     show_match = re.search(r"(?:show|list|get|display|view)\s+(?:all\s+)?([a-zA-Z0-9_]+)", q)
-    if show_match:
-        entity = show_match.group(1)
-        matched_tbl = find_best_table_match(entity, non_audit_tables)
-        if matched_tbl:
-            return f"SELECT * FROM {matched_tbl};"
-        elif target_table:
-            return f"-- ERROR: Dataset table {target_table} is unavailable; no query executed."
-        else:
-            return f"-- ERROR: No matching table or columns found for '{entity}' in the database schema."
+    if show_match or any(w in q for w in ["show", "list", "all", "preview", "display"]):
+        return f"SELECT * FROM {target_tbl};"
 
-    # 7. Generic search for matching table in question words
-    for word in q.split():
-        clean_word = re.sub(r"[^\w]", "", word)
-        if len(clean_word) < 3 or clean_word in {"show", "all", "the", "get", "list", "what", "which", "when", "data", "table"}:
-            continue
-        matched_tbl = find_best_table_match(clean_word, non_audit_tables)
-        if matched_tbl:
-            return f"SELECT * FROM {matched_tbl} LIMIT 50;"
-
-    return "-- ERROR: No matching table or columns found for this question in the database schema."
+    return f"SELECT * FROM {target_tbl} LIMIT 50;"
 
 async def generate_sql_for_question(
     question: str,

@@ -306,7 +306,7 @@ async def process_natural_language_query(req: QueryRequest):
                     columns, rows, exec_ms = execute_raw_sql(safe_sql)
                     total_duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
                     nl_answer = generate_natural_language_answer("Direct SQL Query", safe_sql, columns, rows)
-                    chart_cfg = recommend_chart_config(columns, rows)
+                    chart_cfg = recommend_chart_config(columns, rows, question=question, sql=safe_sql)
                     record_query_execution(
                         question=question,
                         sql=safe_sql,
@@ -416,7 +416,7 @@ async def process_natural_language_query(req: QueryRequest):
     nl_answer = generate_natural_language_answer(question, sql, columns, rows)
 
     # 7: Recommend chart
-    chart_cfg = recommend_chart_config(columns, rows)
+    chart_cfg = recommend_chart_config(columns, rows, question=question, sql=sql)
 
     # 8: Record query in history
     record_query_execution(
@@ -496,7 +496,7 @@ def execute_manual_sql(req: ExecuteSqlRequest):
 
     total_duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
     nl_answer = generate_natural_language_answer("Manual Query", safe_sql, columns, rows)
-    chart_cfg = recommend_chart_config(columns, rows)
+    chart_cfg = recommend_chart_config(columns, rows, question="Manual SQL Execution", sql=safe_sql)
 
     record_query_execution(
         question="Manual SQL Execution",

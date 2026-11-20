@@ -151,21 +151,24 @@ def generate_natural_language_answer(
             entity_type = "orders" if "order" in q_lower else ("customers" if "customer" in q_lower else "records")
             if "status" in cat_col.lower() or "status" in q_lower:
                 return f"Order status breakdown: {breakdown_str}." if "order" in q_lower else f"Status breakdown: {breakdown_str}."
+            if any(term in val_col.lower() for term in ["amount", "revenue", "sales", "price", "quota", "salary", "total", "sum", "avg"]):
+                val_label = val_col.replace("total_", "").replace("avg_", "").replace("_", " ")
+                return f"{cat_col.replace('_', ' ').title()} breakdown by {val_label}: {breakdown_str}."
             return f"Breakdown by {cat_col.replace('_', ' ')}: {breakdown_str}."
 
     # 4. Multi-row tabular dataset
     entity_type = "records"
-    for word in ["products", "orders", "customers", "payments", "users", "logs"]:
+    for word in ["products", "orders", "customers", "payments", "users", "logs", "sales", "quota"]:
         if word in q_lower:
             entity_type = word
             break
     if entity_type == "records":
-        for word in ["product", "order", "customer", "payment", "user", "log"]:
+        for word in ["product", "order", "customer", "payment", "user", "log", "rep"]:
             if word in q_lower:
                 entity_type = f"{word}s"
                 break
 
-    name_col = next((c for c in ["name", "product_name", "customer_name", "title"] if c in columns), None)
+    name_col = next((c for c in ["name", "product_name", "customer_name", "title", "sales_rep", "payment_method"] if c in columns), None)
     if name_col:
         sample_names = [str(r[name_col]) for r in rows[:3] if r.get(name_col)]
         if sample_names:
@@ -181,44 +184,155 @@ def generate_natural_language_answer(
     return f"Retrieved {num_rows} {entity_type} from the database."
 
 
+def is_id_or_non_metric_column(col_name: str) -> bool:
+    """Detect whether a column name represents an identifier, postal code, or non-metric code."""
+    c = col_name.lower().strip()
+    if c in {"id", "_id", "_row_id", "row_id", "uuid", "guid", "index"}:
+        return True
+    if c.endswith("_id") or c.startswith("id_"):
+        return True
+    if c in {"zip", "zip_code", "postal_code", "phone", "phone_number", "ssn", "pin", "code", "file_name"}:
+        return True
+    return False
+
+
+def is_numeric_value(val: Any) -> bool:
+    """Check if value is genuine numeric and not a boolean."""
+    if isinstance(val, bool):
+        return False
+    if isinstance(val, (int, float)):
+        return True
+    if isinstance(val, str) and val.strip():
+        try:
+            float(val.strip())
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def is_temporal_column(col_name: str, sample_vals: List[Any]) -> bool:
+    """Determine whether column represents time/date."""
+    c = col_name.lower().strip()
+    # If column clearly names a metric (e.g. monthly_amount, daily_sales, yearly_revenue), it is a metric, not a date!
+    if any(m in c for m in ["amount", "revenue", "sales", "count", "total", "avg", "price", "quota", "cost", "profit", "salary", "quantity"]):
+        return False
+    if any(t in c for t in ["date", "month", "year", "day", "time", "quarter", "period", "timestamp", "created_at"]):
+        return True
+    date_patterns = [
+        re.compile(r"^\d{4}-\d{2}-\d{2}"),
+        re.compile(r"^\d{4}-\d{2}$"),
+        re.compile(r"^\d{2}/\d{2}/\d{4}"),
+        re.compile(r"^\d{4}$")
+    ]
+    str_vals = [str(v).strip() for v in sample_vals if v is not None and str(v).strip()]
+    if not str_vals:
+        return False
+    matches = sum(1 for v in str_vals if any(p.match(v) for p in date_patterns))
+    return matches >= len(str_vals) * 0.7
+
+
 def recommend_chart_config(
     columns: List[str],
-    rows: List[Dict[str, Any]]
+    rows: List[Dict[str, Any]],
+    question: Optional[str] = None,
+    sql: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Examine column types and cardinality to recommend the most insightful chart.
-    Supports 'bar', 'line', and 'pie'.
+    Examine returned SQL result data to recommend an appropriate, dynamic chart.
+    Supports 'bar', 'line', and 'pie' visualizations.
+    Guarantees no chart is recommended for single scalars or raw multi-column entity dumps.
     """
-    if not rows or len(rows) < 2 or len(columns) < 2:
+    # 1. Minimum dimensions check: at least 2 rows and 2 columns
+    if not rows or len(rows) < 2 or not columns or len(columns) < 2:
         return None
 
-    # Identify string/category column and numeric column
-    first_row = rows[0]
-    string_cols = [c for c in columns if isinstance(first_row.get(c), str)]
-    numeric_cols = [c for c in columns if isinstance(first_row.get(c), (int, float))]
+    sample_rows = rows[:15]
 
-    if not numeric_cols:
+    # 2. Inspect column data types across sample rows
+    valid_metric_cols = []
+    text_or_cat_cols = []
+    temporal_cols = []
+
+    for c in columns:
+        vals = [r.get(c) for r in sample_rows if r.get(c) is not None]
+        if not vals:
+            continue
+
+        num_count = sum(1 for v in vals if is_numeric_value(v))
+        is_num = (num_count / len(vals)) >= 0.7
+
+        if is_temporal_column(c, vals):
+            temporal_cols.append(c)
+        elif is_num and not is_id_or_non_metric_column(c):
+            valid_metric_cols.append(c)
+        elif not is_id_or_non_metric_column(c):
+            text_or_cat_cols.append(c)
+
+    # 3. Requirement 8: If no genuine numeric metric to plot, do not fabricate a chart
+    if not valid_metric_cols:
         return None
 
-    # If there's a categorical column
-    x_axis = string_cols[0] if string_cols else columns[0]
-    y_axes = numeric_cols
+    # 4. Filter out raw multi-column table dumps (e.g. SELECT * FROM table with 5+ mixed columns)
+    # Aggregation queries usually produce 2 to 4 columns.
+    sql_upper = (sql or "").upper()
+    has_group_by = "GROUP BY" in sql_upper
+    if len(columns) > 4 and not has_group_by:
+        # High-cardinality raw table dumps belong in the tabular view, not a chart
+        return None
 
-    # Determine if x_axis represents time or dates
-    is_time_series = any(term in x_axis.lower() for term in ["date", "month", "year", "day", "time"])
+    # 5. Determine X-axis and Y-axis keys
+    if temporal_cols:
+        x_axis = temporal_cols[0]
+    elif text_or_cat_cols:
+        x_axis = text_or_cat_cols[0]
+    else:
+        # Fall back to first non-metric column, or first column
+        candidate = [c for c in columns if c not in valid_metric_cols]
+        x_axis = candidate[0] if candidate else columns[0]
+
+    y_axes = [c for c in valid_metric_cols if c != x_axis]
+    if not y_axes:
+        return None
+
+    # 6. Dynamically select chart type based on data characteristics
+    is_time_series = x_axis in temporal_cols or is_temporal_column(x_axis, [r.get(x_axis) for r in sample_rows])
+    q_lower = (question or "").lower()
 
     if is_time_series:
         chart_type = "line"
-    elif len(rows) <= 5 and len(y_axes) == 1:
-        # Small category count works great for pie or bar
+    elif (
+        len(rows) <= 4
+        and len(y_axes) == 1
+        and (
+            any(w in q_lower for w in ["status", "share", "proportion", "distribution", "breakdown", "pie"])
+            or "status" in x_axis.lower()
+        )
+    ):
+        # Small category proportion/distribution works best as pie
         chart_type = "pie"
     else:
+        # Comparison across categories or metrics works best as bar
         chart_type = "bar"
+
+    # 7. Formulate a clean, dynamic title
+    metric_title = y_axes[0].replace("_", " ").title()
+    group_title = x_axis.replace("_", " ").title()
+
+    if chart_type == "line":
+        chart_title = f"{metric_title} Trend Over Time"
+    elif chart_type == "pie":
+        chart_title = f"{metric_title} Breakdown by {group_title}"
+    else:
+        if len(y_axes) > 1:
+            chart_title = f"{', '.join(k.replace('_', ' ').title() for k in y_axes)} by {group_title}"
+        else:
+            chart_title = f"{metric_title} by {group_title}"
 
     return {
         "recommended": True,
         "chart_type": chart_type,
         "x_axis_key": x_axis,
         "y_axis_keys": y_axes,
-        "title": f"{y_axes[0].replace('_', ' ').title()} by {x_axis.replace('_', ' ').title()}"
+        "title": chart_title
     }
